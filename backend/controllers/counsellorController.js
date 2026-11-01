@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
 
-import User from "../models/User.js";
+import User from "../models/user.js";
 import Payment from "../models/Payment.js";
 import Batch from "../models/Batch.js";
 import Course from "../models/Course.js";

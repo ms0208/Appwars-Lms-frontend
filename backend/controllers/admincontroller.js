@@ -2,7 +2,8 @@
 import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
 
-import User from "../models/User.js";
+import User from "../models/user.js";
+
 import {
   generateUserId,
   generateTemporaryPassword,
@@ -31,17 +32,34 @@ const resourceConfig = {
   courses: {
     model: Course,
     fields: [
-      "title", "code", "description", "duration", "fee", "status",
+      "title",
+      "courseName",
+      "code",
+      "description",
+      "duration",
+      "fee",
+      "status",
+      "trainer",
+      "batchId",
+      "thumbnail",
+      "isPublished",
     ],
-    searchFields: ["title", "code"],
-    populate: [],
+    searchFields: ["courseName", "code", "description"],
+    populate: ["trainer", "batchId"],
   },
 
   batches: {
     model: Batch,
     fields: [
-      "name", "code", "course", "trainer", "students",
-      "startDate", "endDate", "capacity", "status",
+      "name",
+      "code",
+      "course",
+      "trainer",
+      "students",
+      "startDate",
+      "endDate",
+      "capacity",
+      "status",
     ],
     searchFields: ["name", "code"],
     populate: ["course", "trainer", "students"],
@@ -50,8 +68,14 @@ const resourceConfig = {
   attendance: {
     model: Attendance,
     fields: [
-      "user", "role", "batch", "date", "status",
-      "checkIn", "checkOut", "remarks",
+      "user",
+      "role",
+      "batch",
+      "date",
+      "status",
+      "checkIn",
+      "checkOut",
+      "remarks",
     ],
     searchFields: [],
     populate: ["user", "batch", "recordedBy"],
@@ -60,8 +84,14 @@ const resourceConfig = {
   results: {
     model: Result,
     fields: [
-      "student", "batch", "title", "totalMarks",
-      "marksObtained", "examDate", "remarks", "published",
+      "student",
+      "batch",
+      "title",
+      "totalMarks",
+      "marksObtained",
+      "examDate",
+      "remarks",
+      "published",
     ],
     searchFields: ["title"],
     populate: ["student", "batch"],
@@ -70,8 +100,14 @@ const resourceConfig = {
   assignments: {
     model: Assignment,
     fields: [
-      "title", "description", "batch", "course", "trainer",
-      "dueDate", "attachmentUrl", "status",
+      "title",
+      "description",
+      "batch",
+      "course",
+      "trainer",
+      "dueDate",
+      "attachmentUrl",
+      "status",
     ],
     searchFields: ["title", "description"],
     populate: ["batch", "course", "trainer"],
@@ -80,8 +116,13 @@ const resourceConfig = {
   liveClasses: {
     model: LiveClass,
     fields: [
-      "title", "batch", "trainer", "meetingUrl",
-      "startTime", "endTime", "status",
+      "title",
+      "batch",
+      "trainer",
+      "meetingUrl",
+      "startTime",
+      "endTime",
+      "status",
     ],
     searchFields: ["title"],
     populate: ["batch", "trainer"],
@@ -90,7 +131,11 @@ const resourceConfig = {
   announcements: {
     model: Announcement,
     fields: [
-      "title", "message", "audience", "publishAt", "isPublished",
+      "title",
+      "message",
+      "audience",
+      "publishAt",
+      "isPublished",
     ],
     searchFields: ["title", "message"],
     populate: [],
@@ -99,8 +144,14 @@ const resourceConfig = {
   doubts: {
     model: Doubt,
     fields: [
-      "title", "message", "student", "assignedTo",
-      "batch", "status", "priority", "response",
+      "title",
+      "message",
+      "student",
+      "assignedTo",
+      "batch",
+      "status",
+      "priority",
+      "response",
     ],
     searchFields: ["title", "message"],
     populate: ["student", "assignedTo", "batch"],
@@ -109,15 +160,26 @@ const resourceConfig = {
   payments: {
     model: Payment,
     fields: [
-      "student", "batch", "amount", "currency", "dueDate",
-      "paidAt", "method", "reference", "status", "notes",
+      "student",
+      "batch",
+      "amount",
+      "currency",
+      "dueDate",
+      "paidAt",
+      "method",
+      "reference",
+      "status",
+      "notes",
     ],
     searchFields: ["reference", "notes"],
     populate: ["student", "batch", "recordedBy"],
   },
 };
 
-// Only allow known fields to be changed by each resource endpoint.
+// --------------------------------------------------
+// HELPERS
+// --------------------------------------------------
+
 const pickFields = (body, allowedFields) =>
   Object.fromEntries(
     Object.entries(body || {}).filter(([key]) =>
@@ -126,7 +188,7 @@ const pickFields = (body, allowedFields) =>
   );
 
 const escapeRegex = (value) =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const validObjectId = (id) =>
   mongoose.isValidObjectId(id);
@@ -136,6 +198,45 @@ const sendNotFound = (res) =>
     success: false,
     message: "Record not found.",
   });
+
+// Accept frontend title while storing courseName.
+const normalizeCourseData = (data) => {
+  if (data.title !== undefined && data.courseName === undefined) {
+    data.courseName = data.title;
+  }
+
+  delete data.title;
+
+  return data;
+};
+
+const validateTrainer = async (trainerId) => {
+  if (trainerId === null || trainerId === "") {
+    return { valid: true, trainer: null };
+  }
+
+  if (!validObjectId(trainerId)) {
+    return {
+      valid: false,
+      message: "Invalid trainer ID.",
+    };
+  }
+
+  const trainer = await User.findOne({
+    _id: trainerId,
+    role: "Trainer",
+    isActive: true,
+  });
+
+  if (!trainer) {
+    return {
+      valid: false,
+      message: "Selected trainer does not exist or is inactive.",
+    };
+  }
+
+  return { valid: true, trainer };
+};
 
 // --------------------------------------------------
 // 1. ADMIN DASHBOARD
@@ -156,17 +257,37 @@ export const getDashboard = async (req, res, next) => {
       recentUsers,
       recentAnnouncements,
     ] = await Promise.all([
-      User.countDocuments({ role: "Student", isActive: true }),
-      User.countDocuments({ role: "Trainer", isActive: true }),
-      Course.countDocuments({ status: "Active" }),
+      User.countDocuments({
+        role: "Student",
+        isActive: true,
+      }),
+
+      User.countDocuments({
+        role: "Trainer",
+        isActive: true,
+      }),
+
+      Course.countDocuments({
+        status: "Active",
+      }),
 
       Payment.aggregate([
         { $match: { status: "Pending" } },
-        { $group: { _id: null, total: { $sum: "$amount" } } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: "$amount" },
+          },
+        },
       ]),
 
-      Batch.countDocuments({ status: "Running" }),
-      Assignment.countDocuments({ status: "Published" }),
+      Batch.countDocuments({
+        status: "Running",
+      }),
+
+      Assignment.countDocuments({
+        status: "Published",
+      }),
 
       LiveClass.countDocuments({
         status: "Scheduled",
@@ -191,6 +312,7 @@ export const getDashboard = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+
       stats: {
         totalStudents,
         totalTrainers,
@@ -201,12 +323,14 @@ export const getDashboard = async (req, res, next) => {
         upcomingClasses,
         openDoubts,
       },
+
       recentActivity: recentUsers.map((user) => ({
         type: "user_registered",
         text: `${user.role} registered: ${user.name}`,
         date: user.createdAt,
         userId: user.userId,
       })),
+
       recentAnnouncements,
     });
   } catch (error) {
@@ -354,6 +478,7 @@ export const createUser = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: `${role} account created successfully.`,
+
       user: {
         id: user._id,
         userId: user.userId,
@@ -367,6 +492,7 @@ export const createUser = async (req, res, next) => {
         mustChangePassword: true,
         createdAt: user.createdAt,
       },
+
       credentials: {
         userId: user.userId,
         temporaryPassword,
@@ -378,14 +504,19 @@ export const createUser = async (req, res, next) => {
 };
 
 // --------------------------------------------------
-// 3. LIST USERS, SEARCH AND FILTER
-// GET /api/admin/users?role=Student&search=manav
+// 3. LIST USERS
+// GET /api/admin/users
 // --------------------------------------------------
 
 export const getAllUsers = async (req, res, next) => {
   try {
-    const { role, search, active, page = "1", limit = "50" } =
-      req.query;
+    const {
+      role,
+      search,
+      active,
+      page = "1",
+      limit = "50",
+    } = req.query;
 
     const filter = {};
 
@@ -429,10 +560,12 @@ export const getAllUsers = async (req, res, next) => {
 
     res.json({
       success: true,
+
       users: users.map((user) => ({
         ...user,
         status: user.isActive ? "Active" : "Inactive",
       })),
+
       count: users.length,
       total,
       page: currentPage,
@@ -483,7 +616,14 @@ export const updateUser = async (req, res, next) => {
 
     if (!user) return sendNotFound(res);
 
-    const { name, email, role, batch, phone, isActive } = req.body;
+    const {
+      name,
+      email,
+      role,
+      batch,
+      phone,
+      isActive,
+    } = req.body;
 
     if (role !== undefined && !allowedRoles.includes(role)) {
       return res.status(400).json({
@@ -500,12 +640,17 @@ export const updateUser = async (req, res, next) => {
     }
 
     if (name !== undefined) {
-      if (typeof name !== "string" || name.trim().length < 2 || name.trim().length > 100) {
+      if (
+        typeof name !== "string" ||
+        name.trim().length < 2 ||
+        name.trim().length > 100
+      ) {
         return res.status(400).json({
           success: false,
           message: "Invalid name.",
         });
       }
+
       user.name = name.trim();
     }
 
@@ -521,6 +666,7 @@ export const updateUser = async (req, res, next) => {
       }
 
       const normalized = email.trim().toLowerCase();
+
       const duplicate = await User.exists({
         email: normalized,
         _id: { $ne: user._id },
@@ -545,6 +691,7 @@ export const updateUser = async (req, res, next) => {
           message: "Invalid batch.",
         });
       }
+
       user.batch = user.role === "Student" ? batch.trim() : "";
     }
 
@@ -562,6 +709,7 @@ export const updateUser = async (req, res, next) => {
           message: "Invalid phone.",
         });
       }
+
       user.phone = phone.trim();
     }
 
@@ -572,6 +720,7 @@ export const updateUser = async (req, res, next) => {
           message: "isActive must be true or false.",
         });
       }
+
       user.isActive = isActive;
     }
 
@@ -580,6 +729,7 @@ export const updateUser = async (req, res, next) => {
     res.json({
       success: true,
       message: "User updated successfully.",
+
       user: {
         userId: user.userId,
         name: user.name,
@@ -649,13 +799,11 @@ export const reactivateUser = async (req, res, next) => {
   }
 };
 
-
 // --------------------------------------------------
-// COURSE MANAGEMENT
+// 7. COURSE MANAGEMENT
 // --------------------------------------------------
 
 // GET /api/admin/courses
-// Get all courses with search, status filter and pagination.
 
 export const getCourses = async (req, res, next) => {
   try {
@@ -678,7 +826,7 @@ export const getCourses = async (req, res, next) => {
       );
 
       filter.$or = [
-        { title: { $regex: pattern, $options: "i" } },
+        { courseName: { $regex: pattern, $options: "i" } },
         { code: { $regex: pattern, $options: "i" } },
         { description: { $regex: pattern, $options: "i" } },
       ];
@@ -689,6 +837,8 @@ export const getCourses = async (req, res, next) => {
 
     const [courses, total] = await Promise.all([
       Course.find(filter)
+        .populate("trainer", "name userId email")
+        .populate("batchId", "batch course")
         .sort({ createdAt: -1 })
         .skip((currentPage - 1) * pageSize)
         .limit(pageSize)
@@ -699,7 +849,12 @@ export const getCourses = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      courses,
+
+      courses: courses.map((course) => ({
+        ...course,
+        title: course.courseName,
+      })),
+
       count: courses.length,
       total,
       page: currentPage,
@@ -710,9 +865,7 @@ export const getCourses = async (req, res, next) => {
   }
 };
 
-
 // GET /api/admin/courses/:id
-// Get one course.
 
 export const getCourseById = async (req, res, next) => {
   try {
@@ -725,7 +878,10 @@ export const getCourseById = async (req, res, next) => {
       });
     }
 
-    const course = await Course.findById(id).lean();
+    const course = await Course.findById(id)
+      .populate("trainer", "name userId email")
+      .populate("batchId", "batch course")
+      .lean();
 
     if (!course) {
       return res.status(404).json({
@@ -736,34 +892,41 @@ export const getCourseById = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      course,
+      course: {
+        ...course,
+        title: course.courseName,
+      },
     });
   } catch (error) {
     next(error);
   }
 };
 
-
 // POST /api/admin/courses
-// Create a new course.
 
 export const createCourse = async (req, res, next) => {
   try {
     const {
       title,
+      courseName,
       code,
       description = "",
       duration,
       fee,
       status = "Active",
+      trainer = null,
+      thumbnail = "",
     } = req.body || {};
 
+    const finalTitle = courseName ?? title;
+
     if (
-      typeof title !== "string" ||
-      !title.trim() ||
+      typeof finalTitle !== "string" ||
+      !finalTitle.trim() ||
       typeof code !== "string" ||
       !code.trim() ||
-      !duration
+      typeof duration !== "string" ||
+      !duration.trim()
     ) {
       return res.status(400).json({
         success: false,
@@ -771,7 +934,7 @@ export const createCourse = async (req, res, next) => {
       });
     }
 
-    const normalizedTitle = title.trim();
+    const normalizedTitle = finalTitle.trim();
     const normalizedCode = code.trim().toUpperCase();
 
     if (normalizedTitle.length < 2 || normalizedTitle.length > 150) {
@@ -788,11 +951,7 @@ export const createCourse = async (req, res, next) => {
       });
     }
 
-    if (
-      typeof duration !== "string" ||
-      !duration.trim() ||
-      duration.trim().length > 100
-    ) {
+    if (duration.trim().length > 100) {
       return res.status(400).json({
         success: false,
         message: "Enter a valid course duration.",
@@ -809,25 +968,41 @@ export const createCourse = async (req, res, next) => {
       });
     }
 
+    if (typeof thumbnail !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid thumbnail.",
+      });
+    }
+
     const courseFee = Number(fee);
 
-    if (fee === undefined || fee === null || fee === "" ||
-        !Number.isFinite(courseFee) || courseFee < 0) {
+    if (
+      fee === undefined ||
+      fee === null ||
+      fee === "" ||
+      !Number.isFinite(courseFee) ||
+      courseFee < 0
+    ) {
       return res.status(400).json({
         success: false,
         message: "Enter a valid course fee.",
       });
     }
 
-    const allowedStatuses =
-      Course.schema.path("status")?.enumValues?.length
-        ? Course.schema.path("status").enumValues
-        : ["Active", "Inactive"];
-
-    if (!allowedStatuses.includes(status)) {
+    if (!["Active", "Inactive"].includes(status)) {
       return res.status(400).json({
         success: false,
         message: "Invalid course status.",
+      });
+    }
+
+    const trainerCheck = await validateTrainer(trainer);
+
+    if (!trainerCheck.valid) {
+      return res.status(400).json({
+        success: false,
+        message: trainerCheck.message,
       });
     }
 
@@ -846,21 +1021,27 @@ export const createCourse = async (req, res, next) => {
     }
 
     const course = await Course.create({
-      title: normalizedTitle,
+      courseName: normalizedTitle,
       code: normalizedCode,
       description: description.trim(),
       duration: duration.trim(),
       fee: courseFee,
       status,
-      ...(Course.schema.path("createdBy")
-        ? { createdBy: req.user._id }
-        : {}),
+      trainer: trainerCheck.trainer?._id || null,
+      thumbnail: thumbnail.trim(),
+      createdBy: req.user._id,
     });
+
+    await course.populate("trainer", "name userId email");
 
     res.status(201).json({
       success: true,
       message: "Course created successfully.",
-      course,
+
+      course: {
+        ...course.toObject(),
+        title: course.courseName,
+      },
     });
   } catch (error) {
     if (error.code === 11000) {
@@ -874,9 +1055,7 @@ export const createCourse = async (req, res, next) => {
   }
 };
 
-
 // PATCH /api/admin/courses/:id
-// Update an existing course.
 
 export const updateCourse = async (req, res, next) => {
   try {
@@ -900,14 +1079,20 @@ export const updateCourse = async (req, res, next) => {
 
     const allowedFields = [
       "title",
+      "courseName",
       "code",
       "description",
       "duration",
       "fee",
       "status",
+      "trainer",
+      "thumbnail",
+      "isPublished",
     ];
 
-    const data = pickFields(req.body, allowedFields);
+    const data = normalizeCourseData(
+      pickFields(req.body, allowedFields)
+    );
 
     if (Object.keys(data).length === 0) {
       return res.status(400).json({
@@ -916,11 +1101,11 @@ export const updateCourse = async (req, res, next) => {
       });
     }
 
-    if (data.title !== undefined) {
+    if (data.courseName !== undefined) {
       if (
-        typeof data.title !== "string" ||
-        data.title.trim().length < 2 ||
-        data.title.trim().length > 150
+        typeof data.courseName !== "string" ||
+        data.courseName.trim().length < 2 ||
+        data.courseName.trim().length > 150
       ) {
         return res.status(400).json({
           success: false,
@@ -928,7 +1113,7 @@ export const updateCourse = async (req, res, next) => {
         });
       }
 
-      data.title = data.title.trim();
+      data.courseName = data.courseName.trim();
     }
 
     if (data.code !== undefined) {
@@ -1005,12 +1190,7 @@ export const updateCourse = async (req, res, next) => {
     }
 
     if (data.status !== undefined) {
-      const allowedStatuses =
-        Course.schema.path("status")?.enumValues?.length
-          ? Course.schema.path("status").enumValues
-          : ["Active", "Inactive"];
-
-      if (!allowedStatuses.includes(data.status)) {
+      if (!["Active", "Inactive"].includes(data.status)) {
         return res.status(400).json({
           success: false,
           message: "Invalid course status.",
@@ -1018,20 +1198,60 @@ export const updateCourse = async (req, res, next) => {
       }
     }
 
+    if (data.trainer !== undefined) {
+      const trainerCheck = await validateTrainer(data.trainer);
+
+      if (!trainerCheck.valid) {
+        return res.status(400).json({
+          success: false,
+          message: trainerCheck.message,
+        });
+      }
+
+      data.trainer = trainerCheck.trainer?._id || null;
+    }
+
+    if (data.thumbnail !== undefined) {
+      if (typeof data.thumbnail !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid thumbnail.",
+        });
+      }
+
+      data.thumbnail = data.thumbnail.trim();
+    }
+
+    if (
+      data.isPublished !== undefined &&
+      typeof data.isPublished !== "boolean"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "isPublished must be true or false.",
+      });
+    }
+
     Object.assign(course, data);
 
     await course.save();
 
+    await course.populate("trainer", "name userId email");
+
     res.status(200).json({
       success: true,
       message: "Course updated successfully.",
-      course,
+
+      course: {
+        ...course.toObject(),
+        title: course.courseName,
+      },
     });
   } catch (error) {
     if (error.code === 11000) {
       return res.status(409).json({
         success: false,
-        message: "A course with this code already exists.",
+        message: "Another course already uses this code.",
       });
     }
 
@@ -1039,9 +1259,7 @@ export const updateCourse = async (req, res, next) => {
   }
 };
 
-
 // DELETE /api/admin/courses/:id
-// Delete a course only when it is not being used.
 
 export const deleteCourse = async (req, res, next) => {
   try {
@@ -1088,11 +1306,8 @@ export const deleteCourse = async (req, res, next) => {
   }
 };
 
-
 // --------------------------------------------------
-// 7. REUSABLE ADMIN CRUD
-// Courses, batches, attendance, results, assignments,
-// live classes, announcements, doubts and payments.
+// 8. REUSABLE ADMIN CRUD
 // --------------------------------------------------
 
 export const listResource = async (req, res, next) => {
@@ -1106,7 +1321,13 @@ export const listResource = async (req, res, next) => {
       });
     }
 
-    const { search, status, page = "1", limit = "50" } = req.query;
+    const {
+      search,
+      status,
+      page = "1",
+      limit = "50",
+    } = req.query;
+
     const filter = {};
 
     if (status && config.model.schema.path("status")) {
@@ -1115,6 +1336,7 @@ export const listResource = async (req, res, next) => {
 
     if (search && config.searchFields.length) {
       const pattern = escapeRegex(String(search).slice(0, 100));
+
       filter.$or = config.searchFields.map((field) => ({
         [field]: { $regex: pattern, $options: "i" },
       }));
@@ -1129,16 +1351,26 @@ export const listResource = async (req, res, next) => {
       .skip((currentPage - 1) * pageSize)
       .limit(pageSize);
 
-    for (const path of config.populate) query = query.populate(path);
+    for (const path of config.populate) {
+      query = query.populate(path);
+    }
 
     const [items, total] = await Promise.all([
       query.lean(),
       config.model.countDocuments(filter),
     ]);
 
+    const formattedItems =
+      req.params.resource === "courses"
+        ? items.map((item) => ({
+            ...item,
+            title: item.courseName,
+          }))
+        : items;
+
     res.json({
       success: true,
-      items,
+      items: formattedItems,
       count: items.length,
       total,
       page: currentPage,
@@ -1169,13 +1401,23 @@ export const getResource = async (req, res, next) => {
 
     let query = config.model.findById(req.params.id);
 
-    for (const path of config.populate) query = query.populate(path);
+    for (const path of config.populate) {
+      query = query.populate(path);
+    }
 
-    const item = await query;
+    const item = await query.lean();
 
     if (!item) return sendNotFound(res);
 
-    res.json({ success: true, item });
+    const formattedItem =
+      req.params.resource === "courses"
+        ? { ...item, title: item.courseName }
+        : item;
+
+    res.json({
+      success: true,
+      item: formattedItem,
+    });
   } catch (error) {
     next(error);
   }
@@ -1192,7 +1434,30 @@ export const createResource = async (req, res, next) => {
       });
     }
 
-    const data = pickFields(req.body, config.fields);
+    let data = pickFields(req.body, config.fields);
+
+    if (req.params.resource === "courses") {
+      data = normalizeCourseData(data);
+
+      if (
+        data.trainer !== undefined &&
+        data.trainer !== null &&
+        data.trainer !== ""
+      ) {
+        const trainerCheck = await validateTrainer(data.trainer);
+
+        if (!trainerCheck.valid) {
+          return res.status(400).json({
+            success: false,
+            message: trainerCheck.message,
+          });
+        }
+
+        data.trainer = trainerCheck.trainer._id;
+      } else if (data.trainer === "") {
+        data.trainer = null;
+      }
+    }
 
     if ("createdBy" in config.model.schema.paths) {
       data.createdBy = req.user._id;
@@ -1221,7 +1486,11 @@ export const createResource = async (req, res, next) => {
         });
       }
 
-      if (data.checkIn && data.checkOut && new Date(data.checkOut) < new Date(data.checkIn)) {
+      if (
+        data.checkIn &&
+        data.checkOut &&
+        new Date(data.checkOut) < new Date(data.checkIn)
+      ) {
         return res.status(400).json({
           success: false,
           message: "Check-out cannot be before check-in.",
@@ -1238,16 +1507,27 @@ export const createResource = async (req, res, next) => {
       }
     }
 
-    if (req.params.resource === "payments" && data.status === "Paid" && !data.paidAt) {
+    if (
+      req.params.resource === "payments" &&
+      data.status === "Paid" &&
+      !data.paidAt
+    ) {
       data.paidAt = new Date();
     }
 
     const item = await config.model.create(data);
 
+    if (req.params.resource === "courses") {
+      await item.populate("trainer", "name userId email");
+    }
+
     res.status(201).json({
       success: true,
       message: "Record created successfully.",
-      item,
+      item:
+        req.params.resource === "courses"
+          ? { ...item.toObject(), title: item.courseName }
+          : item,
     });
   } catch (error) {
     next(error);
@@ -1272,7 +1552,24 @@ export const updateResource = async (req, res, next) => {
       });
     }
 
-    const data = pickFields(req.body, config.fields);
+    let data = pickFields(req.body, config.fields);
+
+    if (req.params.resource === "courses") {
+      data = normalizeCourseData(data);
+
+      if (data.trainer !== undefined) {
+        const trainerCheck = await validateTrainer(data.trainer);
+
+        if (!trainerCheck.valid) {
+          return res.status(400).json({
+            success: false,
+            message: trainerCheck.message,
+          });
+        }
+
+        data.trainer = trainerCheck.trainer?._id || null;
+      }
+    }
 
     if (
       req.params.resource === "results" &&
@@ -1292,22 +1589,35 @@ export const updateResource = async (req, res, next) => {
       }
     }
 
-    if (req.params.resource === "payments" && data.status === "Paid") {
+    if (
+      req.params.resource === "payments" &&
+      data.status === "Paid"
+    ) {
       data.paidAt = data.paidAt || new Date();
     }
 
     const item = await config.model.findByIdAndUpdate(
       req.params.id,
       data,
-      { new: true, runValidators: true }
+      {
+        new: true,
+        runValidators: true,
+      }
     );
 
     if (!item) return sendNotFound(res);
 
+    if (req.params.resource === "courses") {
+      await item.populate("trainer", "name userId email");
+    }
+
     res.json({
       success: true,
       message: "Record updated successfully.",
-      item,
+      item:
+        req.params.resource === "courses"
+          ? { ...item.toObject(), title: item.courseName }
+          : item,
     });
   } catch (error) {
     next(error);
@@ -1347,7 +1657,7 @@ export const deleteResource = async (req, res, next) => {
 };
 
 // --------------------------------------------------
-// 8. PAYMENT REPORT
+// 9. PAYMENT REPORT
 // GET /api/admin/reports/payments
 // --------------------------------------------------
 
@@ -1356,7 +1666,6 @@ export const getPaymentReport = async (req, res, next) => {
     const { from, to } = req.query;
     const filter = {};
 
-    // Validate and apply date filters.
     if (from || to) {
       filter.createdAt = {};
 
@@ -1446,6 +1755,7 @@ export const getPaymentReport = async (req, res, next) => {
             _id: null,
             totalPayments: { $sum: 1 },
             totalAmount: { $sum: "$amount" },
+
             collectedAmount: {
               $sum: {
                 $cond: [
@@ -1455,6 +1765,7 @@ export const getPaymentReport = async (req, res, next) => {
                 ],
               },
             },
+
             pendingAmount: {
               $sum: {
                 $cond: [
@@ -1464,6 +1775,7 @@ export const getPaymentReport = async (req, res, next) => {
                 ],
               },
             },
+
             refundedAmount: {
               $sum: {
                 $cond: [
@@ -1490,10 +1802,12 @@ export const getPaymentReport = async (req, res, next) => {
 
     return res.status(200).json({
       success: true,
+
       period: {
         from: from || null,
         to: to || null,
       },
+
       summary: {
         totalPayments: summary.totalPayments,
         totalAmount: summary.totalAmount,
@@ -1502,6 +1816,7 @@ export const getPaymentReport = async (req, res, next) => {
         refundedAmount: summary.refundedAmount,
         paymentCount,
       },
+
       report,
     });
   } catch (error) {
@@ -1509,9 +1824,8 @@ export const getPaymentReport = async (req, res, next) => {
   }
 };
 
-
 // --------------------------------------------------
-// 9. SETTINGS
+// 10. SETTINGS
 // GET /api/admin/settings
 // PATCH /api/admin/settings
 // --------------------------------------------------
@@ -1526,7 +1840,10 @@ export const getSettings = async (req, res, next) => {
       });
     }
 
-    res.json({ success: true, settings });
+    res.json({
+      success: true,
+      settings,
+    });
   } catch (error) {
     next(error);
   }

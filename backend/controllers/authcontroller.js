@@ -1,7 +1,7 @@
 
 import bcrypt from "bcryptjs";
 
-import User from "../models/User.js";
+import User from "../models/user.js"; 
 import Batch from "../models/Batch.js";
 
 import generateToken from "../utils/generateToken.js";

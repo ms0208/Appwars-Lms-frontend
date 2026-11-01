@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-import User from "../models/User.js";
+import User from "../models/user.js";
 import Batch from "../models/Batch.js";
 import Attendance from "../models/Attendance.js";
 import Announcement from "../models/Announcements.js";
@@ -1168,3 +1168,21 @@ export const getBatchDetails = async (req, res) => {
     return sendError(res, error, "Unable to load batch details.");
   }
 };
+console.log("========== MODEL CHECK ==========");
+
+console.log("User:", User.modelName);
+console.log("Batch:", Batch.modelName);
+
+console.log(
+  "Batch trainer field:",
+  Batch.schema.path("trainer") ? "EXISTS" : "MISSING"
+);
+
+console.log(
+  "Course trainer field:",
+  mongoose.model("Course").schema.path("trainer")
+    ? "EXISTS"
+    : "MISSING"
+);
+
+console.log("=================================");

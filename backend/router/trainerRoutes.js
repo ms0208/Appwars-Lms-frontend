@@ -18,7 +18,7 @@ import {
   getStudentPerformance,
   getOpenDoubts,
   replyToDoubt,
-} from "../controllers/trainerController.js";
+} from "../controllers/trainercontroller.js";
 
 const router = express.Router();
 

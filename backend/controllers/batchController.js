@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
 import Batch from "../models/Batch.js";
-import User from "../models/User.js";
+import User from "../models/user.js";
 
 const isValidId = (id) => mongoose.isValidObjectId(id);
 
