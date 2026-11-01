@@ -1,1033 +1,1253 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   MessageCircleQuestion,
   Search,
   Plus,
-  Eye,
-  Pencil,
+  RefreshCw,
   Trash2,
-  X,
   Send,
+  X,
   Clock,
-  CircleCheck,
-  CircleAlert,
-  MessagesSquare,
-  Filter,
-  CalendarDays,
+  CheckCircle2,
+  AlertCircle,
   UserRound,
-  BookOpen,
-  ArrowUpDown,
-  CheckCheck,
+  CalendarDays,
+  Filter,
+  MessageSquare,
+  LoaderCircle,
+  ChevronDown,
 } from "lucide-react";
 
-const initialDoubts = [
-  {
-    id: "DBT-1001",
-    student: "Rahul Sharma",
-    email: "rahul@example.com",
-    course: "MERN Stack Development",
-    batch: "MERN-2026-A",
-    subject: "React useEffect Hook",
-    question:
-      "I am confused about the dependency array in useEffect. When should I use an empty array, and when should I pass variables?",
-    category: "React.js",
-    priority: "High",
-    status: "Open",
-    assignedTo: "Manav Sharma",
-    createdAt: "2026-10-22",
-    replies: [
-      {
-        author: "Rahul Sharma",
-        role: "Student",
-        message: "I am confused about the dependency array in useEffect. When should I use an empty array, and when should I pass variables?",
-        date: "2026-10-22",
-      },
-    ],
-  },
-  {
-    id: "DBT-1002",
-    student: "Priya Verma",
-    email: "priya@example.com",
-    course: "AWS Cloud Computing",
-    batch: "AWS-2026-B",
-    subject: "EC2 and Security Groups",
-    question:
-      "Can you explain how inbound and outbound rules work in an EC2 security group?",
-    category: "AWS",
-    priority: "Medium",
-    status: "In Progress",
-    assignedTo: "Amit Kumar",
-    createdAt: "2026-10-23",
-    replies: [
-      {
-        author: "Priya Verma",
-        role: "Student",
-        message: "Can you explain how inbound and outbound rules work in an EC2 security group?",
-        date: "2026-10-23",
-      },
-      {
-        author: "Amit Kumar",
-        role: "Trainer",
-        message:
-          "Inbound rules control traffic entering the instance, while outbound rules control traffic leaving it. We will review examples in the next session.",
-        date: "2026-10-23",
-      },
-    ],
-  },
-  {
-    id: "DBT-1003",
-    student: "Aman Singh",
-    email: "aman@example.com",
-    course: "Software Testing",
-    batch: "TEST-2026-A",
-    subject: "Test Case vs Test Scenario",
-    question:
-      "What is the difference between a test scenario and a test case? Please provide a practical example.",
-    category: "Testing",
-    priority: "Low",
-    status: "Resolved",
-    assignedTo: "Neha Gupta",
-    createdAt: "2026-10-20",
-    replies: [
-      {
-        author: "Aman Singh",
-        role: "Student",
-        message: "What is the difference between a test scenario and a test case? Please provide a practical example.",
-        date: "2026-10-20",
-      },
-      {
-        author: "Neha Gupta",
-        role: "Trainer",
-        message:
-          "A test scenario describes what to test, while a test case gives the detailed steps, data, and expected result. For example, the scenario is testing login; individual valid and invalid login attempts are test cases.",
-        date: "2026-10-21",
-      },
-    ],
-  },
-  {
-    id: "DBT-1004",
-    student: "Neha Gupta",
-    email: "neha@example.com",
-    course: "MERN Stack Development",
-    batch: "MERN-2026-A",
-    subject: "MongoDB Connection Error",
-    question:
-      "My Node.js application shows ECONNREFUSED while connecting to MongoDB locally. How can I troubleshoot it?",
-    category: "MongoDB",
-    priority: "Urgent",
-    status: "Open",
-    assignedTo: "Manav Sharma",
-    createdAt: "2026-10-24",
-    replies: [
-      {
-        author: "Neha Gupta",
-        role: "Student",
-        message: "My Node.js application shows ECONNREFUSED while connecting to MongoDB locally. How can I troubleshoot it?",
-        date: "2026-10-24",
-      },
-    ],
-  },
-  {
-    id: "DBT-1005",
-    student: "Karan Mehta",
-    email: "karan@example.com",
-    course: "Python Programming",
-    batch: "PY-2026-A",
-    subject: "Python List Comprehension",
-    question:
-      "How do I convert a normal for loop into a list comprehension?",
-    category: "Python",
-    priority: "Medium",
-    status: "Resolved",
-    assignedTo: "Amit Kumar",
-    createdAt: "2026-10-19",
-    replies: [
-      {
-        author: "Karan Mehta",
-        role: "Student",
-        message: "How do I convert a normal for loop into a list comprehension?",
-        date: "2026-10-19",
-      },
-      {
-        author: "Amit Kumar",
-        role: "Trainer",
-        message:
-          "For example, squares = [x * x for x in range(5)] creates a list of squares without writing a separate append statement inside a loop.",
-        date: "2026-10-19",
-      },
-    ],
-  },
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
+
+const DOUBTS_ENDPOINT = `${API_URL}/admin/doubts`;
+
+const STATUS_OPTIONS = [
+  "Open",
+  "In Progress",
+  "Resolved",
+  "Closed",
 ];
 
-const emptyDoubt = {
+const PRIORITY_OPTIONS = ["Low", "Medium", "High", "Urgent"];
+
+const TRAINERS = [
+  "Unassigned",
+  "Manav Sharma",
+  "Ravi Kumar",
+  "Priya Singh",
+];
+
+function getAuthHeaders() {
+  let token = "";
+
+  if (typeof window !== "undefined") {
+    token =
+      localStorage.getItem("token") ||
+      sessionStorage.getItem("token") ||
+      "";
+  }
+
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+async function apiRequest(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...getAuthHeaders(),
+      ...options.headers,
+    },
+  });
+
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      result.message ||
+        result.error ||
+        `Request failed with status ${response.status}`
+    );
+  }
+
+  return result;
+}
+
+function normalizeDoubt(item) {
+  return {
+    ...item,
+    id: String(item._id || item.id || item.doubtId || ""),
+    student:
+      item.student?.name ||
+      item.studentName ||
+      (typeof item.student === "string" ? item.student : "") ||
+      "Unknown Student",
+    email:
+      item.student?.email ||
+      item.email ||
+      item.studentEmail ||
+      "",
+    subject: item.subject || item.title || "Untitled Doubt",
+    description: item.description || item.message || item.question || "",
+    course: item.course?.name || item.courseName ||
+      (typeof item.course === "string" ? item.course : "") ||
+      "General",
+    status: item.status || "Open",
+    priority: item.priority || "Medium",
+    assignedTo:
+      item.assignedTo?.name ||
+      (typeof item.assignedTo === "string" ? item.assignedTo : "") ||
+      "Unassigned",
+    createdAt: item.createdAt || item.date || null,
+    replies: Array.isArray(item.replies)
+      ? item.replies.map((reply) => ({
+          ...reply,
+          message: reply.message || reply.text || "",
+          sender:
+            reply.sender?.name ||
+            reply.senderName ||
+            (typeof reply.sender === "string" ? reply.sender : "") ||
+            "User",
+          createdAt: reply.createdAt || reply.date || null,
+        }))
+      : [],
+  };
+}
+
+function extractDoubts(result) {
+  const list =
+    result?.doubts ??
+    result?.data?.doubts ??
+    result?.data?.data ??
+    result?.data ??
+    result?.results ??
+    result;
+
+  if (Array.isArray(list)) {
+    return list.map(normalizeDoubt);
+  }
+
+  return [];
+}
+
+function formatDate(date) {
+  if (!date) return "—";
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "—";
+  }
+
+  return parsedDate.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function statusClasses(status) {
+  switch (status) {
+    case "Resolved":
+      return "bg-emerald-50 text-emerald-700 ring-emerald-200";
+    case "In Progress":
+      return "bg-blue-50 text-blue-700 ring-blue-200";
+    case "Closed":
+      return "bg-slate-100 text-slate-600 ring-slate-200";
+    default:
+      return "bg-amber-50 text-amber-700 ring-amber-200";
+  }
+}
+
+function priorityClasses(priority) {
+  switch (priority) {
+    case "Urgent":
+      return "bg-red-50 text-red-700";
+    case "High":
+      return "bg-orange-50 text-orange-700";
+    case "Low":
+      return "bg-slate-100 text-slate-600";
+    default:
+      return "bg-yellow-50 text-yellow-700";
+  }
+}
+
+const EMPTY_FORM = {
   student: "",
   email: "",
-  course: "MERN Stack Development",
-  batch: "",
   subject: "",
-  question: "",
-  category: "General",
+  description: "",
+  course: "",
   priority: "Medium",
-  status: "Open",
-  assignedTo: "Manav Sharma",
+  assignedTo: "Unassigned",
 };
 
-const inputClass =
-  "mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100";
+export default function DoubtsManagementPage() {
+  const [doubts, setDoubts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
-function StatusBadge({ status }) {
-  const styles = {
-    Open: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
-    "In Progress":
-      "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
-    Resolved:
-      "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
-  };
-
-  return (
-    <span
-      className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold ${
-        styles[status] || styles.Open
-      }`}
-    >
-      {status}
-    </span>
-  );
-}
-
-function PriorityBadge({ priority }) {
-  const styles = {
-    Urgent: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
-    High: "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300",
-    Medium:
-      "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
-    Low: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
-  };
-
-  return (
-    <span
-      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-        styles[priority] || styles.Medium
-      }`}
-    >
-      {priority}
-    </span>
-  );
-}
-
-function StatCard({ title, value, subtitle, icon: Icon, color }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm text-slate-500 dark:text-slate-400">{title}</p>
-          <h2 className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
-            {value}
-          </h2>
-          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-            {subtitle}
-          </p>
-        </div>
-        <div className={`rounded-xl p-3 ${color}`}>
-          <Icon size={22} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export default function DoubtsPage() {
-  const [doubts, setDoubts] = useState(initialDoubts);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [priorityFilter, setPriorityFilter] = useState("All");
-  const [courseFilter, setCourseFilter] = useState("All");
-  const [sortOrder, setSortOrder] = useState("newest");
-  const [modal, setModal] = useState(null);
-  const [selectedDoubt, setSelectedDoubt] = useState(null);
-  const [form, setForm] = useState(emptyDoubt);
-  const [reply, setReply] = useState("");
-  const [notice, setNotice] = useState("");
 
-  const stats = useMemo(() => {
-    const open = doubts.filter((d) => d.status === "Open").length;
-    const inProgress = doubts.filter((d) => d.status === "In Progress").length;
-    const resolved = doubts.filter((d) => d.status === "Resolved").length;
-    const urgent = doubts.filter(
-      (d) => d.priority === "Urgent" && d.status !== "Resolved"
-    ).length;
+  const [selectedDoubtId, setSelectedDoubtId] = useState(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [replyText, setReplyText] = useState("");
 
-    return { total: doubts.length, open, inProgress, resolved, urgent };
-  }, [doubts]);
+  const fetchDoubts = useCallback(async () => {
+    setLoading(true);
+    setError("");
 
-  const courses = useMemo(
-    () => [...new Set(doubts.map((d) => d.course))],
-    [doubts]
-  );
+    try {
+      const result = await apiRequest(DOUBTS_ENDPOINT);
+      setDoubts(extractDoubts(result));
+    } catch (err) {
+      setError(err.message || "Unable to load doubts.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDoubts();
+  }, [fetchDoubts]);
 
   const filteredDoubts = useMemo(() => {
-    const term = search.toLowerCase().trim();
+    const query = search.trim().toLowerCase();
 
-    return doubts
-      .filter((doubt) => {
-        const searchable = [
-          doubt.id,
+    return doubts.filter((doubt) => {
+      const matchesSearch =
+        !query ||
+        [
           doubt.student,
           doubt.email,
           doubt.subject,
-          doubt.question,
+          doubt.description,
           doubt.course,
-          doubt.batch,
-          doubt.assignedTo,
-        ].some((value) => String(value || "").toLowerCase().includes(term));
-
-        return (
-          searchable &&
-          (statusFilter === "All" || doubt.status === statusFilter) &&
-          (priorityFilter === "All" || doubt.priority === priorityFilter) &&
-          (courseFilter === "All" || doubt.course === courseFilter)
+          doubt.id,
+        ].some((value) =>
+          String(value || "").toLowerCase().includes(query)
         );
-      })
-      .sort((a, b) =>
-        sortOrder === "newest"
-          ? b.createdAt.localeCompare(a.createdAt)
-          : a.createdAt.localeCompare(b.createdAt)
-      );
-  }, [doubts, search, statusFilter, priorityFilter, courseFilter, sortOrder]);
 
-  function openAdd() {
-    setForm(emptyDoubt);
-    setSelectedDoubt(null);
-    setModal("add");
-  }
+      const matchesStatus =
+        statusFilter === "All" || doubt.status === statusFilter;
 
-  function openEdit(doubt) {
-    setSelectedDoubt(doubt);
-    setForm({
-      student: doubt.student,
-      email: doubt.email,
-      course: doubt.course,
-      batch: doubt.batch,
-      subject: doubt.subject,
-      question: doubt.question,
-      category: doubt.category,
-      priority: doubt.priority,
-      status: doubt.status,
-      assignedTo: doubt.assignedTo,
+      const matchesPriority =
+        priorityFilter === "All" || doubt.priority === priorityFilter;
+
+      return matchesSearch && matchesStatus && matchesPriority;
     });
-    setModal("edit");
+  }, [doubts, search, statusFilter, priorityFilter]);
+
+  const selectedDoubt = doubts.find(
+    (doubt) => doubt.id === selectedDoubtId
+  );
+
+  const stats = useMemo(
+    () => ({
+      total: doubts.length,
+      open: doubts.filter((d) => d.status === "Open").length,
+      inProgress: doubts.filter((d) => d.status === "In Progress").length,
+      resolved: doubts.filter((d) => d.status === "Resolved").length,
+    }),
+    [doubts]
+  );
+
+  function showSuccess(message) {
+    setSuccess(message);
+    setError("");
+
+    setTimeout(() => {
+      setSuccess("");
+    }, 3500);
   }
 
   function updateForm(field, value) {
-    setForm((previous) => ({ ...previous, [field]: value }));
+    setForm((previous) => ({
+      ...previous,
+      [field]: value,
+    }));
   }
 
-  function saveDoubt(event) {
+  async function saveDoubt(event) {
     event.preventDefault();
 
     if (
       !form.student.trim() ||
       !form.subject.trim() ||
-      !form.question.trim()
+      !form.description.trim()
     ) {
-      setNotice("Please enter the student name, subject, and question.");
+      setError("Student name, subject, and description are required.");
       return;
     }
 
-    if (modal === "edit" && selectedDoubt) {
-      setDoubts((previous) =>
-        previous.map((d) =>
-          d.id === selectedDoubt.id
-            ? { ...d, ...form }
-            : d
-        )
-      );
-      setNotice("Doubt updated successfully.");
-    } else {
-      const newDoubt = {
-        ...form,
-        id: `DBT-${Date.now().toString().slice(-7)}`,
-        createdAt: new Date().toLocaleDateString("en-CA"),
-        replies: [
-          {
-            author: form.student,
-            role: "Student",
-            message: form.question,
-            date: new Date().toLocaleDateString("en-CA"),
-          },
-        ],
+    setSaving(true);
+    setError("");
+
+    try {
+      const payload = {
+        studentName: form.student.trim(),
+        student: form.student.trim(),
+        email: form.email.trim(),
+        studentEmail: form.email.trim(),
+        subject: form.subject.trim(),
+        description: form.description.trim(),
+        courseName: form.course.trim(),
+        course: form.course.trim(),
+        priority: form.priority,
+        assignedTo:
+          form.assignedTo === "Unassigned" ? "" : form.assignedTo,
+        status: "Open",
       };
 
-      setDoubts((previous) => [newDoubt, ...previous]);
-      setNotice("New doubt added successfully.");
-    }
+      const result = await apiRequest(DOUBTS_ENDPOINT, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
 
-    setModal(null);
+      const created =
+        result?.doubt ||
+        result?.data?.doubt ||
+        (result?.data && !Array.isArray(result.data)
+          ? result.data
+          : null);
+
+      if (created && (created._id || created.id)) {
+        const normalized = normalizeDoubt(created);
+
+        setDoubts((previous) => [
+          normalized,
+          ...previous.filter((item) => item.id !== normalized.id),
+        ]);
+      } else {
+        await fetchDoubts();
+      }
+
+      setForm(EMPTY_FORM);
+      setShowCreateModal(false);
+      showSuccess("Doubt created successfully.");
+    } catch (err) {
+      setError(err.message || "Failed to create doubt.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function changeStatus(doubt, status) {
+  async function changeStatus(doubt, status) {
+    if (!doubt?.id) return;
+
+    setError("");
+
+    const previousStatus = doubt.status;
+
     setDoubts((previous) =>
-      previous.map((d) => (d.id === doubt.id ? { ...d, status } : d))
+      previous.map((item) =>
+        item.id === doubt.id ? { ...item, status } : item
+      )
     );
 
-    if (selectedDoubt?.id === doubt.id) {
-      setSelectedDoubt((previous) => ({ ...previous, status }));
-    }
+    try {
+      const result = await apiRequest(
+        `${DOUBTS_ENDPOINT}/${encodeURIComponent(doubt.id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status }),
+        }
+      );
 
-    setNotice(`Doubt marked as ${status}.`);
+      const updated =
+        result?.doubt || result?.data?.doubt;
+
+      if (updated) {
+        const normalized = normalizeDoubt(updated);
+
+        setDoubts((previous) =>
+          previous.map((item) =>
+            item.id === doubt.id ? normalized : item
+          )
+        );
+      }
+
+      showSuccess("Doubt status updated.");
+    } catch (err) {
+      setDoubts((previous) =>
+        previous.map((item) =>
+          item.id === doubt.id
+            ? { ...item, status: previousStatus }
+            : item
+        )
+      );
+
+      setError(err.message || "Failed to update status.");
+    }
   }
 
-  function deleteDoubt(doubt) {
-    if (!window.confirm(`Delete doubt ${doubt.id}?`)) return;
+  async function updateDoubtField(doubt, changes) {
+    if (!doubt?.id) return;
 
-    setDoubts((previous) => previous.filter((d) => d.id !== doubt.id));
+    setError("");
 
-    if (selectedDoubt?.id === doubt.id) {
-      setSelectedDoubt(null);
-      setModal(null);
+    const previousValues = {};
+
+    Object.keys(changes).forEach((key) => {
+      previousValues[key] = doubt[key];
+    });
+
+    setDoubts((previous) =>
+      previous.map((item) =>
+        item.id === doubt.id ? { ...item, ...changes } : item
+      )
+    );
+
+    try {
+      const result = await apiRequest(
+        `${DOUBTS_ENDPOINT}/${encodeURIComponent(doubt.id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(changes),
+        }
+      );
+
+      const updated =
+        result?.doubt || result?.data?.doubt;
+
+      if (updated) {
+        const normalized = normalizeDoubt(updated);
+
+        setDoubts((previous) =>
+          previous.map((item) =>
+            item.id === doubt.id ? normalized : item
+          )
+        );
+      }
+
+      showSuccess("Doubt updated successfully.");
+    } catch (err) {
+      setDoubts((previous) =>
+        previous.map((item) =>
+          item.id === doubt.id
+            ? { ...item, ...previousValues }
+            : item
+        )
+      );
+
+      setError(err.message || "Failed to update doubt.");
     }
-
-    setNotice("Doubt deleted successfully.");
   }
 
-  function sendReply(event) {
+  async function deleteDoubt(doubt) {
+    if (!doubt?.id) return;
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${doubt.subject}"?`
+    );
+
+    if (!confirmed) return;
+
+    setError("");
+
+    try {
+      await apiRequest(
+        `${DOUBTS_ENDPOINT}/${encodeURIComponent(doubt.id)}`,
+        { method: "DELETE" }
+      );
+
+      setDoubts((previous) =>
+        previous.filter((item) => item.id !== doubt.id)
+      );
+
+      if (selectedDoubtId === doubt.id) {
+        setSelectedDoubtId(null);
+      }
+
+      showSuccess("Doubt deleted successfully.");
+    } catch (err) {
+      setError(err.message || "Failed to delete doubt.");
+    }
+  }
+
+  async function sendReply(event) {
     event.preventDefault();
 
-    if (!reply.trim() || !selectedDoubt) return;
+    if (!selectedDoubt?.id || !replyText.trim()) return;
 
-    const newReply = {
-      author: "Manav Sharma",
-      role: "Trainer",
-      message: reply.trim(),
-      date: new Date().toLocaleDateString("en-CA"),
-    };
+    setSaving(true);
+    setError("");
 
-    const updatedDoubt = {
-      ...selectedDoubt,
-      status: "In Progress",
-      replies: [...(selectedDoubt.replies || []), newReply],
-    };
+    try {
+      const result = await apiRequest(
+        `${DOUBTS_ENDPOINT}/${encodeURIComponent(
+          selectedDoubt.id
+        )}/replies`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            message: replyText.trim(),
+            sender: "Admin",
+            senderName: "Admin",
+          }),
+        }
+      );
 
-    setDoubts((previous) =>
-      previous.map((d) => (d.id === selectedDoubt.id ? updatedDoubt : d))
-    );
-    setSelectedDoubt(updatedDoubt);
-    setReply("");
-    setNotice("Reply added successfully.");
+      const updated =
+        result?.doubt ||
+        result?.data?.doubt;
+
+      if (updated) {
+        const normalized = normalizeDoubt(updated);
+
+        setDoubts((previous) =>
+          previous.map((item) =>
+            item.id === selectedDoubt.id ? normalized : item
+          )
+        );
+      } else if (result?.reply || result?.data?.reply) {
+        const newReply = result.reply || result.data.reply;
+
+        setDoubts((previous) =>
+          previous.map((item) =>
+            item.id === selectedDoubt.id
+              ? {
+                  ...item,
+                  replies: [
+                    ...item.replies,
+                    {
+                      ...newReply,
+                      message: newReply.message || replyText.trim(),
+                      sender: newReply.senderName || "Admin",
+                      createdAt: newReply.createdAt || new Date().toISOString(),
+                    },
+                  ],
+                }
+              : item
+          )
+        );
+      } else {
+        await fetchDoubts();
+      }
+
+      setReplyText("");
+      showSuccess("Reply sent successfully.");
+    } catch (err) {
+      setError(err.message || "Failed to send reply.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function exportCSV() {
-    const columns = [
-      "id",
-      "student",
-      "email",
-      "course",
-      "batch",
-      "subject",
-      "category",
-      "priority",
-      "status",
-      "assignedTo",
-      "createdAt",
-    ];
-
-    const escapeCSV = (value) =>
-      `"${String(value ?? "").replace(/"/g, '""')}"`;
-
-    const csv = [
-      columns.join(","),
-      ...filteredDoubts.map((d) =>
-        columns.map((column) => escapeCSV(d[column])).join(",")
-      ),
-    ].join("\r\n");
-
-    const url = URL.createObjectURL(
-      new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" })
-    );
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "appwars-doubts.csv";
-    link.click();
-    URL.revokeObjectURL(url);
-  }
+  const inputClass =
+    "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 text-slate-900 dark:bg-slate-950 dark:text-slate-100 sm:p-6 lg:p-8">
-      <div className="mx-auto max-w-[1600px] space-y-6">
-        <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+    <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        {/* Page heading */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-sm font-semibold text-blue-600">
-              APPWARS TECHNOLOGIES PVT. LTD.
-            </p>
-            <h1 className="mt-1 text-2xl font-bold sm:text-3xl">
+            <div className="mb-2 flex items-center gap-2 text-sm font-medium text-blue-600">
+              <MessageCircleQuestion size={18} />
+              Admin Panel
+            </div>
+
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
               Doubts Management
             </h1>
-            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-              Review student questions, assign trainers, and track resolutions.
+
+            <p className="mt-2 text-sm text-slate-500">
+              Manage student questions, assign trainers, and track resolutions.
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
             <button
-              onClick={exportCSV}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
+              type="button"
+              onClick={fetchDoubts}
+              disabled={loading}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-100 disabled:opacity-50"
             >
-              Export CSV
+              <RefreshCw
+                size={16}
+                className={loading ? "animate-spin" : ""}
+              />
+              Refresh
             </button>
+
             <button
-              onClick={openAdd}
-              className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
+              type="button"
+              onClick={() => {
+                setForm(EMPTY_FORM);
+                setError("");
+                setShowCreateModal(true);
+              }}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
             >
-              <Plus size={18} /> Add Doubt
+              <Plus size={18} />
+              Add Doubt
             </button>
           </div>
-        </header>
+        </div>
 
-        {notice && (
-          <div className="flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
-            {notice}
-            <button onClick={() => setNotice("")} aria-label="Dismiss message">
+        {/* Feedback messages */}
+        {error && (
+          <div
+            role="alert"
+            className="flex items-start justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          >
+            <div className="flex items-start gap-2">
+              <AlertCircle size={18} className="mt-0.5 shrink-0" />
+              <span>{error}</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setError("")}
+              aria-label="Dismiss error"
+            >
               <X size={17} />
             </button>
           </div>
         )}
 
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {success && (
+          <div
+            role="status"
+            className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"
+          >
+            <CheckCircle2 size={18} />
+            {success}
+          </div>
+        )}
+
+        {/* Statistics */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             title="Total Doubts"
             value={stats.total}
-            subtitle="All submitted questions"
-            icon={MessagesSquare}
-            color="bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
+            icon={MessageSquare}
+            color="blue"
           />
           <StatCard
-            title="Open Doubts"
+            title="Open"
             value={stats.open}
-            subtitle="Awaiting a response"
-            icon={MessageCircleQuestion}
-            color="bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
+            icon={Clock}
+            color="amber"
           />
           <StatCard
             title="In Progress"
             value={stats.inProgress}
-            subtitle="Being addressed"
-            icon={Clock}
-            color="bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+            icon={RefreshCw}
+            color="indigo"
           />
           <StatCard
             title="Resolved"
             value={stats.resolved}
-            subtitle={`${stats.urgent} urgent unresolved`}
-            icon={CircleCheck}
-            color="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+            icon={CheckCircle2}
+            color="emerald"
           />
-        </section>
+        </div>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <div className="relative">
+        {/* Search and filters */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <div className="relative md:col-span-2">
               <Search
                 size={18}
                 className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
               />
+
               <input
+                type="search"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search doubts or students..."
-                className={`${inputClass} mt-0 pl-10`}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search student, subject, course..."
+                className={`${inputClass} pl-10`}
               />
             </div>
 
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className={inputClass.replace("mt-1.5 ", "")}
-            >
-              <option value="All">All statuses</option>
-              <option value="Open">Open</option>
-              <option value="In Progress">In Progress</option>
-              <option value="Resolved">Resolved</option>
-            </select>
+            <div className="relative">
+              <Filter
+                size={16}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+              />
 
-            <select
-              value={priorityFilter}
-              onChange={(e) => setPriorityFilter(e.target.value)}
-              className={inputClass.replace("mt-1.5 ", "")}
-            >
-              <option value="All">All priorities</option>
-              <option value="Urgent">Urgent</option>
-              <option value="High">High</option>
-              <option value="Medium">Medium</option>
-              <option value="Low">Low</option>
-            </select>
-
-            <select
-              value={courseFilter}
-              onChange={(e) => setCourseFilter(e.target.value)}
-              className={inputClass.replace("mt-1.5 ", "")}
-            >
-              <option value="All">All courses</option>
-              {courses.map((course) => (
-                <option key={course} value={course}>
-                  {course}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Showing {filteredDoubts.length} of {doubts.length} doubts
-            </p>
-            <button
-              onClick={() =>
-                setSortOrder((previous) =>
-                  previous === "newest" ? "oldest" : "newest"
-                )
-              }
-              className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
-            >
-              <ArrowUpDown size={16} />
-              {sortOrder === "newest" ? "Newest first" : "Oldest first"}
-            </button>
-          </div>
-
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[1100px] text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-xs uppercase text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                  <th className="px-3 py-4">Student / Doubt</th>
-                  <th className="px-3 py-4">Course / Batch</th>
-                  <th className="px-3 py-4">Priority</th>
-                  <th className="px-3 py-4">Assigned Trainer</th>
-                  <th className="px-3 py-4">Submitted</th>
-                  <th className="px-3 py-4">Status</th>
-                  <th className="px-3 py-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredDoubts.map((doubt) => (
-                  <tr
-                    key={doubt.id}
-                    className="border-b border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50"
-                  >
-                    <td className="px-3 py-4">
-                      <p className="font-semibold">{doubt.subject}</p>
-                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                        {doubt.student} · {doubt.id}
-                      </p>
-                      <p className="mt-2 max-w-xs truncate text-xs text-slate-500 dark:text-slate-400">
-                        {doubt.question}
-                      </p>
-                    </td>
-                    <td className="px-3 py-4">
-                      <p>{doubt.course}</p>
-                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                        {doubt.batch || "No batch"}
-                      </p>
-                    </td>
-                    <td className="px-3 py-4">
-                      <PriorityBadge priority={doubt.priority} />
-                    </td>
-                    <td className="px-3 py-4">{doubt.assignedTo || "Unassigned"}</td>
-                    <td className="px-3 py-4">{doubt.createdAt}</td>
-                    <td className="px-3 py-4">
-                      <StatusBadge status={doubt.status} />
-                    </td>
-                    <td className="px-3 py-4">
-                      <div className="flex justify-end gap-1">
-                        <button
-                          onClick={() => {
-                            setSelectedDoubt(doubt);
-                            setModal("view");
-                          }}
-                          title="View and reply"
-                          className="rounded-lg p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800"
-                        >
-                          <Eye size={17} />
-                        </button>
-                        <button
-                          onClick={() => openEdit(doubt)}
-                          title="Edit doubt"
-                          className="rounded-lg p-2 text-amber-600 hover:bg-amber-50 dark:hover:bg-slate-800"
-                        >
-                          <Pencil size={17} />
-                        </button>
-                        <button
-                          onClick={() => deleteDoubt(doubt)}
-                          title="Delete doubt"
-                          className="rounded-lg p-2 text-red-600 hover:bg-red-50 dark:hover:bg-slate-800"
-                        >
-                          <Trash2 size={17} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value)}
+                className={`${inputClass} appearance-none pl-9 pr-9`}
+              >
+                <option value="All">All statuses</option>
+                {STATUS_OPTIONS.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
                 ))}
+              </select>
 
-                {filteredDoubts.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={7}
-                      className="px-3 py-12 text-center text-slate-500 dark:text-slate-400"
-                    >
-                      No doubts found. Try changing your search or filters.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+              <ChevronDown
+                size={16}
+                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+              />
+            </div>
 
-        {modal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4">
-            <div className="my-auto max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900 sm:p-6">
-              <div className="mb-5 flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl font-bold">
-                    {modal === "add"
-                      ? "Add Student Doubt"
-                      : modal === "edit"
-                      ? "Edit Doubt"
-                      : selectedDoubt?.subject}
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                    {modal === "view"
-                      ? `${selectedDoubt?.id} · ${selectedDoubt?.student}`
-                      : "Manage the question details and assignment"}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setModal(null)}
-                  aria-label="Close modal"
-                  className="rounded-lg p-2 hover:bg-slate-100 dark:hover:bg-slate-800"
-                >
-                  <X size={20} />
-                </button>
-              </div>
+            <div className="relative">
+              <select
+                value={priorityFilter}
+                onChange={(event) => setPriorityFilter(event.target.value)}
+                className={`${inputClass} appearance-none pr-9`}
+              >
+                <option value="All">All priorities</option>
+                {PRIORITY_OPTIONS.map((priority) => (
+                  <option key={priority} value={priority}>
+                    {priority}
+                  </option>
+                ))}
+              </select>
 
-              {modal === "view" && selectedDoubt && (
-                <div className="space-y-5">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800">
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        Student
-                      </p>
-                      <p className="mt-1 font-semibold">{selectedDoubt.student}</p>
-                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                        {selectedDoubt.email}
-                      </p>
-                    </div>
-                    <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800">
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        Course / Batch
-                      </p>
-                      <p className="mt-1 font-semibold">{selectedDoubt.course}</p>
-                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                        {selectedDoubt.batch || "No batch assigned"}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div>
-                    <p className="mb-2 text-sm font-semibold">Question</p>
-                    <div className="rounded-xl border border-slate-200 p-4 text-sm leading-6 dark:border-slate-700">
-                      {selectedDoubt.question}
-                    </div>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <div>
-                      <label className="text-sm font-medium">Status</label>
-                      <select
-                        value={selectedDoubt.status}
-                        onChange={(e) =>
-                          changeStatus(selectedDoubt, e.target.value)
-                        }
-                        className={inputClass}
-                      >
-                        <option>Open</option>
-                        <option>In Progress</option>
-                        <option>Resolved</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium">Priority</label>
-                      <select
-                        value={selectedDoubt.priority}
-                        onChange={(e) => {
-                          const updated = {
-                            ...selectedDoubt,
-                            priority: e.target.value,
-                          };
-                          setSelectedDoubt(updated);
-                          setDoubts((previous) =>
-                            previous.map((d) =>
-                              d.id === updated.id ? updated : d
-                            )
-                          );
-                        }}
-                        className={inputClass}
-                      >
-                        <option>Urgent</option>
-                        <option>High</option>
-                        <option>Medium</option>
-                        <option>Low</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium">Assign Trainer</label>
-                      <select
-                        value={selectedDoubt.assignedTo || ""}
-                        onChange={(e) => {
-                          const updated = {
-                            ...selectedDoubt,
-                            assignedTo: e.target.value,
-                          };
-                          setSelectedDoubt(updated);
-                          setDoubts((previous) =>
-                            previous.map((d) =>
-                              d.id === updated.id ? updated : d
-                            )
-                          );
-                        }}
-                        className={inputClass}
-                      >
-                        <option>Manav Sharma</option>
-                        <option>Amit Kumar</option>
-                        <option>Neha Gupta</option>
-                        <option value="">Unassigned</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h3 className="mb-3 font-bold">Discussion History</h3>
-                    <div className="max-h-64 space-y-3 overflow-y-auto">
-                      {(selectedDoubt.replies || []).map((item, index) => (
-                        <div
-                          key={`${item.author}-${item.date}-${index}`}
-                          className={`rounded-xl p-4 ${
-                            item.role === "Trainer"
-                              ? "bg-blue-50 dark:bg-blue-950/50"
-                              : "bg-slate-50 dark:bg-slate-800"
-                          }`}
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <p className="text-sm font-semibold">
-                              {item.author}
-                              <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">
-                                {item.role}
-                              </span>
-                            </p>
-                            <span className="text-xs text-slate-500 dark:text-slate-400">
-                              {item.date}
-                            </span>
-                          </div>
-                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6">
-                            {item.message}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {selectedDoubt.status !== "Resolved" && (
-                    <form
-                      onSubmit={sendReply}
-                      className="border-t border-slate-200 pt-4 dark:border-slate-700"
-                    >
-                      <label className="text-sm font-semibold">
-                        Write a Reply
-                        <textarea
-                          value={reply}
-                          onChange={(e) => setReply(e.target.value)}
-                          required
-                          rows={3}
-                          placeholder="Explain the solution or next steps..."
-                          className={`${inputClass} resize-y`}
-                        />
-                      </label>
-                      <div className="mt-3 flex justify-end">
-                        <button
-                          type="submit"
-                          className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
-                        >
-                          <Send size={16} /> Send Reply
-                        </button>
-                      </div>
-                    </form>
-                  )}
-
-                  <div className="flex flex-wrap justify-end gap-3 border-t border-slate-200 pt-4 dark:border-slate-700">
-                    {selectedDoubt.status !== "Resolved" && (
-                      <button
-                        onClick={() => changeStatus(selectedDoubt, "Resolved")}
-                        className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
-                      >
-                        <CheckCheck size={17} /> Mark Resolved
-                      </button>
-                    )}
-                    <button
-                      onClick={() => setModal(null)}
-                      className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold dark:border-slate-700"
-                    >
-                      Close
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {(modal === "add" || modal === "edit") && (
-                <form onSubmit={saveDoubt} className="space-y-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <label className="text-sm font-medium">
-                      Student Name *
-                      <input
-                        required
-                        value={form.student}
-                        onChange={(e) => updateForm("student", e.target.value)}
-                        className={inputClass}
-                        placeholder="Student name"
-                      />
-                    </label>
-                    <label className="text-sm font-medium">
-                      Student Email
-                      <input
-                        type="email"
-                        value={form.email}
-                        onChange={(e) => updateForm("email", e.target.value)}
-                        className={inputClass}
-                        placeholder="student@example.com"
-                      />
-                    </label>
-                    <label className="text-sm font-medium">
-                      Course
-                      <select
-                        value={form.course}
-                        onChange={(e) => updateForm("course", e.target.value)}
-                        className={inputClass}
-                      >
-                        <option>MERN Stack Development</option>
-                        <option>AWS Cloud Computing</option>
-                        <option>Software Testing</option>
-                        <option>Full Stack Development</option>
-                        <option>Python Programming</option>
-                        <option>DevOps and Cloud Computing</option>
-                      </select>
-                    </label>
-                    <label className="text-sm font-medium">
-                      Batch
-                      <input
-                        value={form.batch}
-                        onChange={(e) => updateForm("batch", e.target.value)}
-                        className={inputClass}
-                        placeholder="e.g. MERN-2026-A"
-                      />
-                    </label>
-                    <label className="text-sm font-medium sm:col-span-2">
-                      Doubt Subject *
-                      <input
-                        required
-                        value={form.subject}
-                        onChange={(e) => updateForm("subject", e.target.value)}
-                        className={inputClass}
-                        placeholder="Short title of the question"
-                      />
-                    </label>
-                    <label className="text-sm font-medium sm:col-span-2">
-                      Question Details *
-                      <textarea
-                        required
-                        rows={4}
-                        value={form.question}
-                        onChange={(e) => updateForm("question", e.target.value)}
-                        className={`${inputClass} resize-y`}
-                        placeholder="Describe the student's question..."
-                      />
-                    </label>
-                    <label className="text-sm font-medium">
-                      Category
-                      <select
-                        value={form.category}
-                        onChange={(e) => updateForm("category", e.target.value)}
-                        className={inputClass}
-                      >
-                        <option>General</option>
-                        <option>JavaScript</option>
-                        <option>React.js</option>
-                        <option>Node.js</option>
-                        <option>MongoDB</option>
-                        <option>AWS</option>
-                        <option>Testing</option>
-                        <option>Python</option>
-                      </select>
-                    </label>
-                    <label className="text-sm font-medium">
-                      Priority
-                      <select
-                        value={form.priority}
-                        onChange={(e) => updateForm("priority", e.target.value)}
-                        className={inputClass}
-                      >
-                        <option>Urgent</option>
-                        <option>High</option>
-                        <option>Medium</option>
-                        <option>Low</option>
-                      </select>
-                    </label>
-                    <label className="text-sm font-medium">
-                      Status
-                      <select
-                        value={form.status}
-                        onChange={(e) => updateForm("status", e.target.value)}
-                        className={inputClass}
-                      >
-                        <option>Open</option>
-                        <option>In Progress</option>
-                        <option>Resolved</option>
-                      </select>
-                    </label>
-                    <label className="text-sm font-medium">
-                      Assign Trainer
-                      <select
-                        value={form.assignedTo}
-                        onChange={(e) => updateForm("assignedTo", e.target.value)}
-                        className={inputClass}
-                      >
-                        <option>Manav Sharma</option>
-                        <option>Amit Kumar</option>
-                        <option>Neha Gupta</option>
-                        <option value="">Unassigned</option>
-                      </select>
-                    </label>
-                  </div>
-
-                  <div className="flex justify-end gap-3 border-t border-slate-200 pt-4 dark:border-slate-700">
-                    <button
-                      type="button"
-                      onClick={() => setModal(null)}
-                      className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold dark:border-slate-700"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
-                    >
-                      {modal === "add" ? "Create Doubt" : "Save Changes"}
-                    </button>
-                  </div>
-                </form>
-              )}
+              <ChevronDown
+                size={16}
+                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+              />
             </div>
           </div>
-        )}
+        </div>
+
+        {/* Doubts table */}
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-1 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="font-semibold text-slate-900">
+              Student Doubts
+            </h2>
+
+            <p className="text-sm text-slate-500">
+              Showing {filteredDoubts.length} of {doubts.length} doubts
+            </p>
+          </div>
+
+          {loading ? (
+            <div className="flex min-h-64 flex-col items-center justify-center gap-3 text-slate-500">
+              <LoaderCircle
+                size={30}
+                className="animate-spin text-blue-600"
+              />
+              <p className="text-sm">Loading doubts from the server...</p>
+            </div>
+          ) : filteredDoubts.length === 0 ? (
+            <div className="flex min-h-64 flex-col items-center justify-center px-5 text-center">
+              <div className="mb-3 rounded-2xl bg-slate-100 p-4 text-slate-400">
+                <MessageCircleQuestion size={30} />
+              </div>
+
+              <h3 className="font-semibold text-slate-800">
+                No doubts found
+              </h3>
+
+              <p className="mt-1 max-w-sm text-sm text-slate-500">
+                {error
+                  ? "Check your backend server and API endpoint, then refresh."
+                  : "Try changing your search or filters, or create a new doubt."}
+              </p>
+
+              {error && (
+                <button
+                  type="button"
+                  onClick={fetchDoubts}
+                  className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                >
+                  Try again
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1050px] text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-5 py-4 font-semibold">Student / Doubt</th>
+                    <th className="px-5 py-4 font-semibold">Course</th>
+                    <th className="px-5 py-4 font-semibold">Priority</th>
+                    <th className="px-5 py-4 font-semibold">Assigned To</th>
+                    <th className="px-5 py-4 font-semibold">Status</th>
+                    <th className="px-5 py-4 font-semibold">Date</th>
+                    <th className="px-5 py-4 text-right font-semibold">Actions</th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-slate-100">
+                  {filteredDoubts.map((doubt) => (
+                    <tr
+                      key={doubt.id}
+                      className="transition hover:bg-slate-50/80"
+                    >
+                      <td className="max-w-xs px-5 py-4">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedDoubtId(doubt.id);
+                            setReplyText("");
+                            setError("");
+                          }}
+                          className="block max-w-full text-left"
+                        >
+                          <span className="block truncate font-semibold text-slate-900 hover:text-blue-600">
+                            {doubt.subject}
+                          </span>
+
+                          <span className="mt-1 block text-xs text-slate-500">
+                            {doubt.student}
+                            {doubt.email ? ` · ${doubt.email}` : ""}
+                          </span>
+
+                          <span className="mt-1 line-clamp-2 block text-xs text-slate-500">
+                            {doubt.description}
+                          </span>
+                        </button>
+                      </td>
+
+                      <td className="px-5 py-4 text-slate-600">
+                        {doubt.course}
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${priorityClasses(
+                            doubt.priority
+                          )}`}
+                        >
+                          {doubt.priority}
+                        </span>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <select
+                          value={doubt.assignedTo}
+                          onChange={(event) =>
+                            updateDoubtField(doubt, {
+                              assignedTo: event.target.value,
+                            })
+                          }
+                          className="max-w-40 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 outline-none focus:border-blue-500"
+                          aria-label={`Assign ${doubt.subject}`}
+                        >
+                          {[
+                            ...new Set([
+                              "Unassigned",
+                              ...TRAINERS,
+                              doubt.assignedTo,
+                            ]),
+                          ].map((trainer) => (
+                            <option key={trainer} value={trainer}>
+                              {trainer}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <select
+                          value={doubt.status}
+                          onChange={(event) =>
+                            changeStatus(doubt, event.target.value)
+                          }
+                          className={`max-w-36 rounded-full px-3 py-1.5 text-xs font-semibold outline-none ring-1 ${statusClasses(
+                            doubt.status
+                          )}`}
+                          aria-label={`Change status for ${doubt.subject}`}
+                        >
+                          {STATUS_OPTIONS.map((status) => (
+                            <option key={status} value={status}>
+                              {status}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+
+                      <td className="whitespace-nowrap px-5 py-4 text-slate-500">
+                        <span className="inline-flex items-center gap-1.5">
+                          <CalendarDays size={14} />
+                          {formatDate(doubt.createdAt)}
+                        </span>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedDoubtId(doubt.id);
+                              setReplyText("");
+                              setError("");
+                            }}
+                            className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-50"
+                          >
+                            View / Reply
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => deleteDoubt(doubt)}
+                            title="Delete doubt"
+                            aria-label={`Delete ${doubt.subject}`}
+                            className="rounded-lg border border-red-100 p-2 text-red-600 hover:bg-red-50"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
-    </main>
+
+      {/* Create doubt modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/50 p-4">
+          <div className="my-auto w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">
+                  Create New Doubt
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Add a question to the doubts management system.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                aria-label="Close modal"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={saveDoubt} className="space-y-4 p-6">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label="Student Name *">
+                  <input
+                    required
+                    value={form.student}
+                    onChange={(e) => updateForm("student", e.target.value)}
+                    placeholder="Enter student name"
+                    className={inputClass}
+                  />
+                </Field>
+
+                <Field label="Student Email">
+                  <input
+                    type="email"
+                    value={form.email}
+                    onChange={(e) => updateForm("email", e.target.value)}
+                    placeholder="student@example.com"
+                    className={inputClass}
+                  />
+                </Field>
+
+                <Field label="Subject *">
+                  <input
+                    required
+                    value={form.subject}
+                    onChange={(e) => updateForm("subject", e.target.value)}
+                    placeholder="Enter doubt subject"
+                    className={inputClass}
+                  />
+                </Field>
+
+                <Field label="Course / Batch">
+                  <input
+                    value={form.course}
+                    onChange={(e) => updateForm("course", e.target.value)}
+                    placeholder="e.g. MERN-07"
+                    className={inputClass}
+                  />
+                </Field>
+
+                <Field label="Priority">
+                  <select
+                    value={form.priority}
+                    onChange={(e) => updateForm("priority", e.target.value)}
+                    className={inputClass}
+                  >
+                    {PRIORITY_OPTIONS.map((priority) => (
+                      <option key={priority} value={priority}>
+                        {priority}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field label="Assign Trainer">
+                  <select
+                    value={form.assignedTo}
+                    onChange={(e) => updateForm("assignedTo", e.target.value)}
+                    className={inputClass}
+                  >
+                    {TRAINERS.map((trainer) => (
+                      <option key={trainer} value={trainer}>
+                        {trainer}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+
+              <Field label="Description *">
+                <textarea
+                  required
+                  rows={4}
+                  value={form.description}
+                  onChange={(e) =>
+                    updateForm("description", e.target.value)
+                  }
+                  placeholder="Describe the student's doubt..."
+                  className={`${inputClass} resize-y`}
+                />
+              </Field>
+
+              <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {saving && (
+                    <LoaderCircle size={16} className="animate-spin" />
+                  )}
+                  {saving ? "Saving..." : "Create Doubt"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Doubt details and replies modal */}
+      {selectedDoubt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/50 p-4">
+          <div className="my-auto flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
+              <div className="min-w-0">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-blue-600">
+                  Doubt Details
+                </p>
+                <h2 className="text-xl font-bold text-slate-900">
+                  {selectedDoubt.subject}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Submitted by {selectedDoubt.student}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedDoubtId(null)}
+                className="shrink-0 rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                aria-label="Close details"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex-1 space-y-5 overflow-y-auto p-6">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="rounded-xl bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Course</p>
+                  <p className="mt-1 font-semibold text-slate-800">
+                    {selectedDoubt.course}
+                  </p>
+                </div>
+
+                <div className="rounded-xl bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Priority</p>
+                  <select
+                    value={selectedDoubt.priority}
+                    onChange={(e) =>
+                      updateDoubtField(selectedDoubt, {
+                        priority: e.target.value,
+                      })
+                    }
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm"
+                  >
+                    {PRIORITY_OPTIONS.map((priority) => (
+                      <option key={priority} value={priority}>
+                        {priority}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="rounded-xl bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Status</p>
+                  <select
+                    value={selectedDoubt.status}
+                    onChange={(e) =>
+                      changeStatus(selectedDoubt, e.target.value)
+                    }
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm"
+                  >
+                    {STATUS_OPTIONS.map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="mb-2 text-sm font-semibold text-slate-900">
+                  Description
+                </h3>
+                <p className="whitespace-pre-wrap rounded-xl border border-slate-100 bg-white p-4 text-sm leading-6 text-slate-600">
+                  {selectedDoubt.description || "No description provided."}
+                </p>
+              </div>
+
+              <div>
+                <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
+                  <MessageSquare size={17} />
+                  Conversation ({selectedDoubt.replies.length})
+                </h3>
+
+                {selectedDoubt.replies.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-slate-200 p-5 text-center text-sm text-slate-500">
+                    No replies yet. Send a reply below.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {selectedDoubt.replies.map((reply, index) => (
+                      <div
+                        key={reply._id || reply.id || index}
+                        className="rounded-xl border border-slate-100 bg-slate-50 p-4"
+                      >
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <span className="inline-flex items-center gap-2 text-sm font-semibold text-slate-800">
+                            <UserRound size={15} />
+                            {reply.sender}
+                          </span>
+
+                          <span className="text-xs text-slate-400">
+                            {formatDate(reply.createdAt)}
+                          </span>
+                        </div>
+
+                        <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">
+                          {reply.message}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <form onSubmit={sendReply} className="space-y-3">
+                <label
+                  htmlFor="doubt-reply"
+                  className="block text-sm font-semibold text-slate-800"
+                >
+                  Write a reply
+                </label>
+
+                <textarea
+                  id="doubt-reply"
+                  required
+                  rows={3}
+                  value={replyText}
+                  onChange={(e) => setReplyText(e.target.value)}
+                  placeholder="Type your response to the student..."
+                  className={`${inputClass} resize-y`}
+                />
+
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={saving || !replyText.trim()}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {saving ? (
+                      <LoaderCircle size={16} className="animate-spin" />
+                    ) : (
+                      <Send size={16} />
+                    )}
+                    {saving ? "Sending..." : "Send Reply"}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div className="border-t border-slate-100 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => setSelectedDoubtId(null)}
+                className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <div className="space-y-1.5">
+      <label className="block text-sm font-medium text-slate-700">
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function StatCard({ title, value, icon: Icon, color }) {
+  const colors = {
+    blue: "bg-blue-50 text-blue-600",
+    amber: "bg-amber-50 text-amber-600",
+    indigo: "bg-indigo-50 text-indigo-600",
+    emerald: "bg-emerald-50 text-emerald-600",
+  };
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium text-slate-500">{title}</p>
+          <p className="mt-2 text-3xl font-bold tracking-tight text-slate-900">
+            {value}
+          </p>
+        </div>
+
+        <div className={`rounded-xl p-3 ${colors[color] || colors.blue}`}>
+          <Icon size={22} />
+        </div>
+      </div>
+    </div>
   );
 }

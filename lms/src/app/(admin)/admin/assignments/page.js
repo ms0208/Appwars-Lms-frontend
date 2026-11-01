@@ -1,6 +1,7 @@
+
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ClipboardList,
   Plus,
@@ -16,78 +17,21 @@ import {
   Eye,
   FileText,
   CheckCircle2,
-  AlertCircle,
-  Send,
-  Save,
   GraduationCap,
   Filter,
   Award,
+  Send,
+  Save,
+  RefreshCw,
 } from "lucide-react";
 
-const INITIAL_ASSIGNMENTS = [
-  {
-    id: 1,
-    title: "Build a Responsive React Dashboard",
-    description:
-      "Create a responsive admin dashboard using React components, props, state, hooks, and Tailwind CSS. The dashboard should include navigation, summary cards, tables, and responsive layouts.",
-    course: "MERN Stack Development",
-    batch: "MERN-01",
-    trainer: "Manav Sharma",
-    audience: "Batch",
-    startDate: "2026-10-24",
-    dueDate: "2026-10-30",
-    totalMarks: 100,
-    priority: "High",
-    difficulty: "Intermediate",
-    status: "Published",
-    submissions: 18,
-    totalStudents: 25,
-    createdAt: "2026-10-24",
-  },
-  {
-    id: 2,
-    title: "Node.js REST API Development",
-    description:
-      "Develop a REST API using Node.js and Express.js. Implement CRUD operations, input validation, error handling, and MongoDB integration.",
-    course: "MERN Stack Development",
-    batch: "MERN-01",
-    trainer: "Manav Sharma",
-    audience: "Batch",
-    startDate: "2026-10-24",
-    dueDate: "2026-11-02",
-    totalMarks: 100,
-    priority: "Normal",
-    difficulty: "Intermediate",
-    status: "Published",
-    submissions: 12,
-    totalStudents: 25,
-    createdAt: "2026-10-24",
-  },
-  {
-    id: 3,
-    title: "AWS Cloud Fundamentals",
-    description:
-      "Explain cloud computing models, AWS global infrastructure, IAM basics, EC2 instances, and S3 storage. Submit a short report with screenshots of practical exercises.",
-    course: "AWS Cloud Computing",
-    batch: "AWS-02",
-    trainer: "Rohit Kumar",
-    audience: "Batch",
-    startDate: "2026-10-25",
-    dueDate: "2026-11-05",
-    totalMarks: 50,
-    priority: "Normal",
-    difficulty: "Beginner",
-    status: "Draft",
-    submissions: 0,
-    totalStudents: 20,
-    createdAt: "2026-10-24",
-  },
-];
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
 
 const EMPTY_FORM = {
   title: "",
   description: "",
-  course: "MERN Stack Development",
+  course: "",
   batch: "",
   trainer: "",
   audience: "Batch",
@@ -97,8 +41,11 @@ const EMPTY_FORM = {
   priority: "Normal",
   difficulty: "Intermediate",
   status: "Draft",
-  totalStudents: "25",
+  totalStudents: "0",
 };
+
+const inputClass =
+  "w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
 
 const COURSES = [
   "MERN Stack Development",
@@ -125,8 +72,62 @@ const TRAINERS = [
   "Amit Singh",
 ];
 
-const inputClass =
-  "w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
+function getId(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  return value._id || value.id || "";
+}
+
+function getName(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+
+  return (
+    value.name ||
+    value.title ||
+    value.batchName ||
+    value.courseName ||
+    value.fullName ||
+    value.email ||
+    ""
+  );
+}
+
+function dateOnly(value) {
+  if (!value) return "";
+  return String(value).slice(0, 10);
+}
+
+function mapAssignment(item) {
+  return {
+    ...item,
+    id: getId(item),
+    courseId: getId(item.course),
+    batchId: getId(item.batch),
+    trainerId: getId(item.trainer),
+    course: getName(item.course),
+    batch: getName(item.batch) || "All Batches",
+    trainer: getName(item.trainer),
+    startDate: dateOnly(item.startDate),
+    dueDate: dateOnly(item.dueDate),
+    totalMarks: Number(item.totalMarks ?? 100),
+    totalStudents: Number(item.totalStudents ?? 0),
+    submissions: Number(item.submissions ?? 0),
+    priority: item.priority || "Normal",
+    difficulty: item.difficulty || "Intermediate",
+    audience: item.audience || "Batch",
+    status: item.status || "Draft",
+    createdAt: dateOnly(item.createdAt),
+  };
+}
+
+function getList(result) {
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result?.items)) return result.items;
+  if (Array.isArray(result?.data)) return result.data;
+  if (Array.isArray(result?.assignments)) return result.assignments;
+  return [];
+}
 
 function StatusBadge({ status }) {
   const styles = {
@@ -220,7 +221,11 @@ function FormField({ label, children, required = false }) {
 }
 
 export default function AssignmentsPage() {
-  const [assignments, setAssignments] = useState(INITIAL_ASSIGNMENTS);
+  const [assignments, setAssignments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [courseFilter, setCourseFilter] = useState("All");
@@ -229,8 +234,124 @@ export default function AssignmentsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [viewAssignment, setViewAssignment] = useState(null);
+
   const [form, setForm] = useState(EMPTY_FORM);
   const [error, setError] = useState("");
+  const [pageError, setPageError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+
+  const [courses, setCourses] = useState([]);
+  const [batches, setBatches] = useState([]);
+  const [trainers, setTrainers] = useState([]);
+
+  // If your login stores the token under another key,
+  // update this function to match your authentication code.
+  const getAuthHeaders = useCallback(() => {
+    let token = null;
+
+    if (typeof window !== "undefined") {
+      token =
+        sessionStorage.getItem("token") ||
+        sessionStorage.getItem("appwars_token") ||
+        localStorage.getItem("token") ||
+        localStorage.getItem("appwars_token");
+    }
+
+    return {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+  }, []);
+
+  const apiRequest = useCallback(
+    async (endpoint, options = {}) => {
+      const response = await fetch(`${API_URL}${endpoint}`, {
+        ...options,
+        headers: {
+          ...getAuthHeaders(),
+          ...options.headers,
+        },
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          result.message ||
+            result.error ||
+            `Request failed with status ${response.status}`
+        );
+      }
+
+      return result;
+    },
+    [getAuthHeaders]
+  );
+
+  const loadAssignments = useCallback(async () => {
+    setPageError("");
+
+    try {
+      const result = await apiRequest("/admin/assignments");
+      setAssignments(getList(result).map(mapAssignment));
+    } catch (err) {
+      setPageError(err.message || "Unable to load assignments.");
+    } finally {
+      setLoading(false);
+    }
+  }, [apiRequest]);
+
+  const loadDropdownOptions = useCallback(async () => {
+    // These endpoints are optional if your backend does not expose them.
+    // The form falls back to the static options above.
+    try {
+      const [courseResult, batchResult, trainerResult] =
+        await Promise.all([
+          apiRequest("/admin/courses"),
+          apiRequest("/admin/batches"),
+          apiRequest("/admin/trainers"),
+        ]);
+
+      const courseItems = getList(courseResult);
+      const batchItems = getList(batchResult);
+      const trainerItems = getList(trainerResult);
+
+      if (courseItems.length) {
+        setCourses(
+          courseItems.map((item) => ({
+            id: getId(item),
+            name: getName(item),
+          })).filter((item) => item.id && item.name)
+        );
+      }
+
+      if (batchItems.length) {
+        setBatches(
+          batchItems.map((item) => ({
+            id: getId(item),
+            name: getName(item),
+          })).filter((item) => item.id && item.name)
+        );
+      }
+
+      if (trainerItems.length) {
+        setTrainers(
+          trainerItems.map((item) => ({
+            id: getId(item),
+            name: getName(item),
+          })).filter((item) => item.id && item.name)
+        );
+      }
+    } catch {
+      // Keep the page usable if these option endpoints are unavailable.
+      // The assignment endpoint itself will display any loading errors.
+    }
+  }, [apiRequest]);
+
+  useEffect(() => {
+    loadAssignments();
+    loadDropdownOptions();
+  }, [loadAssignments, loadDropdownOptions]);
 
   const publishedCount = assignments.filter(
     (item) => item.status === "Published"
@@ -265,7 +386,9 @@ export default function AssignmentsPage() {
       item.course,
       item.batch,
       item.trainer,
-    ].some((value) => value.toLowerCase().includes(query));
+    ].some((value) =>
+      String(value || "").toLowerCase().includes(query)
+    );
 
     const matchesStatus =
       statusFilter === "All" || item.status === statusFilter;
@@ -286,7 +409,10 @@ export default function AssignmentsPage() {
 
   function openCreateModal() {
     setEditingId(null);
-    setForm({ ...EMPTY_FORM });
+    setForm({
+      ...EMPTY_FORM,
+      course: courses[0]?.id || "",
+    });
     setError("");
     setModalOpen(true);
   }
@@ -295,9 +421,17 @@ export default function AssignmentsPage() {
     setEditingId(assignment.id);
 
     setForm({
+      ...EMPTY_FORM,
       ...assignment,
-      totalMarks: String(assignment.totalMarks),
-      totalStudents: String(assignment.totalStudents),
+      course: assignment.courseId || "",
+      batch: assignment.batchId || "",
+      trainer: assignment.trainerId || "",
+      totalMarks: String(assignment.totalMarks ?? 100),
+      totalStudents: String(assignment.totalStudents ?? 0),
+      audience:
+        assignment.batch === "All Batches"
+          ? "Everyone"
+          : assignment.audience || "Batch",
     });
 
     setError("");
@@ -311,22 +445,33 @@ export default function AssignmentsPage() {
     }));
   }
 
-  function saveAssignment(event) {
+  async function saveAssignment(event) {
     event.preventDefault();
     setError("");
+    setSuccessMessage("");
 
     if (!form.title.trim() || !form.description.trim()) {
       setError("Please enter the assignment title and description.");
       return;
     }
 
-    if (!form.startDate || !form.dueDate) {
-      setError("Please select both the start date and due date.");
+    if (!form.dueDate) {
+      setError("Please select the due date.");
       return;
     }
 
-    if (form.dueDate < form.startDate) {
+    if (form.startDate && form.dueDate < form.startDate) {
       setError("The due date cannot be earlier than the start date.");
+      return;
+    }
+
+    if (!form.course) {
+      setError("Please select a course.");
+      return;
+    }
+
+    if (form.audience === "Batch" && !form.batch) {
+      setError("Please select a batch.");
       return;
     }
 
@@ -340,76 +485,124 @@ export default function AssignmentsPage() {
       return;
     }
 
-    const existing = assignments.find(
+    const duplicate = assignments.find(
       (item) =>
         item.id !== editingId &&
         item.title.trim().toLowerCase() ===
           form.title.trim().toLowerCase() &&
-        item.course === form.course &&
-        item.batch === form.batch
+        item.courseId === form.course &&
+        item.batchId === form.batch
     );
 
-    if (existing) {
+    if (duplicate) {
       setError(
         "An assignment with this title already exists for this course and batch."
       );
       return;
     }
 
-    const today = new Date().toLocaleDateString("en-CA");
+    setSaving(true);
 
-    const data = {
-      title: form.title.trim(),
-      description: form.description.trim(),
-      course: form.course,
-      batch: form.audience === "Everyone" ? "All Batches" : form.batch,
-      trainer: form.trainer.trim(),
-      audience: form.audience,
-      startDate: form.startDate,
-      dueDate: form.dueDate,
-      totalMarks: Number(form.totalMarks),
-      totalStudents: Number(form.totalStudents),
-      priority: form.priority,
-      difficulty: form.difficulty,
-      status: form.status,
-      createdAt: today,
-    };
+    try {
+      /*
+       * The core fields below match the typical Assignment schema:
+       * title, description, course, batch, trainer, dueDate, status.
+       *
+       * The additional fields are included for schemas that support them.
+       * Mongoose strict mode may ignore fields not defined in your model.
+       */
+      const payload = {
+        title: form.title.trim(),
+        description: form.description.trim(),
+        course: form.course,
+        ...(form.audience === "Everyone"
+          ? {}
+          : { batch: form.batch }),
+        ...(form.trainer ? { trainer: form.trainer } : {}),
+        dueDate: form.dueDate,
+        status: form.status,
+        startDate: form.startDate || undefined,
+        totalMarks: Number(form.totalMarks),
+        totalStudents: Number(form.totalStudents),
+        priority: form.priority,
+        difficulty: form.difficulty,
+        audience: form.audience,
+      };
 
-    if (editingId !== null) {
-      setAssignments((previous) =>
-        previous.map((item) =>
-          item.id === editingId ? { ...item, ...data } : item
-        )
+      const result = editingId
+        ? await apiRequest(`/admin/assignments/${editingId}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          })
+        : await apiRequest("/admin/assignments", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+
+      const savedItem =
+        result.item ||
+        result.assignment ||
+        (result.data && !Array.isArray(result.data)
+          ? result.data
+          : null);
+
+      if (savedItem && (savedItem._id || savedItem.id)) {
+        const mapped = mapAssignment(savedItem);
+
+        setAssignments((previous) =>
+          editingId
+            ? previous.map((item) =>
+                item.id === editingId ? mapped : item
+              )
+            : [mapped, ...previous]
+        );
+      } else {
+        await loadAssignments();
+      }
+
+      setModalOpen(false);
+      setEditingId(null);
+      setForm({ ...EMPTY_FORM });
+      setSuccessMessage(
+        editingId
+          ? "Assignment updated successfully."
+          : "Assignment created successfully."
       );
-    } else {
-      setAssignments((previous) => [
-        {
-          id: Date.now(),
-          ...data,
-          submissions: 0,
-        },
-        ...previous,
-      ]);
+    } catch (err) {
+      setError(err.message || "Failed to save assignment.");
+    } finally {
+      setSaving(false);
     }
-
-    setModalOpen(false);
-    setEditingId(null);
-    setForm({ ...EMPTY_FORM });
   }
 
-  function deleteAssignment(assignment) {
+  async function deleteAssignment(assignment) {
     const confirmed = window.confirm(
       `Delete assignment "${assignment.title}"?`
     );
 
     if (!confirmed) return;
 
-    setAssignments((previous) =>
-      previous.filter((item) => item.id !== assignment.id)
-    );
+    setPageError("");
+    setDeletingId(assignment.id);
 
-    if (viewAssignment?.id === assignment.id) {
-      setViewAssignment(null);
+    try {
+      await apiRequest(`/admin/assignments/${assignment.id}`, {
+        method: "DELETE",
+      });
+
+      setAssignments((previous) =>
+        previous.filter((item) => item.id !== assignment.id)
+      );
+
+      if (viewAssignment?.id === assignment.id) {
+        setViewAssignment(null);
+      }
+
+      setSuccessMessage("Assignment deleted successfully.");
+    } catch (err) {
+      setPageError(err.message || "Failed to delete assignment.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -464,7 +657,6 @@ export default function AssignmentsPage() {
 
     link.href = url;
     link.download = "appwars-assignments.csv";
-
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -478,10 +670,25 @@ export default function AssignmentsPage() {
     setPriorityFilter("All");
   }
 
+  const courseOptions =
+    courses.length > 0
+      ? courses
+      : COURSES.map((name) => ({ id: name, name }));
+
+  const batchOptions =
+    batches.length > 0
+      ? batches
+      : BATCHES.map((name) => ({ id: name, name }));
+
+  const trainerOptions =
+    trainers.length > 0
+      ? trainers
+      : TRAINERS.map((name) => ({ id: name, name }));
+
   return (
     <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
       <div className="mx-auto max-w-[1600px] space-y-6">
-        {/* Page Header */}
+        {/* Page header */}
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
           <div>
             <div className="mb-2 flex items-center gap-2 text-sm font-medium text-blue-700">
@@ -500,6 +707,7 @@ export default function AssignmentsPage() {
 
           <div className="flex flex-wrap gap-2">
             <button
+              type="button"
               onClick={exportCSV}
               className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50"
             >
@@ -508,6 +716,7 @@ export default function AssignmentsPage() {
             </button>
 
             <button
+              type="button"
               onClick={openCreateModal}
               className="inline-flex items-center gap-2 rounded-xl bg-[#173b70] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#102b53]"
             >
@@ -517,12 +726,44 @@ export default function AssignmentsPage() {
           </div>
         </div>
 
-        {/* Stats */}
+        {/* Feedback */}
+        {pageError && (
+          <div className="flex flex-col gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between">
+            <span>{pageError}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setLoading(true);
+                loadAssignments();
+                loadDropdownOptions();
+              }}
+              className="inline-flex shrink-0 items-center gap-2 font-semibold underline"
+            >
+              <RefreshCw size={14} />
+              Retry
+            </button>
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            <span>{successMessage}</span>
+            <button
+              type="button"
+              onClick={() => setSuccessMessage("")}
+              aria-label="Dismiss message"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
+        {/* Statistics */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             title="Total Assignments"
             value={assignments.length}
-            subtitle="All created assignments"
+            subtitle="Assignments returned by the server"
             icon={ClipboardList}
             color="blue"
           />
@@ -552,7 +793,7 @@ export default function AssignmentsPage() {
           />
         </div>
 
-        {/* Info banner */}
+        {/* Information banner */}
         <div className="rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 to-white p-5 sm:p-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-3">
@@ -573,6 +814,7 @@ export default function AssignmentsPage() {
             </div>
 
             <button
+              type="button"
               onClick={openCreateModal}
               className="shrink-0 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-blue-700 shadow-sm ring-1 ring-blue-100 hover:bg-blue-50"
             >
@@ -581,7 +823,7 @@ export default function AssignmentsPage() {
           </div>
         </div>
 
-        {/* Filters */}
+        {/* Search and filters */}
         <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
           <div className="mb-4 flex items-center gap-2">
             <Filter size={18} className="text-gray-500" />
@@ -611,11 +853,12 @@ export default function AssignmentsPage() {
               aria-label="Filter by course"
             >
               <option value="All">All courses</option>
-              {COURSES.map((course) => (
-                <option key={course} value={course}>
-                  {course}
-                </option>
-              ))}
+              {[...new Set(assignments.map((item) => item.course).filter(Boolean))]
+                .map((course) => (
+                  <option key={course} value={course}>
+                    {course}
+                  </option>
+                ))}
             </select>
 
             <select
@@ -645,6 +888,7 @@ export default function AssignmentsPage() {
 
           <div className="mt-3 flex justify-end">
             <button
+              type="button"
               onClick={resetFilters}
               className="text-sm font-semibold text-blue-700 hover:text-blue-900"
             >
@@ -653,7 +897,7 @@ export default function AssignmentsPage() {
           </div>
         </div>
 
-        {/* Assignments List */}
+        {/* Assignments list */}
         <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
           <div className="flex flex-col gap-2 border-b border-gray-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -662,176 +906,203 @@ export default function AssignmentsPage() {
                 Showing {filteredAssignments.length} of {assignments.length} assignments
               </p>
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setLoading(true);
+                loadAssignments();
+              }}
+              className="inline-flex items-center gap-2 self-start rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 sm:self-auto"
+            >
+              <RefreshCw size={14} />
+              Refresh
+            </button>
           </div>
 
-          <div className="divide-y divide-gray-100">
-            {filteredAssignments.map((assignment) => {
-              const submissionPercent =
-                assignment.totalStudents > 0
-                  ? Math.min(
-                      100,
-                      Math.round(
-                        (assignment.submissions / assignment.totalStudents) *
-                          100
+          {loading ? (
+            <div className="p-12 text-center text-sm text-gray-500">
+              Loading assignments from the server...
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {filteredAssignments.map((assignment) => {
+                const submissionPercent =
+                  assignment.totalStudents > 0
+                    ? Math.min(
+                        100,
+                        Math.round(
+                          (assignment.submissions /
+                            assignment.totalStudents) *
+                            100
+                        )
                       )
-                    )
-                  : 0;
+                    : 0;
 
-              return (
-                <article
-                  key={assignment.id}
-                  className="p-5 transition hover:bg-gray-50/70 sm:p-6"
-                >
-                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                    <div className="flex min-w-0 flex-1 gap-3">
-                      <div className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700 sm:flex">
-                        <FileText size={21} />
+                return (
+                  <article
+                    key={assignment.id}
+                    className="p-5 transition hover:bg-gray-50/70 sm:p-6"
+                  >
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="flex min-w-0 flex-1 gap-3">
+                        <div className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700 sm:flex">
+                          <FileText size={21} />
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <h3 className="break-words text-base font-bold text-gray-900">
+                            {assignment.title}
+                          </h3>
+
+                          <p className="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-6 text-gray-600">
+                            {assignment.description}
+                          </p>
+
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
+                              <BookOpen size={13} />
+                              {assignment.course || "Course not assigned"}
+                            </span>
+
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-700">
+                              <Users size={13} />
+                              {assignment.batch || "Batch not assigned"}
+                            </span>
+
+                            <StatusBadge status={assignment.status} />
+                            <PriorityBadge priority={assignment.priority} />
+                            <DifficultyBadge difficulty={assignment.difficulty} />
+                          </div>
+
+                          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                            <div>
+                              <p className="text-xs text-gray-500">Start Date</p>
+                              <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-gray-800">
+                                <CalendarDays size={14} className="text-gray-400" />
+                                {assignment.startDate || "Not set"}
+                              </p>
+                            </div>
+
+                            <div>
+                              <p className="text-xs text-gray-500">Due Date</p>
+                              <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-gray-800">
+                                <Clock size={14} className="text-gray-400" />
+                                {assignment.dueDate || "Not set"}
+                              </p>
+                            </div>
+
+                            <div>
+                              <p className="text-xs text-gray-500">Total Marks</p>
+                              <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+                                <Award size={14} className="text-gray-400" />
+                                {assignment.totalMarks}
+                              </p>
+                            </div>
+
+                            <div>
+                              <p className="text-xs text-gray-500">Trainer</p>
+                              <p className="mt-1 truncate text-sm font-medium text-gray-800">
+                                {assignment.trainer || "Not assigned"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mt-5 max-w-xl">
+                            <div className="mb-2 flex items-center justify-between gap-3">
+                              <span className="text-xs font-medium text-gray-600">
+                                Submission Progress
+                              </span>
+                              <span className="text-xs font-semibold text-gray-800">
+                                {assignment.submissions}/
+                                {assignment.totalStudents} submitted
+                              </span>
+                            </div>
+
+                            <div className="h-2 overflow-hidden rounded-full bg-gray-100">
+                              <div
+                                className="h-full rounded-full bg-blue-600 transition-all"
+                                style={{ width: `${submissionPercent}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="min-w-0 flex-1">
-                        <h3 className="break-words text-base font-bold text-gray-900">
-                          {assignment.title}
-                        </h3>
+                      <div className="flex shrink-0 flex-wrap items-center gap-2 xl:justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setViewAssignment(assignment)}
+                          title="View assignment"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-100"
+                        >
+                          <Eye size={15} />
+                          View
+                        </button>
 
-                        <p className="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-6 text-gray-600">
-                          {assignment.description}
-                        </p>
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(assignment)}
+                          title="Edit assignment"
+                          className="rounded-lg border border-gray-200 bg-white p-2 text-gray-600 hover:bg-blue-50 hover:text-blue-700"
+                        >
+                          <Pencil size={16} />
+                        </button>
 
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
-                            <BookOpen size={13} />
-                            {assignment.course}
-                          </span>
-
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-700">
-                            <Users size={13} />
-                            {assignment.batch}
-                          </span>
-
-                          <StatusBadge status={assignment.status} />
-                          <PriorityBadge priority={assignment.priority} />
-                          <DifficultyBadge difficulty={assignment.difficulty} />
-                        </div>
-
-                        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                          <div>
-                            <p className="text-xs text-gray-500">Start Date</p>
-                            <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-gray-800">
-                              <CalendarDays size={14} className="text-gray-400" />
-                              {assignment.startDate}
-                            </p>
-                          </div>
-
-                          <div>
-                            <p className="text-xs text-gray-500">Due Date</p>
-                            <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-gray-800">
-                              <Clock size={14} className="text-gray-400" />
-                              {assignment.dueDate}
-                            </p>
-                          </div>
-
-                          <div>
-                            <p className="text-xs text-gray-500">Total Marks</p>
-                            <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-gray-800">
-                              <Award size={14} className="text-gray-400" />
-                              {assignment.totalMarks}
-                            </p>
-                          </div>
-
-                          <div>
-                            <p className="text-xs text-gray-500">Trainer</p>
-                            <p className="mt-1 truncate text-sm font-medium text-gray-800">
-                              {assignment.trainer || "Not assigned"}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Submission progress */}
-                        <div className="mt-5 max-w-xl">
-                          <div className="mb-2 flex items-center justify-between gap-3">
-                            <span className="text-xs font-medium text-gray-600">
-                              Submission Progress
-                            </span>
-                            <span className="text-xs font-semibold text-gray-800">
-                              {assignment.submissions}/
-                              {assignment.totalStudents} submitted
-                            </span>
-                          </div>
-
-                          <div className="h-2 overflow-hidden rounded-full bg-gray-100">
-                            <div
-                              className="h-full rounded-full bg-blue-600 transition-all"
-                              style={{ width: `${submissionPercent}%` }}
-                            />
-                          </div>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => deleteAssignment(assignment)}
+                          disabled={deletingId === assignment.id}
+                          title="Delete assignment"
+                          className="rounded-lg border border-gray-200 bg-white p-2 text-gray-600 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                        >
+                          {deletingId === assignment.id ? (
+                            <RefreshCw size={16} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={16} />
+                          )}
+                        </button>
                       </div>
                     </div>
+                  </article>
+                );
+              })}
 
-                    <div className="flex shrink-0 flex-wrap items-center gap-2 xl:justify-end">
-                      <button
-                        onClick={() => setViewAssignment(assignment)}
-                        title="View assignment"
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-100"
-                      >
-                        <Eye size={15} />
-                        View
-                      </button>
-
-                      <button
-                        onClick={() => openEditModal(assignment)}
-                        title="Edit assignment"
-                        className="rounded-lg border border-gray-200 bg-white p-2 text-gray-600 hover:bg-blue-50 hover:text-blue-700"
-                      >
-                        <Pencil size={16} />
-                      </button>
-
-                      <button
-                        onClick={() => deleteAssignment(assignment)}
-                        title="Delete assignment"
-                        className="rounded-lg border border-gray-200 bg-white p-2 text-gray-600 hover:bg-red-50 hover:text-red-600"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
+              {filteredAssignments.length === 0 && (
+                <div className="px-5 py-16 text-center">
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gray-100 text-gray-400">
+                    <ClipboardList size={25} />
                   </div>
-                </article>
-              );
-            })}
 
-            {filteredAssignments.length === 0 && (
-              <div className="px-5 py-16 text-center">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gray-100 text-gray-400">
-                  <ClipboardList size={25} />
+                  <h3 className="mt-4 font-semibold text-gray-900">
+                    No assignments found
+                  </h3>
+
+                  <p className="mt-1 text-sm text-gray-500">
+                    Try changing the filters or create a new assignment.
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={openCreateModal}
+                    className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#173b70] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#102b53]"
+                  >
+                    <Plus size={17} />
+                    Create Assignment
+                  </button>
                 </div>
-
-                <h3 className="mt-4 font-semibold text-gray-900">
-                  No assignments found
-                </h3>
-
-                <p className="mt-1 text-sm text-gray-500">
-                  Try changing the filters or create a new assignment.
-                </p>
-
-                <button
-                  onClick={openCreateModal}
-                  className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#173b70] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#102b53]"
-                >
-                  <Plus size={17} />
-                  Create Assignment
-                </button>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Create/Edit Modal */}
+      {/* Create / Edit modal */}
       {modalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-gray-950/50 p-4"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
+            if (event.target === event.currentTarget && !saving) {
               setModalOpen(false);
             }
           }}
@@ -848,8 +1119,10 @@ export default function AssignmentsPage() {
               </div>
 
               <button
+                type="button"
                 onClick={() => setModalOpen(false)}
-                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
+                disabled={saving}
+                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 disabled:opacity-50"
                 aria-label="Close modal"
               >
                 <X size={20} />
@@ -863,9 +1136,7 @@ export default function AssignmentsPage() {
                   minLength={3}
                   maxLength={150}
                   value={form.title}
-                  onChange={(event) =>
-                    updateForm("title", event.target.value)
-                  }
+                  onChange={(event) => updateForm("title", event.target.value)}
                   placeholder="Enter assignment title"
                   className={inputClass}
                 />
@@ -888,15 +1159,17 @@ export default function AssignmentsPage() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <FormField label="Course" required>
                   <select
+                    required
                     value={form.course}
                     onChange={(event) =>
                       updateForm("course", event.target.value)
                     }
                     className={inputClass}
                   >
-                    {COURSES.map((course) => (
-                      <option key={course} value={course}>
-                        {course}
+                    <option value="">Select course</option>
+                    {courseOptions.map((course) => (
+                      <option key={course.id} value={course.id}>
+                        {course.name}
                       </option>
                     ))}
                   </select>
@@ -911,12 +1184,7 @@ export default function AssignmentsPage() {
                       setForm((previous) => ({
                         ...previous,
                         audience,
-                        batch:
-                          audience === "Everyone"
-                            ? "All Batches"
-                            : previous.batch === "All Batches"
-                              ? ""
-                              : previous.batch,
+                        batch: audience === "Everyone" ? "" : previous.batch,
                       }));
                     }}
                     className={inputClass}
@@ -937,9 +1205,9 @@ export default function AssignmentsPage() {
                       className={inputClass}
                     >
                       <option value="">Select batch</option>
-                      {BATCHES.map((batch) => (
-                        <option key={batch} value={batch}>
-                          {batch}
+                      {batchOptions.map((batch) => (
+                        <option key={batch.id} value={batch.id}>
+                          {batch.name}
                         </option>
                       ))}
                     </select>
@@ -955,18 +1223,17 @@ export default function AssignmentsPage() {
                     className={inputClass}
                   >
                     <option value="">Select trainer</option>
-                    {TRAINERS.map((trainer) => (
-                      <option key={trainer} value={trainer}>
-                        {trainer}
+                    {trainerOptions.map((trainer) => (
+                      <option key={trainer.id} value={trainer.id}>
+                        {trainer.name}
                       </option>
                     ))}
                   </select>
                 </FormField>
 
-                <FormField label="Start Date" required>
+                <FormField label="Start Date">
                   <input
                     type="date"
-                    required
                     value={form.startDate}
                     onChange={(event) =>
                       updateForm("startDate", event.target.value)
@@ -1067,27 +1334,33 @@ export default function AssignmentsPage() {
               <div className="flex flex-col-reverse gap-3 border-t border-gray-100 pt-4 sm:flex-row sm:justify-end">
                 <button
                   type="button"
+                  disabled={saving}
                   onClick={() => setModalOpen(false)}
-                  className="rounded-xl border border-gray-200 px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                  className="rounded-xl border border-gray-200 px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   Cancel
                 </button>
 
                 <button
                   type="submit"
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#173b70] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#102b53]"
+                  disabled={saving}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#173b70] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#102b53] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {form.status === "Published" ? (
+                  {saving ? (
+                    <RefreshCw size={16} className="animate-spin" />
+                  ) : form.status === "Published" ? (
                     <Send size={16} />
                   ) : (
                     <Save size={16} />
                   )}
 
-                  {editingId
-                    ? "Save Changes"
-                    : form.status === "Published"
-                      ? "Publish Assignment"
-                      : "Save Assignment"}
+                  {saving
+                    ? "Saving..."
+                    : editingId
+                      ? "Save Changes"
+                      : form.status === "Published"
+                        ? "Publish Assignment"
+                        : "Save Assignment"}
                 </button>
               </div>
             </form>
@@ -1095,7 +1368,7 @@ export default function AssignmentsPage() {
         </div>
       )}
 
-      {/* View Assignment Modal */}
+      {/* View assignment modal */}
       {viewAssignment && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-gray-950/50 p-4"
@@ -1120,6 +1393,7 @@ export default function AssignmentsPage() {
               </div>
 
               <button
+                type="button"
                 onClick={() => setViewAssignment(null)}
                 className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
                 aria-label="Close details"
@@ -1140,21 +1414,19 @@ export default function AssignmentsPage() {
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {[
-                  ["Course", viewAssignment.course],
-                  ["Batch", viewAssignment.batch],
+                  ["Course", viewAssignment.course || "Not assigned"],
+                  ["Batch", viewAssignment.batch || "Not assigned"],
                   ["Trainer", viewAssignment.trainer || "Not assigned"],
-                  ["Start Date", viewAssignment.startDate],
-                  ["Due Date", viewAssignment.dueDate],
+                  ["Audience", viewAssignment.audience],
+                  ["Start Date", viewAssignment.startDate || "Not set"],
+                  ["Due Date", viewAssignment.dueDate || "Not set"],
                   ["Total Marks", viewAssignment.totalMarks],
                   [
                     "Submissions",
                     `${viewAssignment.submissions}/${viewAssignment.totalStudents}`,
                   ],
                 ].map(([label, value]) => (
-                  <div
-                    key={label}
-                    className="rounded-xl bg-gray-50 p-3"
-                  >
+                  <div key={label} className="rounded-xl bg-gray-50 p-3">
                     <p className="text-xs text-gray-500">{label}</p>
                     <p className="mt-1 break-words text-sm font-semibold text-gray-900">
                       {value}
@@ -1165,6 +1437,7 @@ export default function AssignmentsPage() {
 
               <div className="flex flex-col-reverse gap-3 border-t border-gray-100 pt-4 sm:flex-row sm:justify-end">
                 <button
+                  type="button"
                   onClick={() => setViewAssignment(null)}
                   className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
                 >
@@ -1172,6 +1445,7 @@ export default function AssignmentsPage() {
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => {
                     const selected = viewAssignment;
                     setViewAssignment(null);

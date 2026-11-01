@@ -18,10 +18,7 @@ import {
   Sun,
   Moon,
   Monitor,
-  Mail,
   LockKeyhole,
-  Globe,
-  Clock,
   Camera,
   Settings as SettingsIcon,
 } from "lucide-react";
@@ -36,14 +33,12 @@ const DEFAULT_SETTINGS = {
     timezone: "Asia/Kolkata",
     language: "English",
   },
-
   admin: {
     fullName: "Admin",
     email: "admin@appwars.in",
     phone: "",
     designation: "Administrator",
   },
-
   notifications: {
     emailNotifications: true,
     newStudent: true,
@@ -53,7 +48,6 @@ const DEFAULT_SETTINGS = {
     announcements: true,
     securityAlerts: true,
   },
-
   lms: {
     platformName: "APPWARS LMS",
     supportEmail: "support@appwars.in",
@@ -66,7 +60,6 @@ const DEFAULT_SETTINGS = {
     enableLiveClasses: true,
     enableCertificates: true,
   },
-
   appearance: {
     theme: "light",
     compactSidebar: false,
@@ -83,6 +76,89 @@ const NAVIGATION = [
   { id: "appearance", label: "Appearance", icon: Palette },
 ];
 
+const API_ROOT = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+).replace(/\/+$/, "");
+
+const API_URL = API_ROOT.endsWith("/api")
+  ? API_ROOT
+  : `${API_ROOT}/api`;
+
+const SETTINGS_URL = `${API_URL}/admin/settings`;
+
+function getAuthToken() {
+  if (typeof window === "undefined") return "";
+
+  return (
+    sessionStorage.getItem("appwars_token") ||
+    sessionStorage.getItem("token") ||
+    localStorage.getItem("appwars_token") ||
+    localStorage.getItem("token") ||
+    ""
+  );
+}
+
+async function settingsRequest(url, options = {}) {
+  const token = getAuthToken();
+
+  if (!token) {
+    throw new Error("Login token not found. Please log in again.");
+  }
+
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+  const responseText = await response.text();
+  let data = {};
+
+  try {
+    data = responseText ? JSON.parse(responseText) : {};
+  } catch {
+    data = { message: responseText };
+  }
+
+  if (!response.ok || data.success === false) {
+    throw new Error(
+      data.message ||
+        data.error ||
+        `Request failed with status ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+function mergeSettings(saved = {}) {
+  return {
+    company: {
+      ...DEFAULT_SETTINGS.company,
+      ...(saved.company || {}),
+    },
+    admin: {
+      ...DEFAULT_SETTINGS.admin,
+      ...(saved.admin || {}),
+    },
+    notifications: {
+      ...DEFAULT_SETTINGS.notifications,
+      ...(saved.notifications || {}),
+    },
+    lms: {
+      ...DEFAULT_SETTINGS.lms,
+      ...(saved.lms || {}),
+    },
+    appearance: {
+      ...DEFAULT_SETTINGS.appearance,
+      ...(saved.appearance || {}),
+    },
+  };
+}
+
 function Field({
   label,
   value,
@@ -91,6 +167,8 @@ function Field({
   type = "text",
   required = false,
   help = "",
+  min,
+  max,
 }) {
   return (
     <div>
@@ -104,6 +182,8 @@ function Field({
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         required={required}
+        min={min}
+        max={max}
         className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:ring-blue-900"
       />
 
@@ -164,7 +244,7 @@ function Toggle({ label, description, checked, onChange }) {
       >
         <span
           className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
-            checked ? "left-5.5" : "left-0.5"
+            checked ? "left-5" : "left-0.5"
           }`}
         />
       </button>
@@ -189,6 +269,9 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("company");
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
   const [savedMessage, setSavedMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -198,49 +281,66 @@ export default function SettingsPage() {
   const [showPasswords, setShowPasswords] = useState(false);
 
   useEffect(() => {
-    try {
-      const savedSettings = localStorage.getItem("appwars-admin-settings");
+    let cancelled = false;
 
-      if (savedSettings) {
-        const parsed = JSON.parse(savedSettings);
+    async function loadSettings() {
+      try {
+        const data = await settingsRequest(SETTINGS_URL);
 
-        setSettings({
-          company: { ...DEFAULT_SETTINGS.company, ...parsed.company },
-          admin: { ...DEFAULT_SETTINGS.admin, ...parsed.admin },
-          notifications: {
-            ...DEFAULT_SETTINGS.notifications,
-            ...parsed.notifications,
-          },
-          lms: { ...DEFAULT_SETTINGS.lms, ...parsed.lms },
-          appearance: {
-            ...DEFAULT_SETTINGS.appearance,
-            ...parsed.appearance,
-          },
-        });
+        const saved =
+          data.settings ||
+          data.data?.settings ||
+          data.data ||
+          {};
+
+        const merged = mergeSettings(saved);
+
+        if (cancelled) return;
+
+        setSettings(merged);
+
+        document.documentElement.classList.toggle(
+          "dark",
+          merged.appearance.theme === "dark"
+        );
+
+        localStorage.setItem("appwars-theme", merged.appearance.theme);
+        localStorage.setItem(
+          "appwars-admin-settings",
+          JSON.stringify(merged)
+        );
+      } catch (error) {
+        if (cancelled) return;
+
+        try {
+          const local = JSON.parse(
+            localStorage.getItem("appwars-admin-settings") || "{}"
+          );
+
+          const merged = mergeSettings(local);
+          setSettings(merged);
+
+          document.documentElement.classList.toggle(
+            "dark",
+            merged.appearance.theme === "dark"
+          );
+        } catch {
+          setSettings(DEFAULT_SETTINGS);
+        }
+
+        setErrorMessage(
+          `Could not load server settings: ${error.message}`
+        );
+      } finally {
+        if (!cancelled) setLoaded(true);
       }
-
-      const savedTheme =
-        localStorage.getItem("appwars-theme") ||
-        (() => {
-          try {
-            const parsed = JSON.parse(
-              localStorage.getItem("appwars-admin-settings") || "{}"
-            );
-            return parsed.appearance?.theme || "light";
-          } catch {
-            return "light";
-          }
-        })();
-
-      document.documentElement.classList.toggle(
-        "dark",
-        savedTheme === "dark"
-      );
-    } catch (error) {
-      console.error("Could not load settings:", error);
-    } finally {
-      setLoaded(true);
     }
+
+    loadSettings();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -267,57 +367,91 @@ export default function SettingsPage() {
     setErrorMessage("");
   };
 
-  const saveSettings = (event) => {
+  const saveSettings = async (event) => {
     event?.preventDefault();
 
+    setSavedMessage("");
+    setErrorMessage("");
+    setSaving(true);
+
     try {
+      const data = await settingsRequest(SETTINGS_URL, {
+        method: "PUT",
+        body: JSON.stringify(settings),
+      });
+
+      const saved = data.settings || data.data?.settings;
+      const merged = mergeSettings(saved || settings);
+
+      setSettings(merged);
+
       localStorage.setItem(
         "appwars-admin-settings",
-        JSON.stringify(settings)
+        JSON.stringify(merged)
       );
-
-      localStorage.setItem("appwars-theme", settings.appearance.theme);
+      localStorage.setItem("appwars-theme", merged.appearance.theme);
 
       document.documentElement.classList.toggle(
         "dark",
-        settings.appearance.theme === "dark"
+        merged.appearance.theme === "dark"
       );
 
-      setSavedMessage("Settings saved successfully.");
-      setErrorMessage("");
-    } catch {
-      setErrorMessage(
-        "Unable to save settings. Check your browser storage settings."
-      );
-      setSavedMessage("");
+      setSavedMessage("Settings saved successfully to the server.");
+    } catch (error) {
+      setErrorMessage(`Failed to save settings: ${error.message}`);
+    } finally {
+      setSaving(false);
     }
   };
 
-  const resetSettings = () => {
-    const confirmed = window.confirm(
-      "Reset all settings to their default values?"
-    );
+  const resetSettings = async () => {
+    if (
+      !window.confirm(
+        "Reset all settings to their default values?"
+      )
+    ) {
+      return;
+    }
 
-    if (!confirmed) return;
-
-    setSettings(DEFAULT_SETTINGS);
+    setSavedMessage("");
+    setErrorMessage("");
+    setResetting(true);
 
     try {
+      const data = await settingsRequest(SETTINGS_URL, {
+        method: "PUT",
+        body: JSON.stringify(DEFAULT_SETTINGS),
+      });
+
+      const saved =
+        data.settings ||
+        data.data?.settings ||
+        DEFAULT_SETTINGS;
+
+      const merged = mergeSettings(saved);
+
+      setSettings(merged);
+
       localStorage.setItem(
         "appwars-admin-settings",
-        JSON.stringify(DEFAULT_SETTINGS)
+        JSON.stringify(merged)
       );
-      localStorage.setItem("appwars-theme", "light");
-      document.documentElement.classList.remove("dark");
+      localStorage.setItem("appwars-theme", merged.appearance.theme);
 
-      setSavedMessage("All settings have been reset.");
-      setErrorMessage("");
-    } catch {
-      setErrorMessage("Unable to reset settings.");
+      document.documentElement.classList.toggle(
+        "dark",
+        merged.appearance.theme === "dark"
+      );
+
+      setSavedMessage("Settings reset successfully.");
+    } catch (error) {
+      setErrorMessage(`Unable to reset settings: ${error.message}`);
+    } finally {
+      setResetting(false);
     }
   };
 
-  const changePassword = (event) => {
+  const changePassword = async (event) => {
     event.preventDefault();
     setSavedMessage("");
     setErrorMessage("");
@@ -328,7 +462,9 @@ export default function SettingsPage() {
     }
 
     if (newPassword.length < 8) {
-      setErrorMessage("Your new password must contain at least 8 characters.");
+      setErrorMessage(
+        "Your new password must contain at least 8 characters."
+      );
       return;
     }
 
@@ -340,20 +476,43 @@ export default function SettingsPage() {
     }
 
     if (newPassword !== confirmPassword) {
-      setErrorMessage("The new password and confirmation do not match.");
+      setErrorMessage(
+        "The new password and confirmation do not match."
+      );
       return;
     }
 
-    setErrorMessage(
-      "Password validation passed, but no password was changed. Connect this form to your authentication backend to update credentials securely."
-    );
+    setChangingPassword(true);
 
-    setCurrentPassword("");
-    setNewPassword("");
-    setConfirmPassword("");
+    try {
+      const data = await settingsRequest(
+        `${SETTINGS_URL}/password`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            currentPassword,
+            newPassword,
+          }),
+        }
+      );
+
+      setSavedMessage(
+        data.message || "Password changed successfully."
+      );
+
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (error) {
+      setErrorMessage(`Could not change password: ${error.message}`);
+    } finally {
+      setChangingPassword(false);
+    }
   };
 
-  const activeNavigation = NAVIGATION.find((item) => item.id === activeTab);
+  const activeNavigation = NAVIGATION.find(
+    (item) => item.id === activeTab
+  );
   const ActiveIcon = activeNavigation?.icon || SettingsIcon;
 
   if (!loaded) {
@@ -366,7 +525,6 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 text-slate-900 transition-colors duration-200 sm:p-6 lg:p-8 dark:bg-slate-950 dark:text-slate-100">
-      {/* Page Header */}
       <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <div className="mb-2 flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
@@ -389,24 +547,25 @@ export default function SettingsPage() {
           <button
             type="button"
             onClick={resetSettings}
-            className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            disabled={resetting || saving}
+            className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             <RotateCcw size={16} />
-            Reset
+            {resetting ? "Resetting..." : "Reset"}
           </button>
 
           <button
             type="button"
             onClick={saveSettings}
-            className="flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
+            disabled={saving || resetting}
+            className="flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Save size={16} />
-            Save Settings
+            {saving ? "Saving..." : "Save Settings"}
           </button>
         </div>
       </div>
 
-      {/* Feedback */}
       {savedMessage && (
         <div
           role="status"
@@ -423,12 +582,11 @@ export default function SettingsPage() {
           className="mb-5 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
         >
           <AlertCircle className="mt-0.5 shrink-0" size={18} />
-          {errorMessage}
+          <span>{errorMessage}</span>
         </div>
       )}
 
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
-        {/* Settings Sidebar */}
         <aside className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
           <p className="px-3 py-3 text-xs font-bold uppercase tracking-wider text-slate-400">
             General Settings
@@ -467,13 +625,12 @@ export default function SettingsPage() {
               <span className="text-sm font-semibold">Admin Settings</span>
             </div>
             <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-              Changes made here are saved in this browser. Backend integration
-              is required for account-wide settings.
+              Settings are loaded and saved through the backend. Local storage
+              is used for theme preferences and fallback display only.
             </p>
           </div>
         </aside>
 
-        {/* Settings Content */}
         <main className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 sm:p-7 dark:border-slate-800 dark:bg-slate-900">
           <div className="mb-6 flex items-center gap-3 border-b border-slate-100 pb-5 dark:border-slate-800">
             <div className="rounded-lg bg-blue-50 p-3 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
@@ -490,7 +647,6 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Company Profile */}
           {activeTab === "company" && (
             <form onSubmit={saveSettings}>
               <SectionHeading
@@ -502,9 +658,7 @@ export default function SettingsPage() {
                 <Field
                   label="Company Name"
                   value={settings.company.companyName}
-                  onChange={(value) =>
-                    updateField("company", "companyName", value)
-                  }
+                  onChange={(value) => updateField("company", "companyName", value)}
                   required
                 />
 
@@ -545,22 +699,10 @@ export default function SettingsPage() {
                   value={settings.company.timezone}
                   onChange={(value) => updateField("company", "timezone", value)}
                   options={[
-                    {
-                      label: "India Standard Time (IST)",
-                      value: "Asia/Kolkata",
-                    },
-                    {
-                      label: "UTC",
-                      value: "UTC",
-                    },
-                    {
-                      label: "London",
-                      value: "Europe/London",
-                    },
-                    {
-                      label: "New York",
-                      value: "America/New_York",
-                    },
+                    { label: "India Standard Time (IST)", value: "Asia/Kolkata" },
+                    { label: "UTC", value: "UTC" },
+                    { label: "London", value: "Europe/London" },
+                    { label: "New York", value: "America/New_York" },
                   ]}
                 />
 
@@ -571,9 +713,7 @@ export default function SettingsPage() {
                   <textarea
                     rows={3}
                     value={settings.company.address}
-                    onChange={(event) =>
-                      updateField("company", "address", event.target.value)
-                    }
+                    onChange={(event) => updateField("company", "address", event.target.value)}
                     placeholder="Enter your company address"
                     className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
@@ -583,7 +723,8 @@ export default function SettingsPage() {
               <div className="mt-7 flex justify-end">
                 <button
                   type="submit"
-                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800"
+                  disabled={saving}
+                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
                 >
                   <Save size={16} /> Save Company Profile
                 </button>
@@ -591,7 +732,6 @@ export default function SettingsPage() {
             </form>
           )}
 
-          {/* Admin Profile */}
           {activeTab === "admin" && (
             <form onSubmit={saveSettings}>
               <SectionHeading
@@ -638,22 +778,20 @@ export default function SettingsPage() {
                   label="Phone Number"
                   value={settings.admin.phone}
                   onChange={(value) => updateField("admin", "phone", value)}
-                  placeholder="Enter phone number"
                 />
 
                 <Field
                   label="Designation"
                   value={settings.admin.designation}
-                  onChange={(value) =>
-                    updateField("admin", "designation", value)
-                  }
+                  onChange={(value) => updateField("admin", "designation", value)}
                 />
               </div>
 
               <div className="mt-7 flex justify-end">
                 <button
                   type="submit"
-                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800"
+                  disabled={saving}
+                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
                 >
                   <Save size={16} /> Save Admin Profile
                 </button>
@@ -661,12 +799,11 @@ export default function SettingsPage() {
             </form>
           )}
 
-          {/* Notifications */}
           {activeTab === "notifications" && (
             <form onSubmit={saveSettings}>
               <SectionHeading
                 title="Notification Preferences"
-                description="Choose which notifications you want the LMS to enable."
+                description="Choose which notifications the LMS should enable."
               />
 
               <div className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -674,74 +811,51 @@ export default function SettingsPage() {
                   label="Email Notifications"
                   description="Master preference for email notifications."
                   checked={settings.notifications.emailNotifications}
-                  onChange={(value) =>
-                    updateField("notifications", "emailNotifications", value)
-                  }
+                  onChange={(value) => updateField("notifications", "emailNotifications", value)}
                 />
-
                 <Toggle
                   label="New Student Registration"
                   description="Notify administrators when a student registers."
                   checked={settings.notifications.newStudent}
-                  onChange={(value) =>
-                    updateField("notifications", "newStudent", value)
-                  }
+                  onChange={(value) => updateField("notifications", "newStudent", value)}
                 />
-
                 <Toggle
                   label="New Trainer Registration"
                   description="Notify administrators about new trainers."
                   checked={settings.notifications.newTrainer}
-                  onChange={(value) =>
-                    updateField("notifications", "newTrainer", value)
-                  }
+                  onChange={(value) => updateField("notifications", "newTrainer", value)}
                 />
-
                 <Toggle
                   label="Assignment Submissions"
                   description="Receive notifications about submitted assignments."
                   checked={settings.notifications.assignmentSubmission}
-                  onChange={(value) =>
-                    updateField(
-                      "notifications",
-                      "assignmentSubmission",
-                      value
-                    )
-                  }
+                  onChange={(value) => updateField("notifications", "assignmentSubmission", value)}
                 />
-
                 <Toggle
                   label="Live Class Reminders"
-                  description="Enable preferences for live class reminders."
+                  description="Enable live class reminder preferences."
                   checked={settings.notifications.liveClassReminder}
-                  onChange={(value) =>
-                    updateField("notifications", "liveClassReminder", value)
-                  }
+                  onChange={(value) => updateField("notifications", "liveClassReminder", value)}
                 />
-
                 <Toggle
                   label="Announcements"
                   description="Receive announcements-related notifications."
                   checked={settings.notifications.announcements}
-                  onChange={(value) =>
-                    updateField("notifications", "announcements", value)
-                  }
+                  onChange={(value) => updateField("notifications", "announcements", value)}
                 />
-
                 <Toggle
                   label="Security Alerts"
-                  description="Enable preferences for security notifications."
+                  description="Enable security notification preferences."
                   checked={settings.notifications.securityAlerts}
-                  onChange={(value) =>
-                    updateField("notifications", "securityAlerts", value)
-                  }
+                  onChange={(value) => updateField("notifications", "securityAlerts", value)}
                 />
               </div>
 
               <div className="mt-7 flex justify-end">
                 <button
                   type="submit"
-                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800"
+                  disabled={saving}
+                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
                 >
                   <Save size={16} /> Save Notification Settings
                 </button>
@@ -749,12 +863,11 @@ export default function SettingsPage() {
             </form>
           )}
 
-          {/* LMS Configuration */}
           {activeTab === "lms" && (
             <form onSubmit={saveSettings}>
               <SectionHeading
                 title="LMS Configuration"
-                description="Configure the default values and feature preferences for your LMS."
+                description="Configure your LMS defaults and feature preferences."
               />
 
               <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
@@ -776,30 +889,28 @@ export default function SettingsPage() {
                 <Field
                   label="Default Course Duration (weeks)"
                   value={settings.lms.defaultCourseDuration}
-                  onChange={(value) =>
-                    updateField("lms", "defaultCourseDuration", value)
-                  }
+                  onChange={(value) => updateField("lms", "defaultCourseDuration", value)}
                   type="number"
+                  min="1"
                   required
                 />
 
                 <Field
                   label="Passing Percentage"
                   value={settings.lms.passingPercentage}
-                  onChange={(value) =>
-                    updateField("lms", "passingPercentage", value)
-                  }
+                  onChange={(value) => updateField("lms", "passingPercentage", value)}
                   type="number"
+                  min="0"
+                  max="100"
                   required
                 />
 
                 <Field
                   label="Maximum Upload Size (MB)"
                   value={settings.lms.maxUploadSize}
-                  onChange={(value) =>
-                    updateField("lms", "maxUploadSize", value)
-                  }
+                  onChange={(value) => updateField("lms", "maxUploadSize", value)}
                   type="number"
+                  min="1"
                   required
                 />
               </div>
@@ -813,52 +924,39 @@ export default function SettingsPage() {
                   label="Allow Student Registration"
                   description="Set whether new student registrations are permitted."
                   checked={settings.lms.allowRegistration}
-                  onChange={(value) =>
-                    updateField("lms", "allowRegistration", value)
-                  }
+                  onChange={(value) => updateField("lms", "allowRegistration", value)}
                 />
-
                 <Toggle
                   label="Student Downloads"
-                  description="Set the preference for student file downloads."
+                  description="Set student download preferences."
                   checked={settings.lms.allowStudentDownloads}
-                  onChange={(value) =>
-                    updateField("lms", "allowStudentDownloads", value)
-                  }
+                  onChange={(value) => updateField("lms", "allowStudentDownloads", value)}
                 />
-
                 <Toggle
                   label="Assignments"
-                  description="Enable the assignments feature preference."
+                  description="Enable assignment feature preferences."
                   checked={settings.lms.enableAssignments}
-                  onChange={(value) =>
-                    updateField("lms", "enableAssignments", value)
-                  }
+                  onChange={(value) => updateField("lms", "enableAssignments", value)}
                 />
-
                 <Toggle
                   label="Live Classes"
-                  description="Enable the live classes feature preference."
+                  description="Enable live-class feature preferences."
                   checked={settings.lms.enableLiveClasses}
-                  onChange={(value) =>
-                    updateField("lms", "enableLiveClasses", value)
-                  }
+                  onChange={(value) => updateField("lms", "enableLiveClasses", value)}
                 />
-
                 <Toggle
                   label="Certificates"
-                  description="Enable the course certificate feature preference."
+                  description="Enable course certificate preferences."
                   checked={settings.lms.enableCertificates}
-                  onChange={(value) =>
-                    updateField("lms", "enableCertificates", value)
-                  }
+                  onChange={(value) => updateField("lms", "enableCertificates", value)}
                 />
               </div>
 
               <div className="mt-7 flex justify-end">
                 <button
                   type="submit"
-                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800"
+                  disabled={saving}
+                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
                 >
                   <Save size={16} /> Save LMS Configuration
                 </button>
@@ -866,12 +964,11 @@ export default function SettingsPage() {
             </form>
           )}
 
-          {/* Security */}
           {activeTab === "security" && (
             <div>
               <SectionHeading
                 title="Security Settings"
-                description="Password validation and security preferences."
+                description="Change the password for the currently authenticated administrator."
               />
 
               <div className="mb-6 flex gap-3 rounded-lg border border-blue-100 bg-blue-50 p-4 dark:border-blue-900 dark:bg-blue-950">
@@ -884,33 +981,29 @@ export default function SettingsPage() {
                     Change Password
                   </p>
                   <p className="mt-1 text-sm text-blue-800 dark:text-blue-300">
-                    For real password changes, connect this form to your
-                    authentication API. Never store passwords in localStorage.
+                    Your current password is verified by the backend. Passwords
+                    are not stored in browser storage.
                   </p>
                 </div>
               </div>
 
               <form onSubmit={changePassword} className="space-y-5">
-                <div className="relative">
-                  <Field
-                    label="Current Password"
-                    value={currentPassword}
-                    onChange={setCurrentPassword}
-                    type={showPasswords ? "text" : "password"}
-                    required
-                  />
-                </div>
+                <Field
+                  label="Current Password"
+                  value={currentPassword}
+                  onChange={setCurrentPassword}
+                  type={showPasswords ? "text" : "password"}
+                  required
+                />
 
-                <div>
-                  <Field
-                    label="New Password"
-                    value={newPassword}
-                    onChange={setNewPassword}
-                    type={showPasswords ? "text" : "password"}
-                    required
-                    help="Use at least 8 characters."
-                  />
-                </div>
+                <Field
+                  label="New Password"
+                  value={newPassword}
+                  onChange={setNewPassword}
+                  type={showPasswords ? "text" : "password"}
+                  required
+                  help="Use at least 8 characters."
+                />
 
                 <Field
                   label="Confirm New Password"
@@ -922,7 +1015,7 @@ export default function SettingsPage() {
 
                 <button
                   type="button"
-                  onClick={() => setShowPasswords(!showPasswords)}
+                  onClick={() => setShowPasswords((previous) => !previous)}
                   className="flex items-center gap-2 text-sm font-semibold text-blue-700 hover:text-blue-900 dark:text-blue-300"
                 >
                   {showPasswords ? <EyeOff size={17} /> : <Eye size={17} />}
@@ -931,10 +1024,11 @@ export default function SettingsPage() {
 
                 <button
                   type="submit"
-                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800"
+                  disabled={changingPassword}
+                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
                 >
                   <ShieldCheck size={17} />
-                  Validate Password Change
+                  {changingPassword ? "Changing..." : "Change Password"}
                 </button>
               </form>
 
@@ -952,7 +1046,6 @@ export default function SettingsPage() {
             </div>
           )}
 
-          {/* Appearance */}
           {activeTab === "appearance" && (
             <div>
               <SectionHeading
@@ -965,7 +1058,6 @@ export default function SettingsPage() {
               </h3>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {/* Light Mode */}
                 <button
                   type="button"
                   onClick={() => updateField("appearance", "theme", "light")}
@@ -1001,7 +1093,6 @@ export default function SettingsPage() {
                   </p>
                 </button>
 
-                {/* Dark Mode */}
                 <button
                   type="button"
                   onClick={() => updateField("appearance", "theme", "dark")}
@@ -1045,20 +1136,15 @@ export default function SettingsPage() {
               <div className="divide-y divide-slate-100 dark:divide-slate-800">
                 <Toggle
                   label="Compact Sidebar"
-                  description="Save space in your admin layout if your sidebar supports compact mode."
+                  description="Save space if your admin layout supports compact mode."
                   checked={settings.appearance.compactSidebar}
-                  onChange={(value) =>
-                    updateField("appearance", "compactSidebar", value)
-                  }
+                  onChange={(value) => updateField("appearance", "compactSidebar", value)}
                 />
-
                 <Toggle
                   label="Animations"
-                  description="Save your preference for interface animations."
+                  description="Save your interface animation preference."
                   checked={settings.appearance.animations}
-                  onChange={(value) =>
-                    updateField("appearance", "animations", value)
-                  }
+                  onChange={(value) => updateField("appearance", "animations", value)}
                 />
               </div>
 
@@ -1073,8 +1159,8 @@ export default function SettingsPage() {
                     : "Light Mode is active."}
                 </p>
                 <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  Click Save Settings to save your preferences. Theme changes
-                  apply immediately.
+                  Theme changes apply immediately. Save Settings stores the
+                  preference on the server.
                 </p>
               </div>
 
@@ -1082,7 +1168,8 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   onClick={saveSettings}
-                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800"
+                  disabled={saving}
+                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
                 >
                   <Save size={16} /> Save Appearance
                 </button>
@@ -1092,10 +1179,9 @@ export default function SettingsPage() {
         </main>
       </div>
 
-      {/* Footer */}
       <footer className="mt-6 flex flex-col justify-between gap-2 text-xs text-slate-500 sm:flex-row dark:text-slate-400">
         <span>APPWARS TECHNOLOGIES PVT. LTD. · LMS Administration</span>
-        <span>Settings are stored locally in this browser.</span>
+        <span>Settings are managed through the server.</span>
       </footer>
     </div>
   );

@@ -9,7 +9,7 @@ export default function RankCard({ rank = 1, total = 32 }) {
         <Trophy size={16} className="text-blue-600" />
       </div>
       <h3 className="mt-2 text-2xl font-bold tracking-tight text-[#102e60]">
-        #{rank} <span className="text-[10px] font-semibold">of {total}</span>
+        {rank} <span className="text-[10px] font-semibold">of {total}</span>
       </h3>
       <p className="mt-2 text-[10px] leading-4 text-slate-600">MERN-07 · Top {percentile}%</p>
     </section>

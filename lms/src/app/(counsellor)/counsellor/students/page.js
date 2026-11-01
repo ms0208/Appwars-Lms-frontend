@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Users,
   Search,
@@ -14,73 +14,24 @@ import {
   Mail,
   Phone,
   GraduationCap,
-  CalendarDays,
   Video,
   Filter,
-  UserRound,
   CheckCircle2,
   Clock,
+  RefreshCw,
+  AlertCircle,
 } from "lucide-react";
 
-const initialStudents = [
-  {
-    id: 1,
-    name: "Rahul Sharma",
-    email: "rahul.sharma@example.com",
-    phone: "9876543210",
-    course: "MERN Stack Development",
-    trainer: "Manav Sharma",
-    mode: "Online",
-    batchType: "Mon-Th",
-    batchStartDate: "2026-10-05",
-    batchEndDate: "2027-02-05",
-    batchTime: "10:00 AM",
-    admissionDate: "2026-10-05",
-    totalFee: 45000,
-    feeStatus: "Pending",
-    videoAccess: "Yes",
-    status: "Active",
-    notes: "",
-  },
-  {
-    id: 2,
-    name: "Priya Verma",
-    email: "priya.verma@example.com",
-    phone: "9876543211",
-    course: "AWS Cloud Computing",
-    trainer: "Amit Kumar",
-    mode: "Hybrid",
-    batchType: "Weekend",
-    batchStartDate: "2026-10-12",
-    batchEndDate: "2027-01-12",
-    batchTime: "11:00 AM",
-    admissionDate: "2026-10-12",
-    totalFee: 35000,
-    feeStatus: "Clear",
-    videoAccess: "Yes",
-    status: "Active",
-    notes: "",
-  },
-  {
-    id: 3,
-    name: "Aman Gupta",
-    email: "aman.gupta@example.com",
-    phone: "9876543212",
-    course: "Full Stack Development",
-    trainer: "Manav Sharma",
-    mode: "Offline",
-    batchType: "Custom",
-    batchStartDate: "2026-10-15",
-    batchEndDate: "2027-03-15",
-    batchTime: "02:00 PM",
-    admissionDate: "2026-10-15",
-    totalFee: 50000,
-    feeStatus: "Pending",
-    videoAccess: "No",
-    status: "Active",
-    notes: "",
-  },
-];
+const API_ROOT = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
+).replace(/\/+$/, "");
+
+const ADMISSIONS_URL = `${API_ROOT}/counsellor/admissions`;
+
+const inputClass =
+  "mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
+
+const labelClass = "block text-sm font-medium text-slate-700";
 
 const emptyStudent = {
   name: "",
@@ -101,11 +52,6 @@ const emptyStudent = {
   notes: "",
 };
 
-const inputClass =
-  "mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
-
-const labelClass = "block text-sm font-medium text-slate-700";
-
 function Field({ label, children }) {
   return (
     <label className={labelClass}>
@@ -125,12 +71,133 @@ function money(value) {
 
 function displayDate(value) {
   if (!value) return "—";
-  const [year, month, day] = value.split("-");
-  return `${day}/${month}/${year}`;
+
+  const date = String(value).slice(0, 10);
+  const parts = date.split("-");
+
+  if (parts.length !== 3) return date;
+
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function toDateInput(value) {
+  if (!value) return "";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value).slice(0, 10);
+  }
+
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function getToken() {
+  if (typeof window === "undefined") return "";
+
+  return (
+    localStorage.getItem("appwars_token") ||
+    localStorage.getItem("token") || 
+    sessionStorage.getItem("token")
+  );
+}
+
+async function apiRequest(url, options = {}) {
+  const token = getToken();
+
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options.headers,
+    },
+    cache: "no-store",
+  });
+
+  const contentType = response.headers.get("content-type") || "";
+  const result = contentType.includes("application/json")
+    ? await response.json()
+    : await response.text();
+
+  if (!response.ok) {
+    const message =
+      result?.message ||
+      result?.error ||
+      (typeof result === "string" ? result : "") ||
+      `Request failed with status ${response.status}`;
+
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(
+        `Authentication failed (${response.status}). Please sign in again and check your counsellor permissions.`
+      );
+    }
+
+    throw new Error(message);
+  }
+
+  return result;
+}
+
+/*
+ * Converts the backend User document into the shape used by this page.
+ *
+ * The backend stores course, fees, batch and access information inside
+ * admissionDetails. Some fields, such as phone, may not exist in User.js.
+ */
+function normalizeStudent(raw) {
+  const details = raw?.admissionDetails || {};
+
+  const totalFee = Number(details.totalFee ?? raw.totalFee ?? 0);
+  const totalPaid = Number(
+    raw.totalPaid ?? details.totalPaid ?? details.paidAmount ?? 0
+  );
+
+  const calculatedFeeStatus =
+    details.feeStatus ||
+    (totalFee > 0 && totalPaid >= totalFee ? "Clear" : "Pending");
+
+  const createdDate = raw.createdAt
+    ? toDateInput(raw.createdAt)
+    : "";
+
+  const isActive =
+    typeof raw.isActive === "boolean" ? raw.isActive : true;
+
+  return {
+    id: raw._id || raw.id,
+    userId: raw.userId || "",
+    name: raw.name || raw.studentName || "",
+    email: raw.email || "",
+    phone: raw.phone || details.phone || "",
+    course: details.course || raw.course || "",
+    trainer: details.trainer || raw.trainer || "",
+    mode: details.mode || "Online",
+    batchType: details.batchType || "Mon-Th",
+    batchStartDate: toDateInput(details.batchStartDate),
+    batchEndDate: toDateInput(details.batchEndDate),
+    batchTime: details.time || details.batchTime || "",
+    admissionDate: toDateInput(
+      details.admissionDate || raw.admissionDate || raw.createdAt
+    ),
+    totalFee,
+    totalPaid,
+    feeStatus: calculatedFeeStatus,
+    videoAccess: details.videoAccess || "Yes",
+    status: details.status || (isActive ? "Active" : "On Hold"),
+    notes: details.notes || "",
+    isActive,
+    raw,
+  };
 }
 
 function exportStudents(students) {
   const columns = [
+    ["userId", "Student ID"],
     ["name", "Student Name"],
     ["email", "Email"],
     ["phone", "Phone"],
@@ -164,40 +231,100 @@ function exportStudents(students) {
 
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
+
   link.href = url;
   link.download = "appwars-students.csv";
+  document.body.appendChild(link);
   link.click();
+  link.remove();
+
   URL.revokeObjectURL(url);
 }
 
+function getResponseStudents(result) {
+  // Supports common controller response shapes:
+  // { success: true, data: [...] }
+  // { success: true, data: { admissions: [...] } }
+  // { admissions: [...] }
+  // [...]
+
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result?.data)) return result.data;
+  if (Array.isArray(result?.admissions)) return result.admissions;
+  if (Array.isArray(result?.data?.admissions)) {
+    return result.data.admissions;
+  }
+  if (Array.isArray(result?.data?.students)) {
+    return result.data.students;
+  }
+  if (Array.isArray(result?.students)) return result.students;
+
+  return [];
+}
+
 export default function StudentsPage() {
-  const [students, setStudents] = useState(initialStudents);
+  const [students, setStudents] = useState([]);
   const [search, setSearch] = useState("");
   const [courseFilter, setCourseFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
   const [modeFilter, setModeFilter] = useState("All");
   const [feeFilter, setFeeFilter] = useState("All");
+
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyStudent);
   const [selectedStudent, setSelectedStudent] = useState(null);
 
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const loadStudents = useCallback(async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const result = await apiRequest(ADMISSIONS_URL, {
+        method: "GET",
+      });
+
+      const records = getResponseStudents(result);
+      setStudents(records.map(normalizeStudent));
+    } catch (err) {
+      setError(err.message || "Unable to load students.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStudents();
+  }, [loadStudents]);
+
   const courses = useMemo(
-    () => [...new Set(students.map((student) => student.course).filter(Boolean))].sort(),
+    () =>
+      [
+        ...new Set(
+          students.map((student) => student.course).filter(Boolean)
+        ),
+      ].sort(),
     [students]
   );
 
   const filteredStudents = useMemo(() => {
-    return students.filter((student) => {
-      const term = search.trim().toLowerCase();
+    const term = search.trim().toLowerCase();
 
+    return students.filter((student) => {
       const matchesSearch =
         !term ||
         student.name.toLowerCase().includes(term) ||
         student.email.toLowerCase().includes(term) ||
         student.phone.includes(term) ||
         student.course.toLowerCase().includes(term) ||
-        student.trainer.toLowerCase().includes(term);
+        student.trainer.toLowerCase().includes(term) ||
+        student.userId.toLowerCase().includes(term);
 
       return (
         matchesSearch &&
@@ -207,7 +334,14 @@ export default function StudentsPage() {
         (feeFilter === "All" || student.feeStatus === feeFilter)
       );
     });
-  }, [students, search, courseFilter, statusFilter, modeFilter, feeFilter]);
+  }, [
+    students,
+    search,
+    courseFilter,
+    statusFilter,
+    modeFilter,
+    feeFilter,
+  ]);
 
   const activeCount = students.filter(
     (student) => student.status === "Active"
@@ -219,19 +353,34 @@ export default function StudentsPage() {
   );
 
   const pendingCount = students.filter(
-    (student) => student.feeStatus === "Pending"
+    (student) => student.feeStatus !== "Clear"
   ).length;
 
   function openAddModal() {
     setEditingId(null);
-    setForm(emptyStudent);
+    setForm({
+      ...emptyStudent,
+      admissionDate: toDateInput(new Date()),
+    });
+    setSelectedStudent(null);
+    setError("");
+    setNotice("");
     setModalOpen(true);
   }
 
   function openEditModal(student) {
     setEditingId(student.id);
-    setForm({ ...emptyStudent, ...student });
+    setForm({
+      ...emptyStudent,
+      ...student,
+      totalFee: String(student.totalFee ?? ""),
+      batchStartDate: toDateInput(student.batchStartDate),
+      batchEndDate: toDateInput(student.batchEndDate),
+      admissionDate: toDateInput(student.admissionDate),
+    });
     setSelectedStudent(null);
+    setError("");
+    setNotice("");
     setModalOpen(true);
   }
 
@@ -240,52 +389,130 @@ export default function StudentsPage() {
     setForm((previous) => ({ ...previous, [name]: value }));
   }
 
-  function saveStudent(event) {
-    event.preventDefault();
-
-    const record = {
-      ...form,
-      name: form.name.trim(),
-      email: form.email.trim(),
-      phone: form.phone.trim(),
-      course: form.course.trim(),
-      trainer: form.trainer.trim(),
-      totalFee: Number(form.totalFee) || 0,
-    };
-
-    if (editingId !== null) {
-      setStudents((previous) =>
-        previous.map((student) =>
-          student.id === editingId
-            ? { ...student, ...record, id: editingId }
-            : student
-        )
-      );
-    } else {
-      setStudents((previous) => [
-        { ...record, id: Date.now() },
-        ...previous,
-      ]);
-    }
+  function closeForm() {
+    if (saving) return;
 
     setModalOpen(false);
     setEditingId(null);
     setForm(emptyStudent);
   }
 
-  function deleteStudent(student) {
+  async function saveStudent(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const record = {
+        name: form.name.trim(),
+        email: form.email.trim().toLowerCase(),
+        phone: form.phone.trim(),
+        course: form.course.trim(),
+        trainer: form.trainer.trim(),
+        mode: form.mode,
+        batchType: form.batchType,
+        batchStartDate: form.batchStartDate || null,
+        batchEndDate: form.batchEndDate || null,
+        time: form.batchTime.trim(),
+        admissionDate: form.admissionDate || null,
+        totalFee: Number(form.totalFee) || 0,
+        feeStatus: form.feeStatus,
+        videoAccess: form.videoAccess,
+        status: form.status,
+        isActive: form.status === "Active",
+        notes: form.notes.trim(),
+      };
+
+      /*
+       * This payload matches the counsellor admissions controller:
+       * student identity fields are top-level and course/batch/fee
+       * metadata is saved in admissionDetails.
+       */
+      const payload = {
+        name: record.name,
+        email: record.email,
+        phone: record.phone,
+        isActive: record.isActive,
+        admissionDetails: {
+          course: record.course,
+          totalFee: record.totalFee,
+          feeStatus: record.feeStatus,
+          trainer: record.trainer,
+          mode: record.mode,
+          batchType: record.batchType,
+          batchStartDate: record.batchStartDate,
+          batchEndDate: record.batchEndDate,
+          time: record.time,
+          admissionDate: record.admissionDate,
+          videoAccess: record.videoAccess,
+          status: record.status,
+          notes: record.notes,
+        },
+      };
+
+      const isEditing = editingId !== null;
+      const url = isEditing
+        ? `${ADMISSIONS_URL}/${encodeURIComponent(editingId)}`
+        : ADMISSIONS_URL;
+
+      const result = await apiRequest(url, {
+        method: isEditing ? "PATCH" : "POST",
+        body: JSON.stringify(payload),
+      });
+
+      /*
+       * Reload from MongoDB instead of assuming the server saved
+       * every field exactly as submitted.
+       */
+      await loadStudents();
+
+      setModalOpen(false);
+      setEditingId(null);
+      setForm(emptyStudent);
+      setNotice(
+        result?.message ||
+          (isEditing
+            ? "Student updated successfully."
+            : "Student added successfully.")
+      );
+    } catch (err) {
+      setError(err.message || "Unable to save student.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteStudent(student) {
     const confirmed = window.confirm(
-      `Delete student record for ${student.name}?`
+      `Delete student record for ${student.name}? This action cannot be undone.`
     );
 
     if (!confirmed) return;
 
-    setStudents((previous) =>
-      previous.filter((item) => item.id !== student.id)
-    );
+    setDeletingId(student.id);
+    setError("");
+    setNotice("");
 
-    if (selectedStudent?.id === student.id) {
-      setSelectedStudent(null);
+    try {
+      const result = await apiRequest(
+        `${ADMISSIONS_URL}/${encodeURIComponent(student.id)}`,
+        { method: "DELETE" }
+      );
+
+      setStudents((previous) =>
+        previous.filter((item) => item.id !== student.id)
+      );
+
+      if (selectedStudent?.id === student.id) {
+        setSelectedStudent(null);
+      }
+
+      setNotice(result?.message || "Student deleted successfully.");
+    } catch (err) {
+      setError(err.message || "Unable to delete student.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -316,6 +543,16 @@ export default function StudentsPage() {
     },
   ];
 
+  function avatarText(name) {
+    return String(name || "Student")
+      .split(" ")
+      .filter(Boolean)
+      .map((part) => part[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase();
+  }
+
   return (
     <div className="min-h-screen space-y-6 bg-slate-50 p-4 sm:p-6 lg:p-8">
       {/* Page heading */}
@@ -334,14 +571,17 @@ export default function StudentsPage() {
 
         <div className="flex flex-wrap gap-2">
           <button
+            type="button"
             onClick={() => exportStudents(filteredStudents)}
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+            disabled={loading || filteredStudents.length === 0}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Download size={17} />
             Export CSV
           </button>
 
           <button
+            type="button"
             onClick={openAddModal}
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
           >
@@ -350,6 +590,43 @@ export default function StudentsPage() {
           </button>
         </div>
       </div>
+
+      {/* API error and success messages */}
+      {error && (
+        <div
+          role="alert"
+          className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+        >
+          <AlertCircle size={19} className="mt-0.5 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold">Request failed</p>
+            <p className="mt-1 break-words">{error}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setError("")}
+            aria-label="Dismiss error"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
+
+      {notice && (
+        <div
+          role="status"
+          className="flex items-center justify-between gap-3 rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-800"
+        >
+          <span>{notice}</span>
+          <button
+            type="button"
+            onClick={() => setNotice("")}
+            aria-label="Dismiss message"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
 
       {/* Statistics */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -365,7 +642,7 @@ export default function StudentsPage() {
                 <div>
                   <p className="text-sm text-slate-500">{stat.label}</p>
                   <p className="mt-3 break-words text-2xl font-bold text-slate-900">
-                    {stat.value}
+                    {loading ? "…" : stat.value}
                   </p>
                 </div>
                 <div className={`rounded-xl p-3 ${stat.color}`}>
@@ -395,7 +672,8 @@ export default function StudentsPage() {
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Name, email, phone..."
+              placeholder="Name, email, phone, ID..."
+              aria-label="Search students"
               className="w-full rounded-lg border border-slate-200 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-blue-500"
             />
           </div>
@@ -404,6 +682,7 @@ export default function StudentsPage() {
             value={courseFilter}
             onChange={(event) => setCourseFilter(event.target.value)}
             className={inputClass}
+            aria-label="Filter by course"
           >
             <option value="All">All Courses</option>
             {courses.map((course) => (
@@ -417,6 +696,7 @@ export default function StudentsPage() {
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value)}
             className={inputClass}
+            aria-label="Filter by status"
           >
             <option value="All">All Student Statuses</option>
             <option value="Active">Active</option>
@@ -429,6 +709,7 @@ export default function StudentsPage() {
             value={modeFilter}
             onChange={(event) => setModeFilter(event.target.value)}
             className={inputClass}
+            aria-label="Filter by batch mode"
           >
             <option value="All">All Batch Modes</option>
             <option value="Online">Online</option>
@@ -440,6 +721,7 @@ export default function StudentsPage() {
             value={feeFilter}
             onChange={(event) => setFeeFilter(event.target.value)}
             className={inputClass}
+            aria-label="Filter by fee status"
           >
             <option value="All">All Fee Statuses</option>
             <option value="Clear">Clear</option>
@@ -450,13 +732,27 @@ export default function StudentsPage() {
 
       {/* Student table */}
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 p-5">
-          <h2 className="text-lg font-bold text-slate-900">
-            Student Directory
-          </h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Showing {filteredStudents.length} student(s)
-          </p>
+        <div className="flex flex-col justify-between gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">
+              Student Directory
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              {loading
+                ? "Loading students from the backend..."
+                : `Showing ${filteredStudents.length} of ${students.length} student(s)`}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={loadStudents}
+            disabled={loading}
+            className="inline-flex items-center justify-center gap-2 self-start rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 sm:self-auto"
+          >
+            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+            Refresh
+          </button>
         </div>
 
         <div className="overflow-x-auto">
@@ -483,142 +779,172 @@ export default function StudentsPage() {
             </thead>
 
             <tbody>
-              {filteredStudents.map((student) => (
-                <tr
-                  key={student.id}
-                  className="border-t border-slate-100 hover:bg-slate-50"
-                >
-                  <td className="px-4 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-700">
-                        {student.name
-                          .split(" ")
-                          .map((part) => part[0])
-                          .slice(0, 2)
-                          .join("")
-                          .toUpperCase()}
-                      </div>
-                      <div>
-                        <p className="font-semibold text-slate-800">
-                          {student.name}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-400">
-                          Joined {displayDate(student.admissionDate)}
-                        </p>
-                      </div>
-                    </div>
-                  </td>
-
-                  <td className="px-4 py-4">
-                    <p className="flex items-center gap-2 text-slate-600">
-                      <Mail size={14} className="shrink-0 text-slate-400" />
-                      {student.email}
-                    </p>
-                    <p className="mt-2 flex items-center gap-2 text-slate-600">
-                      <Phone size={14} className="shrink-0 text-slate-400" />
-                      {student.phone}
-                    </p>
-                  </td>
-
-                  <td className="px-4 py-4 text-slate-600">{student.course}</td>
-
-                  <td className="px-4 py-4 text-slate-600">{student.trainer}</td>
-
-                  <td className="px-4 py-4">
-                    <p className="font-medium text-slate-700">{student.mode}</p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      {student.batchType} · {student.batchTime}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      {displayDate(student.batchStartDate)}
-                    </p>
-                  </td>
-
-                  <td className="px-4 py-4 font-semibold text-slate-800">
-                    {money(student.totalFee)}
-                  </td>
-
-                  <td className="px-4 py-4">
-                    <span
-                      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                        student.feeStatus === "Clear"
-                          ? "bg-green-100 text-green-700"
-                          : "bg-amber-100 text-amber-700"
-                      }`}
-                    >
-                      {student.feeStatus}
-                    </span>
-                  </td>
-
-                  <td className="px-4 py-4">
-                    <span
-                      className={`inline-flex items-center gap-1 text-xs font-semibold ${
-                        student.videoAccess === "Yes"
-                          ? "text-green-700"
-                          : "text-slate-400"
-                      }`}
-                    >
-                      <Video size={15} />
-                      {student.videoAccess}
-                    </span>
-                  </td>
-
-                  <td className="px-4 py-4">
-                    <span
-                      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                        student.status === "Active"
-                          ? "bg-green-100 text-green-700"
-                          : student.status === "Completed"
-                            ? "bg-blue-100 text-blue-700"
-                            : student.status === "On Hold"
-                              ? "bg-amber-100 text-amber-700"
-                              : "bg-red-100 text-red-700"
-                      }`}
-                    >
-                      {student.status}
-                    </span>
-                  </td>
-
-                  <td className="px-4 py-4">
-                    <div className="flex items-center gap-1">
-                      <button
-                        title="View student"
-                        onClick={() => setSelectedStudent(student)}
-                        className="rounded-lg p-2 text-slate-500 hover:bg-blue-50 hover:text-blue-700"
-                      >
-                        <Eye size={17} />
-                      </button>
-                      <button
-                        title="Edit student"
-                        onClick={() => openEditModal(student)}
-                        className="rounded-lg p-2 text-slate-500 hover:bg-amber-50 hover:text-amber-700"
-                      >
-                        <Pencil size={17} />
-                      </button>
-                      <button
-                        title="Delete student"
-                        onClick={() => deleteStudent(student)}
-                        className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-600"
-                      >
-                        <Trash2 size={17} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-
-              {filteredStudents.length === 0 && (
+              {loading ? (
                 <tr>
                   <td colSpan={10} className="px-4 py-16 text-center">
-                    <Users className="mx-auto mb-3 h-10 w-10 text-slate-300" />
+                    <RefreshCw className="mx-auto mb-3 h-8 w-8 animate-spin text-blue-600" />
                     <p className="font-semibold text-slate-700">
-                      No students found
+                      Loading student records
                     </p>
                     <p className="mt-1 text-sm text-slate-500">
-                      Change your filters or add a new student.
+                      Connecting to the APPWARS LMS backend.
                     </p>
                   </td>
                 </tr>
+              ) : (
+                <>
+                  {filteredStudents.map((student) => (
+                    <tr
+                      key={student.id}
+                      className="border-t border-slate-100 hover:bg-slate-50"
+                    >
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-700">
+                            {avatarText(student.name)}
+                          </div>
+                          <div>
+                            <p className="font-semibold text-slate-800">
+                              {student.name}
+                            </p>
+                            {student.userId && (
+                              <p className="mt-1 text-xs text-blue-700">
+                                ID: {student.userId}
+                              </p>
+                            )}
+                            <p className="mt-1 text-xs text-slate-400">
+                              Joined {displayDate(student.admissionDate)}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <p className="flex items-center gap-2 text-slate-600">
+                          <Mail size={14} className="shrink-0 text-slate-400" />
+                          {student.email || "—"}
+                        </p>
+                        <p className="mt-2 flex items-center gap-2 text-slate-600">
+                          <Phone size={14} className="shrink-0 text-slate-400" />
+                          {student.phone || "—"}
+                        </p>
+                      </td>
+
+                      <td className="px-4 py-4 text-slate-600">
+                        {student.course || "—"}
+                      </td>
+
+                      <td className="px-4 py-4 text-slate-600">
+                        {student.trainer || "—"}
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <p className="font-medium text-slate-700">
+                          {student.mode}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-400">
+                          {student.batchType} · {student.batchTime || "Time not set"}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-400">
+                          {displayDate(student.batchStartDate)}
+                        </p>
+                      </td>
+
+                      <td className="px-4 py-4 font-semibold text-slate-800">
+                        {money(student.totalFee)}
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            student.feeStatus === "Clear"
+                              ? "bg-green-100 text-green-700"
+                              : "bg-amber-100 text-amber-700"
+                          }`}
+                        >
+                          {student.feeStatus}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <span
+                          className={`inline-flex items-center gap-1 text-xs font-semibold ${
+                            student.videoAccess === "Yes"
+                              ? "text-green-700"
+                              : "text-slate-400"
+                          }`}
+                        >
+                          <Video size={15} />
+                          {student.videoAccess}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            student.status === "Active"
+                              ? "bg-green-100 text-green-700"
+                              : student.status === "Completed"
+                                ? "bg-blue-100 text-blue-700"
+                                : student.status === "On Hold"
+                                  ? "bg-amber-100 text-amber-700"
+                                  : "bg-red-100 text-red-700"
+                          }`}
+                        >
+                          {student.status}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            title="View student"
+                            onClick={() => setSelectedStudent(student)}
+                            className="rounded-lg p-2 text-slate-500 hover:bg-blue-50 hover:text-blue-700"
+                          >
+                            <Eye size={17} />
+                          </button>
+                          <button
+                            type="button"
+                            title="Edit student"
+                            onClick={() => openEditModal(student)}
+                            className="rounded-lg p-2 text-slate-500 hover:bg-amber-50 hover:text-amber-700"
+                          >
+                            <Pencil size={17} />
+                          </button>
+                          <button
+                            type="button"
+                            title="Delete student"
+                            disabled={deletingId === student.id}
+                            onClick={() => deleteStudent(student)}
+                            className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                          >
+                            {deletingId === student.id ? (
+                              <RefreshCw size={17} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={17} />
+                            )}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+
+                  {filteredStudents.length === 0 && (
+                    <tr>
+                      <td colSpan={10} className="px-4 py-16 text-center">
+                        <Users className="mx-auto mb-3 h-10 w-10 text-slate-300" />
+                        <p className="font-semibold text-slate-700">
+                          No students found
+                        </p>
+                        <p className="mt-1 text-sm text-slate-500">
+                          Change your filters or add a new student.
+                        </p>
+                      </td>
+                    </tr>
+                  )}
+                </>
               )}
             </tbody>
           </table>
@@ -635,12 +961,12 @@ export default function StudentsPage() {
                   {editingId !== null ? "Edit Student" : "Add New Student"}
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Enter the students profile, course, and batch details.
+                  Enter the student profile, course, and batch details.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setModalOpen(false)}
+                onClick={closeForm}
                 className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
               >
                 <X size={21} />
@@ -676,22 +1002,20 @@ export default function StudentsPage() {
                     />
                   </Field>
 
-                  <Field label="Phone Number *">
+                  <Field label="Phone Number">
                     <input
-                      required
                       type="tel"
                       name="phone"
                       value={form.phone}
                       onChange={updateField}
                       className={inputClass}
-                      placeholder="10-digit phone number"
+                      placeholder="Phone number"
                       pattern="[0-9+() -]{7,20}"
                     />
                   </Field>
 
-                  <Field label="Admission Date *">
+                  <Field label="Admission Date">
                     <input
-                      required
                       type="date"
                       name="admissionDate"
                       value={form.admissionDate}
@@ -718,9 +1042,8 @@ export default function StudentsPage() {
                     />
                   </Field>
 
-                  <Field label="Trainer Name *">
+                  <Field label="Trainer Name">
                     <input
-                      required
                       name="trainer"
                       value={form.trainer}
                       onChange={updateField}
@@ -747,8 +1070,8 @@ export default function StudentsPage() {
                       onChange={updateField}
                       className={inputClass}
                     >
-                      <option>Pending</option>
-                      <option>Clear</option>
+                      <option value="Pending">Pending</option>
+                      <option value="Clear">Clear</option>
                     </select>
                   </Field>
 
@@ -759,10 +1082,10 @@ export default function StudentsPage() {
                       onChange={updateField}
                       className={inputClass}
                     >
-                      <option>Active</option>
-                      <option>Completed</option>
-                      <option>On Hold</option>
-                      <option>Dropped</option>
+                      <option value="Active">Active</option>
+                      <option value="Completed">Completed</option>
+                      <option value="On Hold">On Hold</option>
+                      <option value="Dropped">Dropped</option>
                     </select>
                   </Field>
                 </div>
@@ -780,9 +1103,9 @@ export default function StudentsPage() {
                       onChange={updateField}
                       className={inputClass}
                     >
-                      <option>Online</option>
-                      <option>Offline</option>
-                      <option>Hybrid</option>
+                      <option value="Online">Online</option>
+                      <option value="Offline">Offline</option>
+                      <option value="Hybrid">Hybrid</option>
                     </select>
                   </Field>
 
@@ -793,9 +1116,9 @@ export default function StudentsPage() {
                       onChange={updateField}
                       className={inputClass}
                     >
-                      <option>Mon-Th</option>
-                      <option>Weekend</option>
-                      <option>Custom</option>
+                      <option value="Mon-Th">Mon-Th</option>
+                      <option value="Weekend">Weekend</option>
+                      <option value="Custom">Custom</option>
                     </select>
                   </Field>
 
@@ -836,8 +1159,8 @@ export default function StudentsPage() {
                       onChange={updateField}
                       className={inputClass}
                     >
-                      <option>Yes</option>
-                      <option>No</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
                     </select>
                   </Field>
 
@@ -859,16 +1182,23 @@ export default function StudentsPage() {
               <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end">
                 <button
                   type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="rounded-lg border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  disabled={saving}
+                  onClick={closeForm}
+                  className="rounded-lg border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="rounded-lg bg-blue-700 px-6 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
+                  disabled={saving}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-6 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {editingId !== null ? "Update Student" : "Save Student"}
+                  {saving && <RefreshCw size={16} className="animate-spin" />}
+                  {saving
+                    ? "Saving..."
+                    : editingId !== null
+                      ? "Update Student"
+                      : "Save Student"}
                 </button>
               </div>
             </form>
@@ -883,21 +1213,22 @@ export default function StudentsPage() {
             <div className="flex items-center justify-between border-b border-slate-100 p-5">
               <div className="flex items-center gap-3">
                 <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 text-lg font-bold text-blue-700">
-                  {selectedStudent.name
-                    .split(" ")
-                    .map((part) => part[0])
-                    .slice(0, 2)
-                    .join("")
-                    .toUpperCase()}
+                  {avatarText(selectedStudent.name)}
                 </div>
                 <div>
                   <h2 className="text-xl font-bold text-slate-900">
                     {selectedStudent.name}
                   </h2>
-                  <p className="text-sm text-slate-500">Student Profile</p>
+                  <p className="text-sm text-slate-500">
+                    Student Profile
+                    {selectedStudent.userId
+                      ? ` · ${selectedStudent.userId}`
+                      : ""}
+                  </p>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setSelectedStudent(null)}
                 className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
               >
@@ -937,6 +1268,7 @@ export default function StudentsPage() {
 
             <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 p-5">
               <button
+                type="button"
                 onClick={() => openEditModal(selectedStudent)}
                 className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
               >
@@ -944,6 +1276,7 @@ export default function StudentsPage() {
                 Edit Student
               </button>
               <button
+                type="button"
                 onClick={() => setSelectedStudent(null)}
                 className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
@@ -955,8 +1288,7 @@ export default function StudentsPage() {
       )}
 
       <p className="text-center text-xs text-slate-400">
-        Demo student records only. Connect your backend to save and retrieve
-        actual student information.
+        APPWARS LMS · Student records are loaded from the counsellor backend.
       </p>
     </div>
   );

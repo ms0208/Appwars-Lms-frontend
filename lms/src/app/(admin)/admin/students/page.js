@@ -1,6 +1,7 @@
+
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Users,
   UserPlus,
@@ -14,64 +15,18 @@ import {
   Mail,
   GraduationCap,
   CheckCircle2,
+  RefreshCw,
+  AlertCircle,
 } from "lucide-react";
 
-const initialStudents = [
-  {
-    id: "STU001",
-    name: "Aarav Sharma",
-    email: "aarav@example.com",
-    phone: "9876543210",
-    course: "MERN Stack Development",
-    batch: "MERN-2026-A",
-    enrollmentDate: "2026-09-01",
-    status: "Active",
-  },
-  {
-    id: "STU002",
-    name: "Priya Verma",
-    email: "priya@example.com",
-    phone: "9876543211",
-    course: "AWS Cloud Computing",
-    batch: "AWS-2026-A",
-    enrollmentDate: "2026-09-05",
-    status: "Active",
-  },
-  {
-    id: "STU003",
-    name: "Rahul Singh",
-    email: "rahul@example.com",
-    phone: "9876543212",
-    course: "Python Programming",
-    batch: "PY-2026-A",
-    enrollmentDate: "2026-09-10",
-    status: "Pending",
-  },
-  {
-    id: "STU004",
-    name: "Ananya Gupta",
-    email: "ananya@example.com",
-    phone: "9876543213",
-    course: "Software Testing",
-    batch: "ST-2026-A",
-    enrollmentDate: "2026-09-15",
-    status: "Active",
-  },
-  {
-    id: "STU005",
-    name: "Karan Mehta",
-    email: "karan@example.com",
-    phone: "9876543214",
-    course: "MERN Stack Development",
-    batch: "MERN-2026-A",
-    enrollmentDate: "2026-09-20",
-    status: "Inactive",
-  },
-];
+const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
+).replace(/\/+$/, "");
 
-const emptyStudent = {
+const EMPTY_FORM = {
   name: "",
   email: "",
+  password: "",
   phone: "",
   course: "",
   batch: "",
@@ -79,39 +34,162 @@ const emptyStudent = {
   status: "Active",
 };
 
-const statusStyles = {
+const STATUS_STYLES = {
   Active: "bg-emerald-50 text-emerald-700",
   Pending: "bg-amber-50 text-amber-700",
   Inactive: "bg-slate-100 text-slate-600",
 };
 
+function getUserId(user) {
+  return user?.userId || user?._id || user?.id || "";
+}
+
+function getStudentStatus(user) {
+  if (user?.status === "Pending") return "Pending";
+
+  return user?.isActive === false ||
+    user?.status === "Inactive"
+    ? "Inactive"
+    : "Active";
+}
+
+function mapStudent(user) {
+  return {
+    id: getUserId(user),
+    name: user?.name || "",
+    email: user?.email || "",
+    phone: user?.phone || "",
+    course: user?.course || "",
+    batch: user?.batch || "",
+    enrollmentDate: user?.enrollmentDate
+      ? String(user.enrollmentDate).slice(0, 10)
+      : user?.createdAt
+        ? String(user.createdAt).slice(0, 10)
+        : "",
+    status: getStudentStatus(user),
+    isActive: user?.isActive !== false,
+  };
+}
+
+async function readResponse(response) {
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.message ||
+        data.error ||
+        `Request failed with status ${response.status}.`
+    );
+  }
+
+  return data;
+}
+
+function extractUsers(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data.users)) return data.users;
+  if (Array.isArray(data.data)) return data.data;
+  if (Array.isArray(data.data?.users)) return data.data.users;
+  if (Array.isArray(data.results)) return data.results;
+
+  return [];
+}
+
 export default function StudentsPage() {
-  const [students, setStudents] = useState(initialStudents);
+  const [students, setStudents] = useState([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
+
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [viewStudent, setViewStudent] = useState(null);
-  const [form, setForm] = useState(emptyStudent);
+  const [form, setForm] = useState(EMPTY_FORM);
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
 
-  const filteredStudents = students.filter((student) => {
-    const matchesSearch = [
-      student.id,
-      student.name,
-      student.email,
-      student.phone,
-      student.course,
-      student.batch,
-    ].some((value) =>
-      value.toLowerCase().includes(search.toLowerCase())
-    );
+  const token =
+    typeof window !== "undefined"
+      ? sessionStorage.getItem("token")
+      : null;
 
-    const matchesStatus =
-      statusFilter === "All" || student.status === statusFilter;
+  const apiRequest = useCallback(async (path, options = {}) => {
+    const currentToken = sessionStorage.getItem("token");
 
-    return matchesSearch && matchesStatus;
-  });
+    if (!currentToken) {
+      throw new Error(
+        "Your session has expired. Please sign in again."
+      );
+    }
+
+    const response = await fetch(`${API_URL}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${currentToken}`,
+        ...options.headers,
+      },
+    });
+
+    return readResponse(response);
+  }, []);
+
+  // Load students from the backend.
+  const loadStudents = useCallback(async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const data = await apiRequest("/admin/users?role=Student");
+      const users = extractUsers(data);
+
+      // Only show Student accounts, even if the backend
+      // returns all users instead of filtering by role.
+      const studentUsers = users.filter(
+        (user) =>
+          String(user.role || "").toLowerCase() === "student"
+      );
+
+      setStudents(studentUsers.map(mapStudent));
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load students."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [apiRequest]);
+
+  useEffect(() => {
+    loadStudents();
+  }, [loadStudents]);
+
+  const filteredStudents = useMemo(() => {
+    return students.filter((student) => {
+      const searchText = search.toLowerCase();
+
+      const matchesSearch = [
+        student.id,
+        student.name,
+        student.email,
+        student.phone,
+        student.course,
+        student.batch,
+      ].some((value) =>
+        String(value || "").toLowerCase().includes(searchText)
+      );
+
+      const matchesStatus =
+        statusFilter === "All" ||
+        student.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [students, search, statusFilter]);
 
   const activeCount = students.filter(
     (student) => student.status === "Active"
@@ -123,62 +201,157 @@ export default function StudentsPage() {
 
   function openAddModal() {
     setEditingId(null);
-    setForm({ ...emptyStudent });
+    setForm({ ...EMPTY_FORM });
+    setError("");
     setShowModal(true);
   }
 
   function openEditModal(student) {
     setEditingId(student.id);
+
     setForm({
       name: student.name,
       email: student.email,
+      password: "",
       phone: student.phone,
       course: student.course,
       batch: student.batch,
       enrollmentDate: student.enrollmentDate,
       status: student.status,
     });
+
+    setError("");
     setShowModal(true);
   }
 
-  function handleSubmit(event) {
+  // Create or update a student through Express.
+  async function handleSubmit(event) {
     event.preventDefault();
 
-    if (editingId) {
-      setStudents((previous) =>
-        previous.map((student) =>
-          student.id === editingId
-            ? { ...student, ...form }
-            : student
-        )
-      );
-      setNotice("Student details updated successfully.");
-    } else {
-      const newStudent = {
-        ...form,
-        id: `STU${String(Date.now()).slice(-6)}`,
-      };
+    if (saving) return;
 
-      setStudents((previous) => [newStudent, ...previous]);
-      setNotice("New student added successfully.");
+    if (!form.name.trim() || !form.email.trim()) {
+      setError("Name and email are required.");
+      return;
     }
 
-    setShowModal(false);
-    setEditingId(null);
+    if (!editingId && !form.password) {
+      setError("Please enter an initial password for the student.");
+      return;
+    }
+
+    if (!editingId && form.password.length < 8) {
+      setError("The initial password must contain at least 8 characters.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const payload = {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        batch: form.batch.trim(),
+        role: "Student",
+        isActive: form.status !== "Inactive",
+      };
+
+      // Only send the password when creating an account or
+      // when your backend supports password changes.
+      if (!editingId) {
+        payload.password = form.password;
+      }
+
+      // These extra fields are persisted only if your
+      // User schema and controller explicitly support them.
+      payload.phone = form.phone.trim();
+      payload.course = form.course;
+      payload.enrollmentDate = form.enrollmentDate;
+
+      if (editingId) {
+        await apiRequest(
+          `/admin/users/${encodeURIComponent(editingId)}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          }
+        );
+
+        setNotice("Student updated successfully.");
+      } else {
+        await apiRequest("/admin/users", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+
+        setNotice("Student account created successfully.");
+      }
+
+      setShowModal(false);
+      setEditingId(null);
+      setForm({ ...EMPTY_FORM });
+
+      await loadStudents();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to save student."
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function deleteStudent(id) {
+  // The backend DELETE endpoint should deactivate the account.
+  async function deleteStudent(student) {
     const confirmed = window.confirm(
-      "Are you sure you want to delete this student?"
+      `Deactivate student account for ${student.name} (${student.id})?`
     );
 
     if (!confirmed) return;
 
-    setStudents((previous) =>
-      previous.filter((student) => student.id !== id)
-    );
+    setError("");
+    setNotice("");
 
-    setNotice("Student deleted successfully.");
+    try {
+      await apiRequest(
+        `/admin/users/${encodeURIComponent(student.id)}`,
+        { method: "DELETE" }
+      );
+
+      setNotice("Student account deactivated successfully.");
+      await loadStudents();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to deactivate student."
+      );
+    }
+  }
+
+  async function reactivateStudent(student) {
+    setError("");
+    setNotice("");
+
+    try {
+      await apiRequest(
+        `/admin/users/${encodeURIComponent(student.id)}/reactivate`,
+        { method: "PATCH" }
+      );
+
+      setNotice("Student account reactivated successfully.");
+      await loadStudents();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to reactivate student."
+      );
+    }
   }
 
   function exportCSV() {
@@ -197,17 +370,18 @@ export default function StudentsPage() {
       headers.join(","),
       ...filteredStudents.map((student) =>
         headers
-          .map(
-            (header) =>
-              `"${String(student[header] ?? "").replace(/"/g, '""')}"`
-          )
+          .map((header) => {
+            const value = String(student[header] ?? "");
+            return `"${value.replace(/"/g, '""')}"`;
+          })
           .join(",")
       ),
     ];
 
-    const blob = new Blob(["\uFEFF" + csvRows.join("\n")], {
-      type: "text/csv;charset=utf-8;",
-    });
+    const blob = new Blob(
+      ["\uFEFF" + csvRows.join("\n")],
+      { type: "text/csv;charset=utf-8;" }
+    );
 
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -235,7 +409,8 @@ export default function StudentsPage() {
         <div className="flex flex-wrap gap-3">
           <button
             onClick={exportCSV}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            disabled={filteredStudents.length === 0}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
             <Download size={17} />
             Export CSV
@@ -248,10 +423,23 @@ export default function StudentsPage() {
             <UserPlus size={18} />
             Add Student
           </button>
+
+          <button
+            onClick={loadStudents}
+            disabled={loading}
+            title="Refresh students"
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <RefreshCw
+              size={17}
+              className={loading ? "animate-spin" : ""}
+            />
+            Refresh
+          </button>
         </div>
       </div>
 
-      {/* Success message */}
+      {/* Success notification */}
       {notice && (
         <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
           <span className="flex items-center gap-2">
@@ -268,6 +456,23 @@ export default function StudentsPage() {
         </div>
       )}
 
+      {/* Error notification */}
+      {error && (
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <span className="flex items-start gap-2">
+            <AlertCircle size={18} className="mt-0.5 shrink-0" />
+            {error}
+          </span>
+
+          <button
+            onClick={() => setError("")}
+            aria-label="Dismiss error"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
+
       {/* Statistics */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
@@ -275,7 +480,7 @@ export default function StudentsPage() {
           value={students.length}
           icon={Users}
           color="blue"
-          description="Registered students"
+          description="Student accounts in the database"
         />
 
         <StatCard
@@ -283,7 +488,7 @@ export default function StudentsPage() {
           value={activeCount}
           icon={CheckCircle2}
           color="green"
-          description="Currently enrolled"
+          description="Currently active accounts"
         />
 
         <StatCard
@@ -311,7 +516,7 @@ export default function StudentsPage() {
               All Students
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              View and manage registered students.
+              Student records loaded from the backend.
             </p>
           </div>
 
@@ -364,15 +569,21 @@ export default function StudentsPage() {
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {filteredStudents.map((student) => (
-                <tr
-                  key={student.id}
-                  className="transition hover:bg-slate-50"
-                >
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="px-5 py-12 text-center text-slate-500">
+                    <span className="inline-flex items-center gap-2">
+                      <RefreshCw size={17} className="animate-spin" />
+                      Loading students from the backend...
+                    </span>
+                  </td>
+                </tr>
+              ) : filteredStudents.map((student) => (
+                <tr key={student.id} className="transition hover:bg-slate-50">
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-3">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-700">
-                        {student.name.charAt(0).toUpperCase()}
+                        {student.name.charAt(0).toUpperCase() || "S"}
                       </div>
 
                       <div>
@@ -392,16 +603,16 @@ export default function StudentsPage() {
                       {student.email}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
-                      {student.phone}
+                      {student.phone || "Phone not available"}
                     </p>
                   </td>
 
                   <td className="px-5 py-4">
                     <p className="font-medium text-slate-700">
-                      {student.course}
+                      {student.course || "—"}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
-                      {student.batch}
+                      {student.batch || "No batch assigned"}
                     </p>
                   </td>
 
@@ -412,7 +623,7 @@ export default function StudentsPage() {
                   <td className="px-5 py-4">
                     <span
                       className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-                        statusStyles[student.status] ||
+                        STATUS_STYLES[student.status] ||
                         "bg-slate-100 text-slate-600"
                       }`}
                     >
@@ -438,25 +649,34 @@ export default function StudentsPage() {
                         <Pencil size={17} />
                       </button>
 
-                      <button
-                        onClick={() => deleteStudent(student.id)}
-                        title="Delete student"
-                        className="rounded-lg p-2 text-rose-600 hover:bg-rose-50"
-                      >
-                        <Trash2 size={17} />
-                      </button>
+                      {student.status === "Inactive" ? (
+                        <button
+                          onClick={() => reactivateStudent(student)}
+                          title="Reactivate student"
+                          className="rounded-lg p-2 text-emerald-700 hover:bg-emerald-50"
+                        >
+                          <CheckCircle2 size={17} />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => deleteStudent(student)}
+                          title="Deactivate student"
+                          className="rounded-lg p-2 text-rose-600 hover:bg-rose-50"
+                        >
+                          <Trash2 size={17} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
               ))}
 
-              {filteredStudents.length === 0 && (
+              {!loading && filteredStudents.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={6}
-                    className="px-5 py-12 text-center text-slate-500"
-                  >
-                    No students found. Try another search or add a student.
+                  <td colSpan={6} className="px-5 py-12 text-center text-slate-500">
+                    {error
+                      ? "Students could not be loaded. Check the error above."
+                      : "No students found. Try another search or add a student."}
                   </td>
                 </tr>
               )}
@@ -472,7 +692,7 @@ export default function StudentsPage() {
         </div>
       </section>
 
-      {/* Add / Edit Student Modal */}
+      {/* Add / Edit modal */}
       {showModal && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-y-auto bg-slate-950/50 p-4">
           <div className="my-auto w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
@@ -482,12 +702,18 @@ export default function StudentsPage() {
                   {editingId ? "Edit Student" : "Add New Student"}
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Enter the students information below.
+                  {editingId
+                    ? "Update the student account details."
+                    : "Create a Student account in the database."}
                 </p>
               </div>
 
               <button
-                onClick={() => setShowModal(false)}
+                type="button"
+                onClick={() => {
+                  setShowModal(false);
+                  setError("");
+                }}
                 className="rounded-lg p-2 hover:bg-slate-100"
                 aria-label="Close modal"
               >
@@ -501,9 +727,7 @@ export default function StudentsPage() {
                   label="Full Name"
                   required
                   value={form.name}
-                  onChange={(value) =>
-                    setForm({ ...form, name: value })
-                  }
+                  onChange={(value) => setForm({ ...form, name: value })}
                   placeholder="Enter student name"
                 />
 
@@ -512,19 +736,25 @@ export default function StudentsPage() {
                   type="email"
                   required
                   value={form.email}
-                  onChange={(value) =>
-                    setForm({ ...form, email: value })
-                  }
+                  onChange={(value) => setForm({ ...form, email: value })}
                   placeholder="student@example.com"
                 />
 
+                {!editingId && (
+                  <FormField
+                    label="Initial Password"
+                    type="password"
+                    required
+                    value={form.password}
+                    onChange={(value) => setForm({ ...form, password: value })}
+                    placeholder="At least 8 characters"
+                  />
+                )}
+
                 <FormField
                   label="Phone Number"
-                  required
                   value={form.phone}
-                  onChange={(value) =>
-                    setForm({ ...form, phone: value })
-                  }
+                  onChange={(value) => setForm({ ...form, phone: value })}
                   placeholder="Enter phone number"
                 />
 
@@ -533,7 +763,6 @@ export default function StudentsPage() {
                     Course
                   </label>
                   <select
-                    required
                     value={form.course}
                     onChange={(event) =>
                       setForm({ ...form, course: event.target.value })
@@ -551,25 +780,21 @@ export default function StudentsPage() {
 
                 <FormField
                   label="Batch"
-                  required
                   value={form.batch}
-                  onChange={(value) =>
-                    setForm({ ...form, batch: value })
-                  }
+                  onChange={(value) => setForm({ ...form, batch: value })}
                   placeholder="e.g. MERN-2026-A"
                 />
 
                 <FormField
                   label="Enrollment Date"
                   type="date"
-                  required
                   value={form.enrollmentDate}
                   onChange={(value) =>
                     setForm({ ...form, enrollmentDate: value })
                   }
                 />
 
-                <div className="sm:col-span-2">
+                <div>
                   <label className="mb-2 block text-sm font-medium text-slate-700">
                     Student Status
                   </label>
@@ -581,16 +806,25 @@ export default function StudentsPage() {
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 outline-none focus:border-blue-500"
                   >
                     <option value="Active">Active</option>
-                    <option value="Pending">Pending</option>
                     <option value="Inactive">Inactive</option>
                   </select>
                 </div>
               </div>
 
+              {error && (
+                <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                  {error}
+                </p>
+              )}
+
               <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
                 <button
                   type="button"
-                  onClick={() => setShowModal(false)}
+                  onClick={() => {
+                    setShowModal(false);
+                    setError("");
+                  }}
+                  disabled={saving}
                   className="rounded-xl border border-slate-200 px-5 py-2.5 font-semibold text-slate-600 hover:bg-slate-50"
                 >
                   Cancel
@@ -598,9 +832,14 @@ export default function StudentsPage() {
 
                 <button
                   type="submit"
-                  className="rounded-xl bg-[#174ea6] px-5 py-2.5 font-semibold text-white hover:bg-[#102f63]"
+                  disabled={saving}
+                  className="rounded-xl bg-[#174ea6] px-5 py-2.5 font-semibold text-white hover:bg-[#102f63] disabled:opacity-60"
                 >
-                  {editingId ? "Update Student" : "Add Student"}
+                  {saving
+                    ? "Saving..."
+                    : editingId
+                      ? "Update Student"
+                      : "Create Student"}
                 </button>
               </div>
             </form>
@@ -610,8 +849,8 @@ export default function StudentsPage() {
 
       {/* Student details modal */}
       {viewStudent && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/50 p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-y-auto bg-slate-950/50 p-4">
+          <div className="my-auto w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-5 flex items-center justify-between">
               <h2 className="text-xl font-bold text-[#102f63]">
                 Student Details
@@ -627,7 +866,7 @@ export default function StudentsPage() {
 
             <div className="mb-5 flex items-center gap-4 rounded-xl bg-blue-50 p-4">
               <div className="flex h-14 w-14 items-center justify-center rounded-full bg-blue-200 text-xl font-bold text-blue-800">
-                {viewStudent.name.charAt(0)}
+                {viewStudent.name.charAt(0).toUpperCase()}
               </div>
               <div>
                 <p className="font-bold text-[#102f63]">
@@ -686,7 +925,9 @@ function StatCard({ title, value, icon: Icon, color, description }) {
       <div className="flex items-start justify-between">
         <div>
           <p className="text-sm font-medium text-slate-500">{title}</p>
-          <p className="mt-3 text-3xl font-bold text-[#102f63]">{value}</p>
+          <p className="mt-3 text-3xl font-bold text-[#102f63]">
+            {value}
+          </p>
         </div>
         <div className={`rounded-xl p-3 ${colors[color]}`}>
           <Icon size={22} />
@@ -713,6 +954,7 @@ function FormField({
       <input
         type={type}
         required={required}
+        minLength={type === "password" ? 8 : undefined}
         value={value ?? ""}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}

@@ -1,7 +1,6 @@
-
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   IndianRupee,
   Search,
@@ -16,62 +15,16 @@ import {
   Filter,
   Eye,
   Trash2,
+  RefreshCw,
 } from "lucide-react";
 
-const initialFees = [
-  {
-    id: 1,
-    studentName: "Rahul Sharma",
-    course: "MERN Stack Development",
-    trainer: "Manav Sharma",
-    totalFee: 45000,
-    registrationFee: 5000,
-    installment0: 10000,
-    installment1: 10000,
-    installment2: 10000,
-    installment3: 10000,
-    payments: [
-      { id: 101, amount: 5000, date: "2026-10-05", mode: "UPI", note: "Registration fee" },
-      { id: 102, amount: 10000, date: "2026-10-10", mode: "Cash", note: "Installment 0" },
-    ],
-    bajajFinance: "No",
-  },
-  {
-    id: 2,
-    studentName: "Priya Verma",
-    course: "AWS Cloud Computing",
-    trainer: "Amit Kumar",
-    totalFee: 35000,
-    registrationFee: 5000,
-    installment0: 15000,
-    installment1: 15000,
-    installment2: 0,
-    installment3: 0,
-    payments: [
-      { id: 201, amount: 5000, date: "2026-10-12", mode: "UPI", note: "Registration fee" },
-      { id: 202, amount: 15000, date: "2026-10-15", mode: "Bajaj Finance", note: "Installment 0" },
-      { id: 203, amount: 15000, date: "2026-10-18", mode: "Bajaj Finance", note: "Installment 1" },
-    ],
-    bajajFinance: "Yes",
-  },
-  {
-    id: 3,
-    studentName: "Aman Gupta",
-    course: "Full Stack Development",
-    trainer: "Manav Sharma",
-    totalFee: 50000,
-    registrationFee: 5000,
-    installment0: 10000,
-    installment1: 10000,
-    installment2: 10000,
-    installment3: 15000,
-    payments: [
-      { id: 301, amount: 5000, date: "2026-10-15", mode: "Bank Transfer", note: "Registration fee" },
-      { id: 302, amount: 10000, date: "2026-10-17", mode: "UPI", note: "Installment 0" },
-    ],
-    bajajFinance: "No",
-  },
-];
+const API_BASE = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
+).replace(/\/+$/, "");
+
+const API_ROOT = API_BASE.endsWith("/api")
+  ? API_BASE
+  : `${API_BASE}/api`;
 
 const blankForm = {
   studentName: "",
@@ -110,19 +63,155 @@ function money(value) {
 
 function dateLabel(value) {
   if (!value) return "—";
-  const [year, month, day] = value.split("-");
-  return `${day}/${month}/${year}`;
+
+  const date = String(value).slice(0, 10);
+  const parts = date.split("-");
+
+  if (parts.length !== 3) return date;
+
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
 }
 
-function getCollected(student) {
-  return student.payments.reduce(
-    (sum, payment) => sum + Number(payment.amount || 0),
-    0
+function getAuthToken() {
+  if (typeof window === "undefined") return null;
+
+  return (
+    sessionStorage.getItem("appwars_token") ||
+    localStorage.getItem("appwars_token") ||
+    sessionStorage.getItem("token") ||
+    localStorage.getItem("token")
   );
 }
 
+async function apiRequest(endpoint, options = {}) {
+  const token = getAuthToken();
+
+  if (!token) {
+    throw new Error(
+      "Your session has expired. Please log in again."
+    );
+  }
+
+  const response = await fetch(`${API_ROOT}${endpoint}`, {
+    method: options.method || "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+    ...(options.body !== undefined
+      ? { body: JSON.stringify(options.body) }
+      : {}),
+    cache: "no-store",
+  });
+
+  const result = await response.json().catch(() => ({}));
+
+  if (response.status === 401) {
+    throw new Error(
+      "Your session has expired. Please log in again."
+    );
+  }
+
+  if (response.status === 403) {
+    throw new Error(
+      result.message ||
+        "You are not authorized to manage fee records."
+    );
+  }
+
+  if (!response.ok || result.success === false) {
+    throw new Error(
+      result.message || `Request failed (${response.status}).`
+    );
+  }
+
+  return result;
+}
+
+function normalizeFeeRecord(record) {
+  const details = record.admissionDetails || {};
+
+  const rawPayments = Array.isArray(record.payments)
+    ? record.payments
+    : [];
+
+  const id = record.studentId || record._id || record.id;
+
+  return {
+    id,
+    studentId: id,
+    studentName: record.studentName || record.name || "",
+    course:
+      record.course ||
+      details.course ||
+      record.courseName ||
+      "",
+    trainer: record.trainer || details.trainer || "",
+    totalFee: Number(
+      record.totalFee ?? details.totalFee ?? 0
+    ),
+    registrationFee: Number(
+      record.registrationFee ?? details.registrationFee ?? 0
+    ),
+    installment0: Number(
+      record.installment0 ?? details.installment0 ?? 0
+    ),
+    installment1: Number(
+      record.installment1 ?? details.installment1 ?? 0
+    ),
+    installment2: Number(
+      record.installment2 ?? details.installment2 ?? 0
+    ),
+    installment3: Number(
+      record.installment3 ?? details.installment3 ?? 0
+    ),
+    bajajFinance:
+      record.bajajFinance ?? details.bajajFinance ?? "No",
+    payments: rawPayments.map((payment) => ({
+      id:
+        payment._id ||
+        payment.id ||
+        payment.transactionId,
+      amount: Number(payment.amount || 0),
+      status: payment.status || "Paid",
+      date: payment.paymentDate
+        ? String(payment.paymentDate).slice(0, 10)
+        : payment.date
+          ? String(payment.date).slice(0, 10)
+          : "",
+      mode:
+        payment.paymentMethod ||
+        payment.mode ||
+        "Other",
+      note:
+        payment.note ||
+        payment.providerReference ||
+        "Fee payment",
+    })),
+  };
+}
+
+function getCollected(student) {
+  return (Array.isArray(student.payments) ? student.payments : [])
+    .filter(
+      (payment) =>
+        !payment.status ||
+        String(payment.status).toLowerCase() === "paid"
+    )
+    .reduce(
+      (sum, payment) =>
+        sum + Number(payment.amount || 0),
+      0
+    );
+}
+
 function getPending(student) {
-  return Math.max(0, Number(student.totalFee || 0) - getCollected(student));
+  return Math.max(
+    0,
+    Number(student.totalFee || 0) - getCollected(student)
+  );
 }
 
 function getStatus(student) {
@@ -130,19 +219,6 @@ function getStatus(student) {
 }
 
 function downloadCSV(rows) {
-  const columns = [
-    "studentName",
-    "course",
-    "trainer",
-    "totalFee",
-    "registrationFee",
-    "installment0",
-    "installment1",
-    "installment2",
-    "installment3",
-    "bajajFinance",
-  ];
-
   const headers = [
     "Student",
     "Course",
@@ -159,13 +235,23 @@ function downloadCSV(rows) {
     "Status",
   ];
 
-  const cell = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const cell = (value) =>
+    `"${String(value ?? "").replace(/"/g, '""')}"`;
 
   const csv = [
     headers.map(cell).join(","),
     ...rows.map((student) =>
       [
-        ...columns.map((key) => student[key]),
+        student.studentName,
+        student.course,
+        student.trainer,
+        student.totalFee,
+        student.registrationFee,
+        student.installment0,
+        student.installment1,
+        student.installment2,
+        student.installment3,
+        student.bajajFinance,
         getCollected(student),
         getPending(student),
         getStatus(student),
@@ -181,23 +267,39 @@ function downloadCSV(rows) {
 
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
+
   link.href = url;
   link.download = "appwars-fee-management.csv";
+  document.body.appendChild(link);
   link.click();
+  link.remove();
+
   URL.revokeObjectURL(url);
 }
 
 export default function FeeManagementPage() {
-  const [fees, setFees] = useState(initialFees);
+  const [fees, setFees] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
-  const [paymentModeFilter, setPaymentModeFilter] = useState("All");
+  const [paymentModeFilter, setPaymentModeFilter] =
+    useState("All");
   const [monthFilter, setMonthFilter] = useState("All");
+
   const [currentMonth, setCurrentMonth] = useState("");
+  const [today, setToday] = useState("");
+
   const [modal, setModal] = useState(null);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState(blankForm);
+
+  const [form, setForm] = useState({ ...blankForm });
+
   const [paymentForm, setPaymentForm] = useState({
     amount: "",
     date: "",
@@ -205,12 +307,51 @@ export default function FeeManagementPage() {
     note: "",
   });
 
+  const fetchFees = useCallback(async (showLoader = true) => {
+    if (showLoader) setLoading(true);
+
+    setError("");
+
+    try {
+      const result = await apiRequest("/counsellor/fees");
+
+      const records = Array.isArray(result.data)
+        ? result.data
+        : Array.isArray(result.data?.fees)
+          ? result.data.fees
+          : Array.isArray(result.fees)
+            ? result.fees
+            : [];
+
+      setFees(records.map(normalizeFeeRecord));
+    } catch (err) {
+      setError(err.message || "Unable to load fee records.");
+    } finally {
+      if (showLoader) setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const now = new Date();
+
     setCurrentMonth(
-      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
+      `${now.getFullYear()}-${String(
+        now.getMonth() + 1
+      ).padStart(2, "0")}`
     );
+
+    const localToday = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, "0"),
+      String(now.getDate()).padStart(2, "0"),
+    ].join("-");
+
+    setToday(localToday);
   }, []);
+
+  useEffect(() => {
+    fetchFees();
+  }, [fetchFees]);
 
   const filteredFees = useMemo(() => {
     return fees.filter((student) => {
@@ -223,7 +364,8 @@ export default function FeeManagementPage() {
         student.trainer.toLowerCase().includes(term);
 
       const matchesStatus =
-        statusFilter === "All" || getStatus(student) === statusFilter;
+        statusFilter === "All" ||
+        getStatus(student) === statusFilter;
 
       const matchesMonth =
         monthFilter === "All" ||
@@ -233,14 +375,28 @@ export default function FeeManagementPage() {
 
       const matchesMode =
         paymentModeFilter === "All" ||
-        student.payments.some((payment) => payment.mode === paymentModeFilter);
+        student.payments.some(
+          (payment) => payment.mode === paymentModeFilter
+        );
 
-      return matchesSearch && matchesStatus && matchesMonth && matchesMode;
+      return (
+        matchesSearch &&
+        matchesStatus &&
+        matchesMonth &&
+        matchesMode
+      );
     });
-  }, [fees, search, statusFilter, monthFilter, paymentModeFilter]);
+  }, [
+    fees,
+    search,
+    statusFilter,
+    monthFilter,
+    paymentModeFilter,
+  ]);
 
   const totalFees = filteredFees.reduce(
-    (sum, student) => sum + Number(student.totalFee || 0),
+    (sum, student) =>
+      sum + Number(student.totalFee || 0),
     0
   );
 
@@ -258,148 +414,226 @@ export default function FeeManagementPage() {
     return [
       ...new Set(
         fees.flatMap((student) =>
-          student.payments.map((payment) => payment.date.slice(0, 7))
+          student.payments.map((payment) =>
+            payment.date.slice(0, 7)
+          )
         )
       ),
-    ].sort((a, b) => b.localeCompare(a));
+    ].filter(Boolean).sort((a, b) => b.localeCompare(a));
   }, [fees]);
 
   function updateForm(event) {
     const { name, value } = event.target;
-    setForm((previous) => ({ ...previous, [name]: value }));
+
+    setForm((previous) => ({
+      ...previous,
+      [name]: value,
+    }));
   }
 
   function openAddFee() {
+    setError("");
+    setNotice("");
     setEditingId(null);
-    setForm(blankForm);
+    setForm({ ...blankForm });
     setModal("fee");
   }
 
   function openEditFee(student) {
-    setEditingId(student.id);
+    setError("");
+    setNotice("");
+
+    setEditingId(student.studentId);
+
     setForm({
       studentName: student.studentName,
       course: student.course,
       trainer: student.trainer,
-      totalFee: student.totalFee,
-      registrationFee: student.registrationFee,
-      installment0: student.installment0,
-      installment1: student.installment1,
-      installment2: student.installment2,
-      installment3: student.installment3,
+      totalFee: String(student.totalFee),
+      registrationFee: String(student.registrationFee),
+      installment0: String(student.installment0),
+      installment1: String(student.installment1),
+      installment2: String(student.installment2),
+      installment3: String(student.installment3),
       bajajFinance: student.bajajFinance,
     });
+
     setModal("fee");
   }
 
-  function saveFee(event) {
+  async function saveFee(event) {
     event.preventDefault();
 
-    const record = {
-      ...form,
-      studentName: form.studentName.trim(),
-      course: form.course.trim(),
-      trainer: form.trainer.trim(),
-      totalFee: Number(form.totalFee) || 0,
-      registrationFee: Number(form.registrationFee) || 0,
-      installment0: Number(form.installment0) || 0,
-      installment1: Number(form.installment1) || 0,
-      installment2: Number(form.installment2) || 0,
-      installment3: Number(form.installment3) || 0,
-    };
+    if (saving) return;
 
-    if (editingId !== null) {
-      setFees((previous) =>
-        previous.map((student) =>
-          student.id === editingId
-            ? { ...student, ...record }
-            : student
+    setSaving(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const payload = {
+        studentName: form.studentName.trim(),
+        course: form.course.trim(),
+        trainer: form.trainer.trim(),
+        totalFee: Number(form.totalFee),
+        registrationFee: Number(form.registrationFee || 0),
+        installment0: Number(form.installment0 || 0),
+        installment1: Number(form.installment1 || 0),
+        installment2: Number(form.installment2 || 0),
+        installment3: Number(form.installment3 || 0),
+        bajajFinance: form.bajajFinance,
+      };
+
+      if (
+        !payload.studentName ||
+        !payload.course ||
+        !Number.isFinite(payload.totalFee) ||
+        payload.totalFee < 0
+      ) {
+        throw new Error(
+          "Enter a valid student name, course, and total fee."
+        );
+      }
+
+      const feeAmounts = [
+        payload.registrationFee,
+        payload.installment0,
+        payload.installment1,
+        payload.installment2,
+        payload.installment3,
+      ];
+
+      if (
+        feeAmounts.some(
+          (amount) => !Number.isFinite(amount) || amount < 0
         )
-      );
-    } else {
-      setFees((previous) => [
-        {
-          ...record,
-          id: Date.now(),
-          payments: [],
-        },
-        ...previous,
-      ]);
-    }
+      ) {
+        throw new Error(
+          "Fee amounts cannot be negative or invalid."
+        );
+      }
 
-    setModal(null);
+      if (editingId) {
+        await apiRequest(
+          `/counsellor/fees/${editingId}`,
+          {
+            method: "PATCH",
+            body: payload,
+          }
+        );
+
+        setNotice("Fee record updated successfully.");
+      } else {
+        await apiRequest("/counsellor/fees", {
+          method: "POST",
+          body: payload,
+        });
+
+        setNotice("Fee record saved successfully.");
+      }
+
+      setModal(null);
+      await fetchFees(false);
+    } catch (err) {
+      setError(err.message || "Unable to save fee record.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   function openPayment(student) {
+    setError("");
+    setNotice("");
     setSelectedStudent(student);
+
     setPaymentForm({
       amount: "",
-      date: currentMonth
-        ? `${currentMonth}-${String(new Date().getDate()).padStart(2, "0")}`
-        : "",
+      date: today,
       mode: "UPI",
       note: "",
     });
+
     setModal("payment");
   }
 
-  function recordPayment(event) {
+  async function recordPayment(event) {
     event.preventDefault();
 
-    if (!selectedStudent) return;
+    if (!selectedStudent || saving) return;
 
     const amount = Number(paymentForm.amount);
 
     if (!Number.isFinite(amount) || amount <= 0) {
-      window.alert("Enter a valid payment amount.");
+      setError("Enter a valid payment amount.");
       return;
     }
 
-    const currentStudent = fees.find(
-      (student) => student.id === selectedStudent.id
-    );
+    if (!paymentForm.date) {
+      setError("Select a payment date.");
+      return;
+    }
 
-    if (!currentStudent) return;
-
-    if (amount > getPending(currentStudent)) {
-      window.alert(
-        `Payment cannot exceed the outstanding balance of ${money(
-          getPending(currentStudent)
+    if (amount > getPending(selectedStudent)) {
+      setError(
+        `Payment cannot exceed ${money(
+          getPending(selectedStudent)
         )}.`
       );
       return;
     }
 
-    const payment = {
-      id: Date.now(),
-      amount,
-      date: paymentForm.date,
-      mode: paymentForm.mode,
-      note: paymentForm.note.trim() || "Fee payment",
-    };
+    setSaving(true);
+    setError("");
+    setNotice("");
 
-    setFees((previous) =>
-      previous.map((student) =>
-        student.id === selectedStudent.id
-          ? { ...student, payments: [...student.payments, payment] }
-          : student
-      )
-    );
+    try {
+      await apiRequest(
+        `/counsellor/fees/${selectedStudent.studentId}/payments`,
+        {
+          method: "POST",
+          body: {
+            amount,
+            paymentDate: paymentForm.date,
+            paymentMethod: paymentForm.mode,
+            note: paymentForm.note.trim() || "Fee payment",
+          },
+        }
+      );
 
-    setModal(null);
-    setSelectedStudent(null);
+      setModal(null);
+      setSelectedStudent(null);
+      setNotice("Payment recorded successfully.");
+
+      await fetchFees(false);
+    } catch (err) {
+      setError(err.message || "Unable to record payment.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function deleteStudent(student) {
+  async function deleteStudent(student) {
     const confirmed = window.confirm(
-      `Delete fee record for ${student.studentName}? This also removes its payment history from this demo page.`
+      `Remove fee details for ${student.studentName}? ` +
+        "This action should preserve the student account and payment history."
     );
 
     if (!confirmed) return;
 
-    setFees((previous) =>
-      previous.filter((item) => item.id !== student.id)
-    );
+    setError("");
+    setNotice("");
+
+    try {
+      await apiRequest(
+        `/counsellor/fees/${student.studentId}`,
+        { method: "DELETE" }
+      );
+
+      setNotice("Fee details removed successfully.");
+      await fetchFees(false);
+    } catch (err) {
+      setError(err.message || "Unable to remove fee details.");
+    }
   }
 
   const stats = [
@@ -423,7 +657,9 @@ export default function FeeManagementPage() {
     },
     {
       label: "Students with Pending Fees",
-      value: filteredFees.filter((student) => getPending(student) > 0).length,
+      value: filteredFees.filter(
+        (student) => getPending(student) > 0
+      ).length,
       icon: Receipt,
       color: "bg-purple-100 text-purple-700",
     },
@@ -437,9 +673,11 @@ export default function FeeManagementPage() {
           <p className="text-sm font-semibold text-blue-700">
             Counsellor Portal
           </p>
+
           <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">
             Fee Management
           </h1>
+
           <p className="mt-2 text-sm text-slate-500">
             Track student fees, installments, payments, and outstanding dues.
           </p>
@@ -447,22 +685,71 @@ export default function FeeManagementPage() {
 
         <div className="flex flex-wrap gap-2">
           <button
+            type="button"
             onClick={() => downloadCSV(filteredFees)}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+            disabled={loading || filteredFees.length === 0}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Download size={17} />
             Export CSV
           </button>
 
           <button
+            type="button"
             onClick={openAddFee}
             className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
           >
             <Plus size={18} />
             Add Fee Record
           </button>
+
+          <button
+            type="button"
+            onClick={() => fetchFees()}
+            disabled={loading}
+            title="Refresh fee records"
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+          >
+            <RefreshCw
+              size={17}
+              className={loading ? "animate-spin" : ""}
+            />
+          </button>
         </div>
       </div>
+
+      {/* API messages */}
+      {error && (
+        <div
+          role="alert"
+          className="flex items-start justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+        >
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={() => setError("")}
+            aria-label="Dismiss error"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
+
+      {notice && (
+        <div
+          role="status"
+          className="flex items-start justify-between gap-3 rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-700"
+        >
+          <span>{notice}</span>
+          <button
+            type="button"
+            onClick={() => setNotice("")}
+            aria-label="Dismiss message"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -476,11 +763,15 @@ export default function FeeManagementPage() {
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm text-slate-500">{stat.label}</p>
+                  <p className="text-sm text-slate-500">
+                    {stat.label}
+                  </p>
+
                   <p className="mt-3 break-words text-2xl font-bold text-slate-900">
                     {stat.value}
                   </p>
                 </div>
+
                 <div className={`rounded-xl p-3 ${stat.color}`}>
                   <Icon size={23} />
                 </div>
@@ -494,14 +785,20 @@ export default function FeeManagementPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
           <div>
-            <h2 className="font-bold text-slate-900">Fee Collection Progress</h2>
+            <h2 className="font-bold text-slate-900">
+              Fee Collection Progress
+            </h2>
+
             <p className="mt-1 text-sm text-slate-500">
               Collection summary for the currently filtered student records.
             </p>
           </div>
+
           <p className="text-lg font-bold text-blue-700">
             {totalFees > 0
-              ? `${Math.round((totalCollected / totalFees) * 100)}% collected`
+              ? `${Math.round(
+                  (totalCollected / totalFees) * 100
+                )}% collected`
               : "0% collected"}
           </p>
         </div>
@@ -512,7 +809,10 @@ export default function FeeManagementPage() {
             style={{
               width: `${
                 totalFees > 0
-                  ? Math.min(100, (totalCollected / totalFees) * 100)
+                  ? Math.min(
+                      100,
+                      (totalCollected / totalFees) * 100
+                    )
                   : 0
               }%`,
             }}
@@ -540,6 +840,7 @@ export default function FeeManagementPage() {
               size={18}
               className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
             />
+
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -554,9 +855,12 @@ export default function FeeManagementPage() {
             className={inputClass}
           >
             <option value="All">All Payment Months</option>
+
             {months.map((month) => (
               <option key={month} value={month}>
-                {new Date(`${month}-01T12:00:00`).toLocaleDateString("en-IN", {
+                {new Date(
+                  `${month}-01T12:00:00`
+                ).toLocaleDateString("en-IN", {
                   month: "long",
                   year: "numeric",
                 })}
@@ -576,7 +880,9 @@ export default function FeeManagementPage() {
 
           <select
             value={paymentModeFilter}
-            onChange={(event) => setPaymentModeFilter(event.target.value)}
+            onChange={(event) =>
+              setPaymentModeFilter(event.target.value)
+            }
             className={inputClass}
           >
             <option value="All">All Payment Modes</option>
@@ -590,15 +896,20 @@ export default function FeeManagementPage() {
         </div>
       </section>
 
-      {/* Fee table */}
+      {/* Fee records table */}
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 p-5">
-          <h2 className="text-lg font-bold text-slate-900">
-            Student Fee Records
-          </h2>
-          <p className="mt-1 text-sm text-slate-500">
-            {filteredFees.length} student record(s)
-          </p>
+        <div className="flex flex-col justify-between gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">
+              Student Fee Records
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-500">
+              {loading
+                ? "Loading records..."
+                : `${filteredFees.length} student record(s)`}
+            </p>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -616,7 +927,10 @@ export default function FeeManagementPage() {
                   "Bajaj Finance",
                   "Actions",
                 ].map((heading) => (
-                  <th key={heading} className="px-4 py-4 font-semibold">
+                  <th
+                    key={heading}
+                    className="px-4 py-4 font-semibold"
+                  >
                     {heading}
                   </th>
                 ))}
@@ -624,116 +938,146 @@ export default function FeeManagementPage() {
             </thead>
 
             <tbody>
-              {filteredFees.map((student) => (
-                <tr
-                  key={student.id}
-                  className="border-t border-slate-100 hover:bg-slate-50"
-                >
-                  <td className="px-4 py-4">
-                    <p className="font-semibold text-slate-800">
-                      {student.studentName}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      {student.trainer}
-                    </p>
-                  </td>
-
-                  <td className="px-4 py-4 text-slate-600">{student.course}</td>
-
-                  <td className="px-4 py-4 font-semibold text-slate-800">
-                    {money(student.totalFee)}
-                  </td>
-
-                  <td className="px-4 py-4 font-semibold text-green-700">
-                    {money(getCollected(student))}
-                  </td>
-
-                  <td className="px-4 py-4 font-semibold text-amber-700">
-                    {money(getPending(student))}
-                  </td>
-
-                  <td className="px-4 py-4 text-slate-600">
-                    <p>Registration: {money(student.registrationFee)}</p>
-                    {[0, 1, 2, 3].map((number) => (
-                      <p key={number} className="mt-1 text-xs text-slate-500">
-                        Installment {number}:{" "}
-                        {money(student[`installment${number}`])}
+              {!loading &&
+                filteredFees.map((student) => (
+                  <tr
+                    key={student.studentId}
+                    className="border-t border-slate-100 hover:bg-slate-50"
+                  >
+                    <td className="px-4 py-4">
+                      <p className="font-semibold text-slate-800">
+                        {student.studentName}
                       </p>
-                    ))}
-                  </td>
 
-                  <td className="px-4 py-4">
-                    <span
-                      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${
-                        getStatus(student) === "Clear"
-                          ? "bg-green-100 text-green-700"
-                          : "bg-amber-100 text-amber-700"
-                      }`}
-                    >
-                      {getStatus(student) === "Clear" ? (
-                        <CheckCircle2 size={14} />
-                      ) : (
-                        <Clock size={14} />
-                      )}
-                      {getStatus(student)}
-                    </span>
-                  </td>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {student.trainer || "No trainer assigned"}
+                      </p>
+                    </td>
 
-                  <td className="px-4 py-4 text-slate-600">
-                    {student.bajajFinance}
-                  </td>
+                    <td className="px-4 py-4 text-slate-600">
+                      {student.course || "—"}
+                    </td>
 
-                  <td className="px-4 py-4">
-                    <div className="flex items-center gap-1">
-                      <button
-                        title="View payment history"
-                        onClick={() => {
-                          setSelectedStudent(student);
-                          setModal("history");
-                        }}
-                        className="rounded-lg p-2 text-slate-500 hover:bg-blue-50 hover:text-blue-700"
+                    <td className="px-4 py-4 font-semibold text-slate-800">
+                      {money(student.totalFee)}
+                    </td>
+
+                    <td className="px-4 py-4 font-semibold text-green-700">
+                      {money(getCollected(student))}
+                    </td>
+
+                    <td className="px-4 py-4 font-semibold text-amber-700">
+                      {money(getPending(student))}
+                    </td>
+
+                    <td className="px-4 py-4 text-slate-600">
+                      <p>
+                        Registration: {money(student.registrationFee)}
+                      </p>
+
+                      {[0, 1, 2, 3].map((number) => (
+                        <p
+                          key={number}
+                          className="mt-1 text-xs text-slate-500"
+                        >
+                          Installment {number}:{" "}
+                          {money(student[`installment${number}`])}
+                        </p>
+                      ))}
+                    </td>
+
+                    <td className="px-4 py-4">
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                          getStatus(student) === "Clear"
+                            ? "bg-green-100 text-green-700"
+                            : "bg-amber-100 text-amber-700"
+                        }`}
                       >
-                        <Eye size={17} />
-                      </button>
+                        {getStatus(student) === "Clear" ? (
+                          <CheckCircle2 size={14} />
+                        ) : (
+                          <Clock size={14} />
+                        )}
 
-                      <button
-                        title="Record payment"
-                        disabled={getPending(student) <= 0}
-                        onClick={() => openPayment(student)}
-                        className="rounded-lg p-2 text-green-700 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-30"
-                      >
-                        <Plus size={17} />
-                      </button>
+                        {getStatus(student)}
+                      </span>
+                    </td>
 
-                      <button
-                        title="Edit fee record"
-                        onClick={() => openEditFee(student)}
-                        className="rounded-lg p-2 text-slate-500 hover:bg-amber-50 hover:text-amber-700"
-                      >
-                        <Pencil size={17} />
-                      </button>
+                    <td className="px-4 py-4 text-slate-600">
+                      {student.bajajFinance}
+                    </td>
 
-                      <button
-                        title="Delete fee record"
-                        onClick={() => deleteStudent(student)}
-                        className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-600"
-                      >
-                        <Trash2 size={17} />
-                      </button>
-                    </div>
+                    <td className="px-4 py-4">
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          title="View payment history"
+                          onClick={() => {
+                            setError("");
+                            setSelectedStudent(student);
+                            setModal("history");
+                          }}
+                          className="rounded-lg p-2 text-slate-500 hover:bg-blue-50 hover:text-blue-700"
+                        >
+                          <Eye size={17} />
+                        </button>
+
+                        <button
+                          type="button"
+                          title="Record payment"
+                          disabled={getPending(student) <= 0}
+                          onClick={() => openPayment(student)}
+                          className="rounded-lg p-2 text-green-700 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-30"
+                        >
+                          <Plus size={17} />
+                        </button>
+
+                        <button
+                          type="button"
+                          title="Edit fee record"
+                          onClick={() => openEditFee(student)}
+                          className="rounded-lg p-2 text-slate-500 hover:bg-amber-50 hover:text-amber-700"
+                        >
+                          <Pencil size={17} />
+                        </button>
+
+                        <button
+                          type="button"
+                          title="Remove fee details"
+                          onClick={() => deleteStudent(student)}
+                          className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-600"
+                        >
+                          <Trash2 size={17} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+
+              {loading && (
+                <tr>
+                  <td
+                    colSpan={9}
+                    className="px-4 py-14 text-center text-slate-500"
+                  >
+                    <RefreshCw className="mx-auto mb-3 h-6 w-6 animate-spin" />
+                    Loading fee records from the server...
                   </td>
                 </tr>
-              ))}
+              )}
 
-              {filteredFees.length === 0 && (
+              {!loading && filteredFees.length === 0 && (
                 <tr>
                   <td colSpan={9} className="px-4 py-14 text-center">
                     <Receipt className="mx-auto mb-3 h-9 w-9 text-slate-300" />
+
                     <p className="font-semibold text-slate-700">
                       No fee records found
                     </p>
+
                     <p className="mt-1 text-sm text-slate-500">
-                      Change the filters or add a fee record.
+                      Change the filters or add a fee record for an existing student.
                     </p>
                   </td>
                 </tr>
@@ -750,16 +1094,23 @@ export default function FeeManagementPage() {
             <div className="flex items-center justify-between border-b border-slate-100 p-5">
               <div>
                 <h2 className="text-xl font-bold text-slate-900">
-                  {editingId !== null ? "Edit Fee Record" : "Add Fee Record"}
+                  {editingId
+                    ? "Edit Fee Record"
+                    : "Add Fee Record"}
                 </h2>
+
                 <p className="mt-1 text-sm text-slate-500">
-                  Add the course fee and planned installments.
+                  {editingId
+                    ? "Update fee details for the existing student."
+                    : "Add fee details for a student who already has an admission record."}
                 </p>
               </div>
+
               <button
                 type="button"
                 onClick={() => setModal(null)}
                 className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                aria-label="Close fee form"
               >
                 <X size={21} />
               </button>
@@ -774,6 +1125,8 @@ export default function FeeManagementPage() {
                     value={form.studentName}
                     onChange={updateForm}
                     className={inputClass}
+                    placeholder="Existing student's full name"
+                    disabled={Boolean(editingId)}
                   />
                 </Field>
 
@@ -784,6 +1137,7 @@ export default function FeeManagementPage() {
                     value={form.course}
                     onChange={updateForm}
                     className={inputClass}
+                    placeholder="Course name"
                   />
                 </Field>
 
@@ -793,6 +1147,7 @@ export default function FeeManagementPage() {
                     value={form.trainer}
                     onChange={updateForm}
                     className={inputClass}
+                    placeholder="Trainer name"
                   />
                 </Field>
 
@@ -805,6 +1160,7 @@ export default function FeeManagementPage() {
                     value={form.totalFee}
                     onChange={updateForm}
                     className={inputClass}
+                    placeholder="45000"
                   />
                 </Field>
 
@@ -816,6 +1172,7 @@ export default function FeeManagementPage() {
                     value={form.registrationFee}
                     onChange={updateForm}
                     className={inputClass}
+                    placeholder="5000"
                   />
                 </Field>
 
@@ -826,8 +1183,8 @@ export default function FeeManagementPage() {
                     onChange={updateForm}
                     className={inputClass}
                   >
-                    <option>No</option>
-                    <option>Yes</option>
+                    <option value="No">No</option>
+                    <option value="Yes">Yes</option>
                   </select>
                 </Field>
 
@@ -852,22 +1209,30 @@ export default function FeeManagementPage() {
 
               <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-800">
                 Planned installments are separate from actual recorded payments.
-                The outstanding balance is calculated from payments recorded below.
+                The outstanding balance is calculated from successful payments.
+                The student must already exist in the backend.
               </p>
 
               <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end">
                 <button
                   type="button"
                   onClick={() => setModal(null)}
-                  className="rounded-lg border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  disabled={saving}
+                  className="rounded-lg border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 >
                   Cancel
                 </button>
+
                 <button
                   type="submit"
-                  className="rounded-lg bg-blue-700 px-6 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
+                  disabled={saving}
+                  className="rounded-lg bg-blue-700 px-6 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {editingId !== null ? "Update Fee Record" : "Save Fee Record"}
+                  {saving
+                    ? "Saving..."
+                    : editingId
+                      ? "Update Fee Record"
+                      : "Save Fee Record"}
                 </button>
               </div>
             </form>
@@ -884,13 +1249,17 @@ export default function FeeManagementPage() {
                 <h2 className="text-xl font-bold text-slate-900">
                   Record Payment
                 </h2>
+
                 <p className="mt-1 text-sm text-slate-500">
                   {selectedStudent.studentName}
                 </p>
               </div>
+
               <button
+                type="button"
                 onClick={() => setModal(null)}
                 className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                aria-label="Close payment form"
               >
                 <X size={21} />
               </button>
@@ -898,7 +1267,10 @@ export default function FeeManagementPage() {
 
             <form onSubmit={recordPayment} className="space-y-4 p-5">
               <div className="rounded-xl bg-blue-50 p-4">
-                <p className="text-sm text-blue-800">Outstanding Balance</p>
+                <p className="text-sm text-blue-800">
+                  Outstanding Balance
+                </p>
+
                 <p className="mt-1 text-2xl font-bold text-blue-900">
                   {money(getPending(selectedStudent))}
                 </p>
@@ -939,6 +1311,7 @@ export default function FeeManagementPage() {
 
               <Field label="Payment Mode *">
                 <select
+                  required
                   value={paymentForm.mode}
                   onChange={(event) =>
                     setPaymentForm((previous) => ({
@@ -948,12 +1321,14 @@ export default function FeeManagementPage() {
                   }
                   className={inputClass}
                 >
-                  <option>Cash</option>
-                  <option>UPI</option>
-                  <option>Bank Transfer</option>
-                  <option>Debit/Credit Card</option>
-                  <option>Bajaj Finance</option>
-                  <option>Other</option>
+                  <option value="Cash">Cash</option>
+                  <option value="UPI">UPI</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="Debit/Credit Card">
+                    Debit/Credit Card
+                  </option>
+                  <option value="Bajaj Finance">Bajaj Finance</option>
+                  <option value="Other">Other</option>
                 </select>
               </Field>
 
@@ -975,15 +1350,18 @@ export default function FeeManagementPage() {
                 <button
                   type="button"
                   onClick={() => setModal(null)}
-                  className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  disabled={saving}
+                  className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 >
                   Cancel
                 </button>
+
                 <button
                   type="submit"
-                  className="rounded-lg bg-green-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-green-800"
+                  disabled={saving}
+                  className="rounded-lg bg-green-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Save Payment
+                  {saving ? "Saving..." : "Save Payment"}
                 </button>
               </div>
             </form>
@@ -1000,13 +1378,17 @@ export default function FeeManagementPage() {
                 <h2 className="text-xl font-bold text-slate-900">
                   Payment History
                 </h2>
+
                 <p className="mt-1 text-sm text-slate-500">
                   {selectedStudent.studentName} · {selectedStudent.course}
                 </p>
               </div>
+
               <button
+                type="button"
                 onClick={() => setModal(null)}
                 className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                aria-label="Close payment history"
               >
                 <X size={21} />
               </button>
@@ -1015,18 +1397,23 @@ export default function FeeManagementPage() {
             <div className="grid grid-cols-1 gap-3 p-5 sm:grid-cols-3">
               <div className="rounded-xl bg-slate-50 p-3">
                 <p className="text-xs text-slate-500">Course Fee</p>
+
                 <p className="mt-1 font-bold text-slate-900">
                   {money(selectedStudent.totalFee)}
                 </p>
               </div>
+
               <div className="rounded-xl bg-green-50 p-3">
                 <p className="text-xs text-green-700">Collected</p>
+
                 <p className="mt-1 font-bold text-green-800">
                   {money(getCollected(selectedStudent))}
                 </p>
               </div>
+
               <div className="rounded-xl bg-amber-50 p-3">
                 <p className="text-xs text-amber-700">Outstanding</p>
+
                 <p className="mt-1 font-bold text-amber-800">
                   {money(getPending(selectedStudent))}
                 </p>
@@ -1043,18 +1430,33 @@ export default function FeeManagementPage() {
                     <th className="px-3 py-3">Amount</th>
                   </tr>
                 </thead>
+
                 <tbody>
-                  {selectedStudent.payments.map((payment) => (
-                    <tr key={payment.id} className="border-t border-slate-100">
-                      <td className="px-3 py-3">{dateLabel(payment.date)}</td>
-                      <td className="px-3 py-3">{payment.note}</td>
-                      <td className="px-3 py-3">{payment.mode}</td>
+                  {(selectedStudent.payments || []).map((payment) => (
+                    <tr
+                      key={payment.id}
+                      className="border-t border-slate-100"
+                    >
+                      <td className="px-3 py-3">
+                        {dateLabel(payment.date)}
+                      </td>
+
+                      <td className="px-3 py-3">
+                        {payment.note}
+                      </td>
+
+                      <td className="px-3 py-3">
+                        {payment.mode}
+                      </td>
+
                       <td className="px-3 py-3 font-semibold text-green-700">
                         {money(payment.amount)}
                       </td>
                     </tr>
                   ))}
-                  {selectedStudent.payments.length === 0 && (
+
+                  {(!selectedStudent.payments ||
+                    selectedStudent.payments.length === 0) && (
                     <tr>
                       <td
                         colSpan={4}
@@ -1071,13 +1473,16 @@ export default function FeeManagementPage() {
             <div className="flex justify-end gap-2 border-t border-slate-100 p-5">
               {getPending(selectedStudent) > 0 && (
                 <button
+                  type="button"
                   onClick={() => openPayment(selectedStudent)}
                   className="rounded-lg bg-green-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-green-800"
                 >
                   Record Payment
                 </button>
               )}
+
               <button
+                type="button"
                 onClick={() => setModal(null)}
                 className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
@@ -1089,8 +1494,7 @@ export default function FeeManagementPage() {
       )}
 
       <p className="text-center text-xs text-slate-400">
-        Demo data only. Connect this page to your backend before using it for
-        real student payments.
+        Fee details and payments are loaded from your APPWARS LMS backend.
       </p>
     </div>
   );

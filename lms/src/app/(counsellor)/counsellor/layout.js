@@ -82,9 +82,8 @@ export default function CounsellorLayout({ children }) {
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-[#102b55] text-white transition-transform duration-300 ${
-          sidebarOpen ? "translate-x-0" : "-translate-x-full"
-        } md:translate-x-0`}
+        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-[#102b55] text-white transition-transform duration-300 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"
+          } md:translate-x-0`}
       >
         {/* Brand */}
         <div className="flex items-center justify-between border-b border-white/10 px-5 py-5">
@@ -131,11 +130,10 @@ export default function CounsellorLayout({ children }) {
                   key={item.href}
                   href={item.href}
                   onClick={() => setSidebarOpen(false)}
-                  className={`flex items-center justify-between rounded-xl px-3 py-3 text-sm transition ${
-                    active
+                  className={`flex items-center justify-between rounded-xl px-3 py-3 text-sm transition ${active
                       ? "bg-blue-600 font-semibold text-white shadow-md shadow-blue-950/20"
                       : "text-blue-100 hover:bg-white/10 hover:text-white"
-                  }`}
+                    }`}
                 >
                   <span className="flex items-center gap-3">
                     <Icon size={19} />
@@ -165,7 +163,7 @@ export default function CounsellorLayout({ children }) {
 
           <button
             onClick={() => {
-              window.location.href = "/login";
+              window.location.href = "/signin";
             }}
             className="mt-3 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm text-blue-100 hover:bg-white/10"
           >

@@ -1,549 +1,751 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Users,
+  UserPlus,
+  GraduationCap,
   IndianRupee,
   Clock,
-  CheckCircle,
+  RefreshCw,
+  AlertCircle,
+  LogOut,
+  BookOpen,
   CalendarDays,
+  CheckCircle,
   ArrowUpRight,
-  GraduationCap,
-  LoaderCircle,
 } from "lucide-react";
 
-const initialAdmissions = [
-  {
-    id: 1,
-    studentName: "Rahul Sharma",
-    course: "MERN Stack Development",
-    totalFee: 45000,
-    registrationFee: 5000,
-    installment0: 10000,
-    installment1: 10000,
-    installment2: 10000,
-    installment3: 10000,
-    bajajFinance: "No",
-    paymentMode: "UPI",
-    feeStatus: "Pending",
-    trainer: "Manav Sharma",
-    mode: "Online",
-    batchType: "Mon-Th",
-    batchStartDate: "2026-10-05",
-    time: "10:00 AM",
-    batchEndDate: "2027-02-05",
-    videoAccess: "Yes",
-    admissionDate: "2026-10-05",
-  },
-  {
-    id: 2,
-    studentName: "Priya Verma",
-    course: "AWS Cloud Computing",
-    totalFee: 35000,
-    registrationFee: 5000,
-    installment0: 15000,
-    installment1: 15000,
-    installment2: 0,
-    installment3: 0,
-    bajajFinance: "Yes",
-    paymentMode: "Bajaj Finance",
-    feeStatus: "Clear",
-    trainer: "Amit Kumar",
-    mode: "Hybrid",
-    batchType: "Weekend",
-    batchStartDate: "2026-10-12",
-    time: "11:00 AM",
-    batchEndDate: "2027-01-12",
-    videoAccess: "Yes",
-    admissionDate: "2026-10-12",
-  },
-  {
-    id: 3,
-    studentName: "Aman Gupta",
-    course: "Full Stack Development",
-    totalFee: 50000,
-    registrationFee: 5000,
-    installment0: 10000,
-    installment1: 10000,
-    installment2: 0,
-    installment3: 0,
-    bajajFinance: "No",
-    paymentMode: "Bank Transfer",
-    feeStatus: "Pending",
-    trainer: "Manav Sharma",
-    mode: "Offline",
-    batchType: "Custom",
-    batchStartDate: "2026-10-15",
-    time: "02:00 PM",
-    batchEndDate: "2027-03-15",
-    videoAccess: "No",
-    admissionDate: "2026-10-15",
-  },
-];
+const API_ROOT = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
+).replace(/\/+$/, "");
 
-function formatCurrency(amount) {
+function getApiUrl(path) {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+
+  if (API_ROOT.endsWith("/api")) {
+    return `${API_ROOT}${
+      normalizedPath.startsWith("/api/")
+        ? normalizedPath.slice(4)
+        : normalizedPath
+    }`;
+  }
+
+  return `${API_ROOT}/api${
+    normalizedPath.startsWith("/api/")
+      ? normalizedPath.slice(4)
+      : normalizedPath
+  }`;
+}
+
+function formatCurrency(value) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
     maximumFractionDigits: 0,
-  }).format(amount || 0);
+  }).format(Number(value) || 0);
 }
 
-// Deterministic date formatting for date-only values.
-// Avoids reading the current time during the initial render.
-function formatDate(dateString) {
-  if (!dateString) return "—";
+function formatDate(value) {
+  if (!value) return "—";
 
-  const parts = dateString.split("-");
+  const date = new Date(value);
 
-  if (parts.length !== 3) return dateString;
+  if (Number.isNaN(date.getTime())) return "—";
 
-  const [year, month, day] = parts;
-
-  return `${day}/${month}/${year}`;
+  return date.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
-function getMonthLabel(monthString) {
-  if (!monthString) return "Loading...";
+function getStatusClass(status) {
+  const value = String(status || "").toLowerCase();
 
-  const [year, month] = monthString.split("-");
+  if (["paid", "active", "completed", "success"].includes(value)) {
+    return "bg-green-100 text-green-700";
+  }
 
-  const monthNames = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
+  if (["pending", "upcoming", "partial"].includes(value)) {
+    return "bg-amber-100 text-amber-700";
+  }
 
-  return `${monthNames[Number(month) - 1]} ${year}`;
+  if (["failed", "inactive", "cancelled"].includes(value)) {
+    return "bg-red-100 text-red-700";
+  }
+
+  return "bg-gray-100 text-gray-700";
 }
 
-export default function CounsellorHomePage() {
-  const [currentMonth, setCurrentMonth] = useState(null);
-  const [admissions, setAdmissions] = useState(initialAdmissions);
+// Safely convert common backend response formats to arrays.
+function toArray(value) {
+  if (Array.isArray(value)) return value;
+
+  if (!value || typeof value !== "object") return [];
+
+  if (Array.isArray(value.data)) return value.data;
+  if (Array.isArray(value.results)) return value.results;
+  if (Array.isArray(value.records)) return value.records;
+  if (Array.isArray(value.payments)) return value.payments;
+  if (Array.isArray(value.admissions)) return value.admissions;
+  if (Array.isArray(value.students)) return value.students;
+  if (Array.isArray(value.docs)) return value.docs;
+
+  return [];
+}
+
+function getStoredUser() {
+  if (typeof window === "undefined") return null;
+
+  const storedUser =
+    sessionStorage.getItem("user") ||
+    localStorage.getItem("user");
+
+  if (!storedUser) return null;
+
+  try {
+    return JSON.parse(storedUser);
+  } catch {
+    return null;
+  }
+}
+
+export default function CounsellorDashboard() {
+  const router = useRouter();
+
+  const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [counsellorName, setCounsellorName] = useState("Counsellor");
 
-  // FIX: Calculate the current local month after the component mounts.
-  useEffect(() => {
-    const now = new Date();
+  // Support the token key used by the current sign-in page,
+  // as well as the older APPWARS token key.
+  const getToken = useCallback(() => {
+    if (typeof window === "undefined") return "";
 
-    const month = `${now.getFullYear()}-${String(
-      now.getMonth() + 1
-    ).padStart(2, "0")}`;
-
-    setCurrentMonth(month);
-    setLoading(false);
+    return (
+      sessionStorage.getItem("token") ||
+      localStorage.getItem("token") ||
+      sessionStorage.getItem("appwars_token") ||
+      localStorage.getItem("appwars_token") ||
+      ""
+    );
   }, []);
 
-  // Keep the initial server render and first client render deterministic.
-  if (loading || !currentMonth) {
+  const loadDashboard = useCallback(
+    async (isRefresh = false) => {
+      const token = getToken();
+
+      if (!token) {
+        router.replace("/signin");
+        return;
+      }
+
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      setError("");
+
+      try {
+        const response = await fetch(
+          getApiUrl("/counsellor/dashboard"),
+          {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+            },
+            cache: "no-store",
+          }
+        );
+
+        const result = await response.json().catch(() => ({}));
+
+        if (response.status === 401) {
+          sessionStorage.removeItem("token");
+          localStorage.removeItem("token");
+          sessionStorage.removeItem("appwars_token");
+          localStorage.removeItem("appwars_token");
+          sessionStorage.removeItem("appwars_user");
+          localStorage.removeItem("appwars_user");
+
+          router.replace("/signin");
+          return;
+        }
+
+        if (response.status === 403) {
+          setError(
+            "Access denied. Your account does not have permission to access this dashboard."
+          );
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            result.message ||
+              result.error ||
+              `Unable to load dashboard (HTTP ${response.status}).`
+          );
+        }
+
+        if (result.success === false) {
+          throw new Error(result.message || "Unable to load dashboard.");
+        }
+
+        // Supports { data: {...} }, { dashboard: {...} }, or direct objects.
+        const data = result.data ?? result.dashboard ?? result;
+
+        setDashboard(
+          data && typeof data === "object" ? data : {}
+        );
+
+        const user = getStoredUser();
+
+        if (user) {
+          const role = String(user.role || "").toLowerCase();
+
+          if (
+            role &&
+            role !== "counsellor" &&
+            role !== "admin"
+          ) {
+            router.replace("/signin");
+            return;
+          }
+
+          setCounsellorName(
+            user.name ||
+              user.fullName ||
+              user.userId ||
+              "Counsellor"
+          );
+        }
+      } catch (err) {
+        setError(
+          err.message ||
+            "Unable to connect to the backend. Check that your API server is running."
+        );
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [getToken, router]
+  );
+
+  useEffect(() => {
+    const user = getStoredUser();
+
+    if (user) {
+      setCounsellorName(
+        user.name || user.fullName || user.userId || "Counsellor"
+      );
+    }
+
+    loadDashboard();
+  }, [loadDashboard]);
+
+  const handleLogout = () => {
+    sessionStorage.removeItem("token");
+    localStorage.removeItem("token");
+    sessionStorage.removeItem("appwars_token");
+    localStorage.removeItem("appwars_token");
+    sessionStorage.removeItem("appwars_user");
+    localStorage.removeItem("appwars_user");
+
+    router.replace("/signin");
+  };
+
+  // Safely handle nested dashboard response formats.
+  const metricsSource =
+    dashboard?.metrics ||
+    dashboard?.stats ||
+    dashboard?.summary ||
+    dashboard ||
+    {};
+
+  const metrics =
+    metricsSource && typeof metricsSource === "object"
+      ? metricsSource
+      : {};
+
+  const recentAdmissions = toArray(
+    dashboard?.recentAdmissions ??
+      dashboard?.admissions ??
+      dashboard?.recentStudents ??
+      dashboard?.students ??
+      []
+  );
+
+  // FIX: feeStatus is always an array before rendering with .map().
+  const rawFeeStatus =
+    dashboard?.feeStatus ??
+    dashboard?.fees ??
+    dashboard?.recentPayments ??
+    dashboard?.payments ??
+    [];
+
+  const feeStatus = toArray(rawFeeStatus);
+
+  const cards = [
+    {
+      title: "Total Students",
+      value:
+        metrics.totalStudents ??
+        metrics.activeStudents ??
+        metrics.studentsCount ??
+        0,
+      icon: Users,
+      color: "bg-blue-100 text-blue-700",
+      description: "Registered students",
+    },
+    {
+      title: "New Admissions",
+      value:
+        metrics.monthlyAdmissions ??
+        metrics.newAdmissions ??
+        metrics.admissionsThisMonth ??
+        0,
+      icon: UserPlus,
+      color: "bg-purple-100 text-purple-700",
+      description: "Admissions this month",
+    },
+    {
+      title: "Active Batches",
+      value:
+        metrics.activeBatches ??
+        metrics.totalBatches ??
+        0,
+      icon: GraduationCap,
+      color: "bg-green-100 text-green-700",
+      description: "Available batches",
+    },
+    {
+      title: "Pending Fees",
+      value: formatCurrency(
+        metrics.pendingFees ??
+          metrics.totalPending ??
+          metrics.pendingAmount ??
+          (dashboard?.fees &&
+          typeof dashboard.fees === "object" &&
+          !Array.isArray(dashboard.fees)
+            ? dashboard.fees.pending
+            : 0) ??
+          0
+      ),
+      icon: IndianRupee,
+      color: "bg-amber-100 text-amber-700",
+      description: "Outstanding amount",
+    },
+  ];
+
+  if (loading) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center">
+      <main className="flex min-h-screen items-center justify-center bg-gray-50 p-6">
         <div className="text-center">
-          <LoaderCircle className="mx-auto h-10 w-10 animate-spin text-blue-700" />
-          <p className="mt-4 text-sm text-slate-500">
+          <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-blue-900 border-t-transparent" />
+          <p className="mt-4 text-sm text-gray-600">
             Loading counsellor dashboard...
           </p>
         </div>
-      </div>
+      </main>
     );
   }
 
-  const monthAdmissions = admissions.filter((admission) =>
-    admission.admissionDate?.startsWith(currentMonth)
-  );
-
-  const totalCourseFees = monthAdmissions.reduce(
-    (total, admission) => total + Number(admission.totalFee || 0),
-    0
-  );
-
-  const totalRegistrationFees = monthAdmissions.reduce(
-    (total, admission) =>
-      total + Number(admission.registrationFee || 0),
-    0
-  );
-
-  const pendingCount = monthAdmissions.filter(
-    (admission) => admission.feeStatus === "Pending"
-  ).length;
-
-  const clearCount = monthAdmissions.filter(
-    (admission) => admission.feeStatus === "Clear"
-  ).length;
-
-  const stats = [
-    {
-      title: "Monthly Admissions",
-      value: monthAdmissions.length,
-      description: `Admissions in ${getMonthLabel(currentMonth)}`,
-      icon: Users,
-      iconBg: "bg-blue-100",
-      iconColor: "text-blue-700",
-    },
-    {
-      title: "Total Course Fees",
-      value: formatCurrency(totalCourseFees),
-      description: "Fees of this month's admissions",
-      icon: IndianRupee,
-      iconBg: "bg-indigo-100",
-      iconColor: "text-indigo-700",
-    },
-    {
-      title: "Registration Fees",
-      value: formatCurrency(totalRegistrationFees),
-      description: "Registration fees collected/recorded",
-      icon: GraduationCap,
-      iconBg: "bg-purple-100",
-      iconColor: "text-purple-700",
-    },
-    {
-      title: "Pending Fee Accounts",
-      value: pendingCount,
-      description: `${clearCount} accounts marked clear`,
-      icon: Clock,
-      iconBg: "bg-amber-100",
-      iconColor: "text-amber-700",
-    },
-  ];
-
   return (
-    <div className="min-h-screen space-y-6 bg-slate-50 p-4 sm:p-6 lg:p-8">
-      {/* Page heading */}
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-        <div>
-          <p className="text-sm font-medium text-blue-700">
-            Counsellor Portal
-          </p>
-
-          <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">
-            Dashboard
-          </h1>
-
-          <p className="mt-2 text-sm text-slate-500">
-            Monitor admissions, course fees, and student batches.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-          <CalendarDays className="h-5 w-5 text-blue-700" />
-
+    <main className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        {/* Header */}
+        <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div>
-            <p className="text-xs text-slate-500">Current month</p>
-            <p className="text-sm font-semibold text-slate-800">
-              {getMonthLabel(currentMonth)}
+            <p className="text-sm font-semibold uppercase tracking-wide text-blue-800">
+              APPWARS LMS
+            </p>
+
+            <h1 className="mt-1 text-2xl font-bold text-gray-900 sm:text-3xl">
+              Counsellor Dashboard
+            </h1>
+
+            <p className="mt-2 text-sm text-gray-600">
+              Welcome back, {counsellorName}. Here is your admissions overview.
             </p>
           </div>
-        </div>
-      </div>
 
-      {/* Statistics cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {stats.map((stat) => {
-          const Icon = stat.icon;
-
-          return (
-            <div
-              key={stat.title}
-              className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md"
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => loadDashboard(true)}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-60"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-slate-500">
-                    {stat.title}
-                  </p>
+              <RefreshCw
+                size={16}
+                className={refreshing ? "animate-spin" : ""}
+              />
+              Refresh
+            </button>
 
-                  <h2 className="mt-3 break-words text-2xl font-bold text-slate-900">
-                    {stat.value}
-                  </h2>
-                </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-800"
+            >
+              <LogOut size={16} />
+              Sign out
+            </button>
+          </div>
+        </header>
 
-                <div className={`rounded-xl p-3 ${stat.iconBg}`}>
-                  <Icon className={`h-6 w-6 ${stat.iconColor}`} />
-                </div>
-              </div>
+        {/* API errors */}
+        {error && (
+          <div
+            role="alert"
+            className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-red-800"
+          >
+            <AlertCircle size={20} className="mt-0.5 shrink-0" />
 
-              <p className="mt-4 text-xs text-slate-500">
-                {stat.description}
+            <div className="flex-1">
+              <p className="font-semibold">
+                Dashboard could not be loaded
               </p>
-            </div>
-          );
-        })}
-      </div>
 
-      {/* Admission summary */}
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2">
-          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+              <p className="mt-1 text-sm">{error}</p>
+
+              <button
+                type="button"
+                onClick={() => loadDashboard(true)}
+                className="mt-3 text-sm font-semibold underline"
+              >
+                Try again
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Summary cards */}
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {cards.map((card) => {
+            const Icon = card.icon;
+
+            return (
+              <article
+                key={card.title}
+                className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">
+                      {card.title}
+                    </p>
+
+                    <p className="mt-3 break-words text-2xl font-bold text-gray-900">
+                      {card.value}
+                    </p>
+
+                    <p className="mt-2 text-xs text-gray-500">
+                      {card.description}
+                    </p>
+                  </div>
+
+                  <div className={`rounded-xl p-3 ${card.color}`}>
+                    <Icon size={22} />
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </section>
+
+        {/* Quick links */}
+        <section>
+          <h2 className="mb-3 text-lg font-bold text-gray-900">
+            Quick Actions
+          </h2>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              {
+                title: "Manage Admissions",
+                description: "Add and update student admissions",
+                icon: UserPlus,
+                href: "/counsellor/admissions",
+              },
+              {
+                title: "Student Records",
+                description: "View registered students",
+                icon: Users,
+                href: "/counsellor/students",
+              },
+              {
+                title: "Batches",
+                description: "Check courses and batch assignments",
+                icon: BookOpen,
+                href: "/counsellor/batches",
+              },
+              {
+                title: "Schedule",
+                description: "Review your schedule",
+                icon: CalendarDays,
+                href: "/counsellor/schedule",
+              },
+            ].map((item) => {
+              const Icon = item.icon;
+
+              return (
+                <button
+                  key={item.title}
+                  type="button"
+                  onClick={() => router.push(item.href)}
+                  className="group flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-4 text-left hover:border-blue-300 hover:shadow-sm"
+                >
+                  <span className="rounded-lg bg-blue-50 p-3 text-blue-900">
+                    <Icon size={21} />
+                  </span>
+
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-semibold text-gray-900">
+                      {item.title}
+                    </span>
+
+                    <span className="mt-1 block text-xs text-gray-500">
+                      {item.description}
+                    </span>
+                  </span>
+
+                  <ArrowUpRight
+                    size={17}
+                    className="text-gray-400 group-hover:text-blue-800"
+                  />
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* Recent admissions */}
+        <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
             <div>
-              <h2 className="text-lg font-bold text-slate-900">
+              <h2 className="font-bold text-gray-900">
                 Recent Admissions
               </h2>
 
-              <p className="mt-1 text-sm text-slate-500">
-                Admissions recorded for {getMonthLabel(currentMonth)}.
+              <p className="mt-1 text-sm text-gray-500">
+                Latest students registered in the system
               </p>
             </div>
 
-            <Link
-              href="/counsellor/admissions"
-              className="inline-flex items-center gap-2 self-start rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-800"
+            <button
+              type="button"
+              onClick={() => router.push("/counsellor/admissions")}
+              className="text-sm font-semibold text-blue-800 hover:underline"
             >
-              View Admissions
-              <ArrowUpRight className="h-4 w-4" />
-            </Link>
+              View all
+            </button>
           </div>
 
-          <div className="mt-5 overflow-x-auto">
-            <table className="w-full min-w-[700px] text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                  <th className="px-4 py-3 font-semibold">Student</th>
-                  <th className="px-4 py-3 font-semibold">Course</th>
-                  <th className="px-4 py-3 font-semibold">Admission Date</th>
-                  <th className="px-4 py-3 font-semibold">Total Fee</th>
-                  <th className="px-4 py-3 font-semibold">Fee Status</th>
-                </tr>
-              </thead>
+          {recentAdmissions.length === 0 ? (
+            <div className="px-5 py-12 text-center">
+              <Users
+                className="mx-auto text-gray-400"
+                size={32}
+              />
 
-              <tbody>
-                {monthAdmissions.length > 0 ? (
-                  monthAdmissions
-                    .slice()
-                    .sort((a, b) =>
-                      (b.admissionDate || "").localeCompare(
-                        a.admissionDate || ""
-                      )
-                    )
-                    .slice(0, 5)
-                    .map((admission) => (
-                      <tr
-                        key={admission.id}
-                        className="border-b border-slate-100 last:border-0 hover:bg-slate-50"
-                      >
-                        <td className="px-4 py-4 font-semibold text-slate-800">
-                          {admission.studentName}
+              <p className="mt-3 font-medium text-gray-700">
+                No recent admissions found
+              </p>
+
+              <p className="mt-1 text-sm text-gray-500">
+                New student admissions will appear here.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[650px] text-left text-sm">
+                <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                  <tr>
+                    <th className="px-5 py-3 font-semibold">Student</th>
+                    <th className="px-5 py-3 font-semibold">Student ID</th>
+                    <th className="px-5 py-3 font-semibold">Batch</th>
+                    <th className="px-5 py-3 font-semibold">Admission Date</th>
+                    <th className="px-5 py-3 font-semibold">Status</th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-gray-100">
+                  {recentAdmissions.map((admission, index) => {
+                    const student =
+                      admission?.student &&
+                      typeof admission.student === "object"
+                        ? admission.student
+                        : admission;
+
+                    const batch =
+                      student?.batch &&
+                      typeof student.batch === "object"
+                        ? student.batch.batch ||
+                          student.batch.batchName ||
+                          student.batch.name ||
+                          "—"
+                        : student?.batch || "—";
+
+                    const id =
+                      student?._id ||
+                      student?.id ||
+                      student?.userId ||
+                      `admission-${index}`;
+
+                    return (
+                      <tr key={id} className="hover:bg-gray-50">
+                        <td className="px-5 py-4">
+                          <p className="font-semibold text-gray-900">
+                            {student?.name || "—"}
+                          </p>
+
+                          <p className="mt-1 text-xs text-gray-500">
+                            {student?.email || "—"}
+                          </p>
                         </td>
 
-                        <td className="px-4 py-4 text-slate-600">
-                          {admission.course}
+                        <td className="px-5 py-4 text-gray-600">
+                          {student?.userId || "—"}
                         </td>
 
-                        <td className="px-4 py-4 text-slate-600">
-                          {formatDate(admission.admissionDate)}
+                        <td className="px-5 py-4 text-gray-600">
+                          {batch}
                         </td>
 
-                        <td className="px-4 py-4 font-medium text-slate-800">
-                          {formatCurrency(admission.totalFee)}
+                        <td className="px-5 py-4 text-gray-600">
+                          {formatDate(
+                            admission?.createdAt || student?.createdAt
+                          )}
                         </td>
 
-                        <td className="px-4 py-4">
+                        <td className="px-5 py-4">
                           <span
-                            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${
-                              admission.feeStatus === "Clear"
-                                ? "bg-green-100 text-green-700"
-                                : "bg-amber-100 text-amber-700"
-                            }`}
+                            className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusClass(
+                              student?.isActive === false
+                                ? "inactive"
+                                : admission?.status || "active"
+                            )}`}
                           >
-                            {admission.feeStatus === "Clear" ? (
-                              <CheckCircle className="h-3.5 w-3.5" />
-                            ) : (
-                              <Clock className="h-3.5 w-3.5" />
-                            )}
-
-                            {admission.feeStatus}
+                            {student?.isActive === false
+                              ? "Inactive"
+                              : admission?.status || "Active"}
                           </span>
                         </td>
                       </tr>
-                    ))
-                ) : (
-                  <tr>
-                    <td
-                      colSpan={5}
-                      className="px-4 py-12 text-center text-slate-500"
-                    >
-                      <Users className="mx-auto mb-3 h-8 w-8 text-slate-300" />
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
 
-                      <p className="font-medium">
-                        No admissions for {getMonthLabel(currentMonth)}
-                      </p>
-
-                      <p className="mt-1 text-xs">
-                        Admissions for the current month will appear here.
-                      </p>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Fee status summary */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-900">
-            Fee Status Overview
-          </h2>
-
-          <p className="mt-1 text-sm text-slate-500">
-            Current months admission records
-          </p>
-
-          <div className="mt-6 space-y-5">
+        {/* Fee status */}
+        <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
             <div>
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-sm text-slate-600">
-                  Fee Clear
-                </span>
+              <h2 className="font-bold text-gray-900">Fee Status</h2>
 
-                <span className="text-sm font-bold text-green-700">
-                  {clearCount}
-                </span>
-              </div>
-
-              <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
-                <div
-                  className="h-full rounded-full bg-green-500 transition-all"
-                  style={{
-                    width: `${
-                      monthAdmissions.length
-                        ? (clearCount / monthAdmissions.length) * 100
-                        : 0
-                    }%`,
-                  }}
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-sm text-slate-600">
-                  Fee Pending
-                </span>
-
-                <span className="text-sm font-bold text-amber-700">
-                  {pendingCount}
-                </span>
-              </div>
-
-              <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
-                <div
-                  className="h-full rounded-full bg-amber-500 transition-all"
-                  style={{
-                    width: `${
-                      monthAdmissions.length
-                        ? (pendingCount / monthAdmissions.length) * 100
-                        : 0
-                    }%`,
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-7 rounded-xl bg-blue-50 p-4">
-            <div className="flex items-start gap-3">
-              <IndianRupee className="mt-0.5 h-5 w-5 shrink-0 text-blue-700" />
-
-              <div>
-                <p className="text-sm font-semibold text-blue-900">
-                  Monthly Fee Summary
-                </p>
-
-                <p className="mt-1 text-xl font-bold text-blue-800">
-                  {formatCurrency(totalCourseFees)}
-                </p>
-
-                <p className="mt-1 text-xs text-blue-700">
-                  Total course fees for this month&apos;s admissions.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <Link
-            href="/counsellor/fees"
-            className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-          >
-            Manage Fees
-            <ArrowUpRight className="h-4 w-4" />
-          </Link>
-        </div>
-      </div>
-
-      {/* Batch overview */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900">
-              Batch Overview
-            </h2>
-
-            <p className="mt-1 text-sm text-slate-500">
-              Batch details for students admitted this month.
-            </p>
-          </div>
-
-          <Link
-            href="/counsellor/batches"
-            className="inline-flex items-center gap-2 self-start rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-          >
-            View Batches
-            <ArrowUpRight className="h-4 w-4" />
-          </Link>
-        </div>
-
-        <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            {
-              label: "Online",
-              count: monthAdmissions.filter((item) => item.mode === "Online")
-                .length,
-            },
-            {
-              label: "Offline",
-              count: monthAdmissions.filter((item) => item.mode === "Offline")
-                .length,
-            },
-            {
-              label: "Hybrid",
-              count: monthAdmissions.filter((item) => item.mode === "Hybrid")
-                .length,
-            },
-            {
-              label: "Video Access Enabled",
-              count: monthAdmissions.filter(
-                (item) => item.videoAccess === "Yes"
-              ).length,
-            },
-          ].map((item) => (
-            <div
-              key={item.label}
-              className="rounded-xl border border-slate-200 p-4"
-            >
-              <p className="text-sm text-slate-500">{item.label}</p>
-
-              <p className="mt-2 text-2xl font-bold text-slate-900">
-                {item.count}
+              <p className="mt-1 text-sm text-gray-500">
+                Recent payment and outstanding-fee information
               </p>
             </div>
-          ))}
-        </div>
-      </div>
 
-      <p className="text-center text-xs text-slate-400">
-        Demo dashboard data only. Connect your backend to load real admission
-        records.
-      </p>
-    </div>
+            <IndianRupee
+              size={22}
+              className="text-blue-800"
+            />
+          </div>
+
+          {feeStatus.length === 0 ? (
+            <div className="px-5 py-10 text-center">
+              <Clock
+                className="mx-auto text-gray-400"
+                size={30}
+              />
+
+              <p className="mt-3 text-sm text-gray-500">
+                No fee-status records are available.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[600px] text-left text-sm">
+                <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                  <tr>
+                    <th className="px-5 py-3 font-semibold">Student</th>
+                    <th className="px-5 py-3 font-semibold">Amount</th>
+                    <th className="px-5 py-3 font-semibold">Status</th>
+                    <th className="px-5 py-3 font-semibold">Payment Date</th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-gray-100">
+                  {feeStatus.map((fee, index) => {
+                    const student =
+                      fee?.student &&
+                      typeof fee.student === "object"
+                        ? fee.student
+                        : null;
+
+                    return (
+                      <tr
+                        key={fee?._id || fee?.id || `fee-${index}`}
+                        className="hover:bg-gray-50"
+                      >
+                        <td className="px-5 py-4 font-medium text-gray-900">
+                          {student?.name ||
+                            fee?.studentName ||
+                            fee?.name ||
+                            "—"}
+                        </td>
+
+                        <td className="px-5 py-4 text-gray-700">
+                          {formatCurrency(
+                            fee?.amount ??
+                              fee?.totalAmount ??
+                              0
+                          )}
+                        </td>
+
+                        <td className="px-5 py-4">
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusClass(
+                              fee?.status
+                            )}`}
+                          >
+                            {fee?.status || "Pending"}
+                          </span>
+                        </td>
+
+                        <td className="px-5 py-4 text-gray-600">
+                          {formatDate(
+                            fee?.paymentDate || fee?.createdAt
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 border-t border-gray-100 px-5 py-3 text-xs text-gray-500">
+            <CheckCircle size={15} />
+            Fee information is loaded from your authenticated backend response.
+          </div>
+        </section>
+      </div>
+    </main>
   );
 }

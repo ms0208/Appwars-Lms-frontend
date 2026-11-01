@@ -1,9 +1,8 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  CreditCard,
   IndianRupee,
   CircleCheck,
   Clock,
@@ -15,69 +14,20 @@ import {
   Pencil,
   Trash2,
   X,
-  Wallet,
-  CalendarDays,
-  UserRound,
-  Filter,
 } from "lucide-react";
 
-const initialPayments = [
-  {
-    id: "PAY-1001",
-    student: "Rahul Sharma",
-    email: "rahul@example.com",
-    course: "MERN Stack Development",
-    amount: 15000,
-    method: "UPI",
-    transactionId: "TXN782341",
-    date: "2026-10-20",
-    status: "Paid",
-  },
-  {
-    id: "PAY-1002",
-    student: "Priya Verma",
-    email: "priya@example.com",
-    course: "AWS Cloud Computing",
-    amount: 12000,
-    method: "Credit Card",
-    transactionId: "TXN782342",
-    date: "2026-10-21",
-    status: "Pending",
-  },
-  {
-    id: "PAY-1003",
-    student: "Aman Singh",
-    email: "aman@example.com",
-    course: "Software Testing",
-    amount: 10000,
-    method: "Net Banking",
-    transactionId: "TXN782343",
-    date: "2026-10-22",
-    status: "Paid",
-  },
-  {
-    id: "PAY-1004",
-    student: "Neha Gupta",
-    email: "neha@example.com",
-    course: "Full Stack Development",
-    amount: 18000,
-    method: "UPI",
-    transactionId: "TXN782344",
-    date: "2026-10-23",
-    status: "Failed",
-  },
-  {
-    id: "PAY-1005",
-    student: "Karan Mehta",
-    email: "karan@example.com",
-    course: "Python Programming",
-    amount: 8000,
-    method: "Debit Card",
-    transactionId: "TXN782345",
-    date: "2026-10-24",
-    status: "Paid",
-  },
-];
+const API_ROOT = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+).replace(/\/+$/, "");
+
+const API_URL = API_ROOT.endsWith("/api")
+  ? API_ROOT
+  : `${API_ROOT}/api`;
+
+const PAYMENTS_URL = `${API_URL}/admin/reports/payments`;
+
+const inputClass =
+  "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
 
 const emptyPayment = {
   student: "",
@@ -86,19 +36,118 @@ const emptyPayment = {
   amount: "",
   method: "UPI",
   transactionId: "",
-  date: new Date().toLocaleDateString("en-CA"),
+  date: "",
   status: "Pending",
 };
 
-const inputClass =
-  "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
+function getToday() {
+  const now = new Date();
+  const offset = now.getTimezoneOffset();
+  return new Date(now.getTime() - offset * 60000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+function getToken() {
+  if (typeof window === "undefined") return "";
+
+  return (
+    sessionStorage.getItem("appwars_token") ||
+    sessionStorage.getItem("token") ||
+    localStorage.getItem("appwars_token") ||
+    localStorage.getItem("token") ||
+    ""
+  );
+}
 
 function formatMoney(amount) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
     maximumFractionDigits: 0,
-  }).format(amount || 0);
+  }).format(Number(amount) || 0);
+}
+
+function normalizePayment(payment) {
+  return {
+    ...payment,
+    id: String(
+      payment.paymentId || payment.id || payment._id || ""
+    ),
+    student: payment.student || payment.studentName || "",
+    email: payment.email || "",
+    course: payment.course || payment.courseName || "",
+    amount: Number(payment.amount) || 0,
+    method: payment.method || "UPI",
+    transactionId: payment.transactionId || "",
+    date: payment.date
+      ? String(payment.date).slice(0, 10)
+      : "",
+    status: payment.status || "Pending",
+  };
+}
+
+function extractPayments(data) {
+  const result =
+    Array.isArray(data) ? data :
+    Array.isArray(data?.payments) ? data.payments :
+    Array.isArray(data?.data) ? data.data :
+    Array.isArray(data?.data?.payments) ? data.data.payments :
+    null;
+
+  if (!result) {
+    throw new Error("The payments API returned an unexpected response.");
+  }
+
+  return result.map(normalizePayment);
+}
+
+async function apiRequest(url, options = {}) {
+  const token = getToken();
+
+  if (!token) {
+    throw new Error(
+      "Login token not found. Please log in again and verify your token storage key."
+    );
+  }
+
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+  const text = await response.text();
+  let data = {};
+
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { message: text };
+  }
+
+  if (!response.ok || data.success === false) {
+    if (response.status === 401) {
+      throw new Error(
+        data.message || "Session expired or token is invalid. Please log in again."
+      );
+    }
+
+    if (response.status === 403) {
+      throw new Error(
+        data.message || "Your account does not have permission to manage payments."
+      );
+    }
+
+    throw new Error(
+      data.message || data.error || `Request failed (${response.status}).`
+    );
+  }
+
+  return data;
 }
 
 function StatusBadge({ status }) {
@@ -142,7 +191,7 @@ function StatCard({ title, value, subtitle, icon: Icon, color }) {
 }
 
 export default function PaymentsPage() {
-  const [payments, setPayments] = useState(initialPayments);
+  const [payments, setPayments] = useState([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [methodFilter, setMethodFilter] = useState("All");
@@ -150,6 +199,27 @@ export default function PaymentsPage() {
   const [selectedPayment, setSelectedPayment] = useState(null);
   const [form, setForm] = useState(emptyPayment);
   const [notice, setNotice] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadPayments = useCallback(async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const data = await apiRequest(PAYMENTS_URL);
+      setPayments(extractPayments(data));
+    } catch (err) {
+      setError(err.message || "Failed to load payment records.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPayments();
+  }, [loadPayments]);
 
   const totals = useMemo(() => {
     const paid = payments.filter((p) => p.status === "Paid");
@@ -157,8 +227,8 @@ export default function PaymentsPage() {
     const failed = payments.filter((p) => p.status === "Failed");
 
     return {
-      collected: paid.reduce((sum, p) => sum + Number(p.amount || 0), 0),
-      pending: pending.reduce((sum, p) => sum + Number(p.amount || 0), 0),
+      collected: paid.reduce((sum, p) => sum + p.amount, 0),
+      pending: pending.reduce((sum, p) => sum + p.amount, 0),
       paidCount: paid.length,
       pendingCount: pending.length,
       failedCount: failed.length,
@@ -175,7 +245,9 @@ export default function PaymentsPage() {
         p.email,
         p.course,
         p.transactionId,
-      ].some((value) => String(value).toLowerCase().includes(term));
+      ].some((value) =>
+        String(value || "").toLowerCase().includes(term)
+      );
 
       return (
         matchesSearch &&
@@ -187,16 +259,15 @@ export default function PaymentsPage() {
 
   function openAdd() {
     setSelectedPayment(null);
-    setForm({
-      ...emptyPayment,
-      date: new Date().toLocaleDateString("en-CA"),
-    });
+    setForm({ ...emptyPayment, date: getToday() });
+    setNotice("");
     setModal("add");
   }
 
   function openEdit(payment) {
     setSelectedPayment(payment);
     setForm({ ...payment, amount: String(payment.amount) });
+    setNotice("");
     setModal("edit");
   }
 
@@ -204,42 +275,83 @@ export default function PaymentsPage() {
     setForm((previous) => ({ ...previous, [field]: value }));
   }
 
-  function savePayment(event) {
+  async function savePayment(event) {
     event.preventDefault();
+    setNotice("");
+    setError("");
 
-    if (!form.student.trim() || !form.course.trim() || Number(form.amount) <= 0) {
+    if (
+      !form.student.trim() ||
+      !form.course.trim() ||
+      !Number.isFinite(Number(form.amount)) ||
+      Number(form.amount) <= 0
+    ) {
       setNotice("Enter a student, course, and valid amount.");
       return;
     }
 
-    if (modal === "edit" && selectedPayment) {
-      setPayments((previous) =>
-        previous.map((p) =>
-          p.id === selectedPayment.id
-            ? { ...p, ...form, amount: Number(form.amount) }
-            : p
-        )
-      );
-      setNotice("Payment record updated.");
-    } else {
-      const payment = {
-        ...form,
-        id: `PAY-${Date.now().toString().slice(-7)}`,
-        amount: Number(form.amount),
-      };
+    const payload = {
+      student: form.student.trim(),
+      email: form.email.trim(),
+      course: form.course.trim(),
+      amount: Number(form.amount),
+      method: form.method,
+      transactionId: form.transactionId.trim(),
+      date: form.date,
+      status: form.status,
+    };
 
-      setPayments((previous) => [payment, ...previous]);
-      setNotice("Payment record added.");
+    setSaving(true);
+
+    try {
+      if (modal === "edit" && selectedPayment) {
+        await apiRequest(
+          `${PAYMENTS_URL}/${encodeURIComponent(selectedPayment.id)}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          }
+        );
+
+        setNotice("Payment record updated successfully.");
+      } else {
+        await apiRequest(PAYMENTS_URL, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+
+        setNotice("Payment record added successfully.");
+      }
+
+      setModal(null);
+      await loadPayments();
+    } catch (err) {
+      setError(err.message || "Failed to save payment.");
+    } finally {
+      setSaving(false);
     }
-
-    setModal(null);
   }
 
-  function deletePayment(payment) {
+  async function deletePayment(payment) {
     if (!window.confirm(`Delete payment ${payment.id}?`)) return;
 
-    setPayments((previous) => previous.filter((p) => p.id !== payment.id));
-    setNotice("Payment record deleted.");
+    setNotice("");
+    setError("");
+
+    try {
+      await apiRequest(
+        `${PAYMENTS_URL}/${encodeURIComponent(payment.id)}`,
+        { method: "DELETE" }
+      );
+
+      setPayments((previous) =>
+        previous.filter((p) => p.id !== payment.id)
+      );
+
+      setNotice("Payment record deleted successfully.");
+    } catch (err) {
+      setError(err.message || "Failed to delete payment.");
+    }
   }
 
   function exportCSV() {
@@ -255,19 +367,29 @@ export default function PaymentsPage() {
       "status",
     ];
 
-    const escapeCSV = (value) =>
-      `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const escapeCSV = (value) => {
+      let text = String(value ?? "");
+
+      if (/^[=+\-@\t\r]/.test(text)) {
+        text = `'${text}`;
+      }
+
+      return `"${text.replace(/"/g, '""')}"`;
+    };
 
     const csv = [
       columns.join(","),
-      ...filteredPayments.map((p) =>
-        columns.map((column) => escapeCSV(p[column])).join(",")
+      ...filteredPayments.map((payment) =>
+        columns.map((column) => escapeCSV(payment[column])).join(",")
       ),
     ].join("\r\n");
 
     const url = URL.createObjectURL(
-      new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" })
+      new Blob(["\uFEFF" + csv], {
+        type: "text/csv;charset=utf-8;",
+      })
     );
+
     const link = document.createElement("a");
     link.href = url;
     link.download = "appwars-payments.csv";
@@ -292,10 +414,12 @@ export default function PaymentsPage() {
           <div className="flex flex-wrap gap-3">
             <button
               onClick={exportCSV}
-              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
+              disabled={filteredPayments.length === 0}
+              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
             >
               <Download size={17} /> Export CSV
             </button>
+
             <button
               onClick={openAdd}
               className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
@@ -307,8 +431,17 @@ export default function PaymentsPage() {
 
         {notice && (
           <div className="flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
-            {notice}
+            <span>{notice}</span>
             <button onClick={() => setNotice("")} aria-label="Dismiss message">
+              <X size={17} />
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+            <span>{error}</span>
+            <button onClick={() => setError("")} aria-label="Dismiss error">
               <X size={17} />
             </button>
           </div>
@@ -364,7 +497,7 @@ export default function PaymentsPage() {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className={inputClass + " lg:w-40"}
+                className={`${inputClass} lg:w-40`}
               >
                 <option>All</option>
                 <option>Paid</option>
@@ -376,7 +509,7 @@ export default function PaymentsPage() {
               <select
                 value={methodFilter}
                 onChange={(e) => setMethodFilter(e.target.value)}
-                className={inputClass + " lg:w-44"}
+                className={`${inputClass} lg:w-44`}
               >
                 <option>All</option>
                 <option>UPI</option>
@@ -403,7 +536,13 @@ export default function PaymentsPage() {
               </thead>
 
               <tbody>
-                {filteredPayments.map((payment) => (
+                {loading ? (
+                  <tr>
+                    <td colSpan={7} className="px-3 py-12 text-center text-slate-500">
+                      Loading payments...
+                    </td>
+                  </tr>
+                ) : filteredPayments.map((payment) => (
                   <tr
                     key={payment.id}
                     className="border-b border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50"
@@ -419,7 +558,7 @@ export default function PaymentsPage() {
                       {formatMoney(payment.amount)}
                     </td>
                     <td className="px-3 py-4">{payment.method}</td>
-                    <td className="px-3 py-4">{payment.date}</td>
+                    <td className="px-3 py-4">{payment.date || "—"}</td>
                     <td className="px-3 py-4">
                       <StatusBadge status={payment.status} />
                     </td>
@@ -454,12 +593,9 @@ export default function PaymentsPage() {
                   </tr>
                 ))}
 
-                {filteredPayments.length === 0 && (
+                {!loading && filteredPayments.length === 0 && (
                   <tr>
-                    <td
-                      colSpan={7}
-                      className="px-3 py-12 text-center text-slate-500 dark:text-slate-400"
-                    >
+                    <td colSpan={7} className="px-3 py-12 text-center text-slate-500 dark:text-slate-400">
                       No payment records found.
                     </td>
                   </tr>
@@ -471,6 +607,15 @@ export default function PaymentsPage() {
           <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
             Showing {filteredPayments.length} of {payments.length} payment records.
           </p>
+
+          {!loading && error && (
+            <button
+              onClick={loadPayments}
+              className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+            >
+              Retry loading
+            </button>
+          )}
         </section>
 
         {modal && (
@@ -512,13 +657,8 @@ export default function PaymentsPage() {
                     ["Payment Date", selectedPayment?.date],
                     ["Status", selectedPayment?.status],
                   ].map(([label, value]) => (
-                    <div
-                      key={label}
-                      className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800"
-                    >
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        {label}
-                      </p>
+                    <div key={label} className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800">
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{label}</p>
                       <p className="mt-1 break-words font-semibold">{value || "—"}</p>
                     </div>
                   ))}
@@ -536,6 +676,7 @@ export default function PaymentsPage() {
                         placeholder="Student name"
                       />
                     </label>
+
                     <label className="text-sm font-medium">
                       Email
                       <input
@@ -546,6 +687,7 @@ export default function PaymentsPage() {
                         placeholder="student@example.com"
                       />
                     </label>
+
                     <label className="text-sm font-medium sm:col-span-2">
                       Course *
                       <input
@@ -556,18 +698,21 @@ export default function PaymentsPage() {
                         placeholder="Course name"
                       />
                     </label>
+
                     <label className="text-sm font-medium">
                       Amount (INR) *
                       <input
                         required
                         type="number"
                         min="1"
+                        step="0.01"
                         value={form.amount}
                         onChange={(e) => updateForm("amount", e.target.value)}
                         className={`${inputClass} mt-1.5`}
                         placeholder="15000"
                       />
                     </label>
+
                     <label className="text-sm font-medium">
                       Payment Method
                       <select
@@ -582,6 +727,7 @@ export default function PaymentsPage() {
                         <option>Cash</option>
                       </select>
                     </label>
+
                     <label className="text-sm font-medium">
                       Transaction ID
                       <input
@@ -591,6 +737,7 @@ export default function PaymentsPage() {
                         placeholder="Transaction reference"
                       />
                     </label>
+
                     <label className="text-sm font-medium">
                       Payment Date
                       <input
@@ -601,6 +748,7 @@ export default function PaymentsPage() {
                         className={`${inputClass} mt-1.5`}
                       />
                     </label>
+
                     <label className="text-sm font-medium">
                       Status
                       <select
@@ -620,15 +768,17 @@ export default function PaymentsPage() {
                     <button
                       type="button"
                       onClick={() => setModal(null)}
+                      disabled={saving}
                       className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold dark:border-slate-700"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
+                      disabled={saving}
+                      className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
                     >
-                      Save Payment
+                      {saving ? "Saving..." : "Save Payment"}
                     </button>
                   </div>
                 </form>

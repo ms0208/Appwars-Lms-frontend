@@ -4,722 +4,663 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-    GraduationCap,
-    Eye,
-    EyeOff,
-    LockKeyhole,
-    Mail,
-    UserRound,
-    ArrowLeft,
-    Copy,
-    Check,
-    ShieldCheck,
+  GraduationCap,
+  Eye,
+  EyeOff,
+  LockKeyhole,
+  UserRound,
+  ShieldCheck,
+  Mail,
+  Copy,
+  CheckCircle2,
+  ArrowLeft,
 } from "lucide-react";
 
-const roles = ["Student", "Trainer", "Admin", "Counsellor"];
+// .env.local:
+// NEXT_PUBLIC_API_URL=http://localhost:5000/api
+
+const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
+).replace(/\/+$/, "");
+
+const dashboardRoutes = {
+  Admin: "/admin",
+  Student: "/studentdashboard",
+  Trainer: "/trainerdashboard",
+  Counsellor: "/counsellor",
+};
 
 export default function SignInPage() {
-    const router = useRouter();
+  const router = useRouter();
 
-    const [role, setRole] = useState("Student");
-    const [mode, setMode] = useState("login");
+  const [mode, setMode] = useState("login");
+  const [id, setId] = useState("");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
-    const [id, setId] = useState("");
-    const [name, setName] = useState("");
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("");
-    const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-    const [generatedId, setGeneratedId] = useState("");
-    const [copied, setCopied] = useState(false);
+  const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState("error");
 
-    const [showPassword, setShowPassword] = useState(false);
-    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [generatedAdminId, setGeneratedAdminId] = useState("");
+  const [copied, setCopied] = useState(false);
 
-    const [message, setMessage] = useState("");
-    const [messageType, setMessageType] = useState("info");
+  function changeMode(nextMode) {
+    setMode(nextMode);
+    setMessage("");
+    setGeneratedAdminId("");
+    setCopied(false);
+    setPassword("");
+    setConfirmPassword("");
+    setShowPassword(false);
+  }
 
-    const isRegistering = mode === "register" && role === "Admin";
-    const registrationComplete = mode === "registered";
+  // Read the backend response safely.
+  async function readResponse(response) {
+    const data = await response.json().catch(() => ({}));
 
-    function showStatus(text, type = "info") {
-        setMessage(text);
-        setMessageType(type);
+    if (!response.ok) {
+      throw new Error(
+        data.message ||
+          data.error ||
+          `Request failed with status ${response.status}.`
+      );
     }
 
-    function changeRole(event) {
-        setRole(event.target.value);
-        setMode("login");
-        setMessage("");
-        setId("");
-        setName("");
-        setEmail("");
-        setPassword("");
-        setConfirmPassword("");
-        setGeneratedId("");
-        setCopied(false);
+    return data;
+  }
+
+  // LOGIN
+  async function handleLogin(event) {
+    event.preventDefault();
+
+    if (loading) return;
+
+    if (!id.trim() || !password) {
+      setMessage("Please enter your ID and password.");
+      setMessageType("error");
+      return;
     }
 
-    function openAdminRegistration() {
-        setRole("Admin");
-        setMode("register");
-        setMessage("");
-        setId("");
-        setName("");
-        setEmail("");
-        setPassword("");
-        setConfirmPassword("");
-        setGeneratedId("");
-    }
+    setLoading(true);
+    setMessage("");
 
-    function handleRegister(event) {
-        event.preventDefault();
+    try {
+      const response = await fetch(`${API_URL}/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userId: id.trim(),
+          password,
+        }),
+      });
 
-        if (!name.trim() || !email.trim() || !password) {
-            showStatus("Please fill in all required fields.", "error");
-            return;
-        }
+      const data = await readResponse(response);
 
-        if (password.length < 8) {
-            showStatus(
-                "Password must contain at least 8 characters.",
-                "error"
-            );
-            return;
-        }
-
-        if (password !== confirmPassword) {
-            showStatus("Passwords do not match.", "error");
-            return;
-        }
-
-        try {
-            const accounts = JSON.parse(
-                localStorage.getItem("appwars_demo_accounts") || "[]"
-            );
-
-            const normalizedEmail = email.trim().toLowerCase();
-
-            const existingAccount = accounts.some(
-                (account) => account.email === normalizedEmail
-            );
-
-            if (existingAccount) {
-                showStatus(
-                    "An account with this email already exists.",
-                    "error"
-                );
-                return;
-            }
-
-            // DEMO ONLY: Generate a unique-looking Admin ID.
-            // Production IDs must be generated by the backend.
-            const adminId = `ADM${Date.now()}`;
-
-            const newAdmin = {
-                id: adminId,
-                name: name.trim(),
-                email: normalizedEmail,
-                password,
-                role: "Admin",
-            };
-
-            accounts.push(newAdmin);
-
-            localStorage.setItem(
-                "appwars_demo_accounts",
-                JSON.stringify(accounts)
-            );
-
-            // DEMO ONLY: Create a browser-side session.
-            // Replace this with a secure server-side session.
-            sessionStorage.setItem(
-                "appwars_demo_session",
-                JSON.stringify({
-                    id: adminId,
-                    name: name.trim(),
-                    role: "Admin",
-                })
-            );
-
-            setGeneratedId(adminId);
-            setId(adminId);
-            setPassword("");
-            setConfirmPassword("");
-            setMode("registered");
-            showStatus(
-                "Admin registration completed successfully!",
-                "success"
-            );
-        } catch {
-            showStatus(
-                "Unable to register. Please check your browser storage.",
-                "error"
-            );
-        }
-    }
-
-    function handleLogin(event) {
-        event.preventDefault();
-
-        if (!id.trim() || !password) {
-            showStatus("Please enter your ID and password.", "error");
-            return;
-        }
-
-        try {
-            const accounts = JSON.parse(
-                localStorage.getItem("appwars_demo_accounts") || "[]"
-            );
-
-            const account = accounts.find(
-                (item) =>
-                    item.id.toLowerCase() === id.trim().toLowerCase() &&
-                    item.password === password &&
-                    item.role === role
-            );
-
-            if (!account) {
-                showStatus(
-                    "Invalid ID, password, or role. Please check your credentials.",
-                    "error"
-                );
-                return;
-            }
-
-            sessionStorage.setItem(
-                "appwars_demo_session",
-                JSON.stringify({
-                    id: account.id,
-                    name: account.name,
-                    role: account.role,
-                })
-            );
-
-            const dashboardRoutes = {
-                Admin: "/admin",
-                Student: "/student/dashboard",
-                Trainer: "/trainer/trainerdashboard",
-                Counsellor: "/counsellor/dashboard",
-            };
-
-            router.push(dashboardRoutes[account.role]);
-        } catch {
-            showStatus("Unable to sign in. Please try again.", "error");
-        }
-    }
-
-    async function copyGeneratedId() {
-        try {
-            await navigator.clipboard.writeText(generatedId);
-            setCopied(true);
-
-            setTimeout(() => setCopied(false), 2000);
-        } catch {
-            showStatus(
-                "Unable to copy automatically. Please select and copy your ID.",
-                "error"
-            );
-        }
-    }
-
-    function continueToDashboard() {
-        router.push("/admin");
-    }
-
-    function handleForgotPassword() {
-        showStatus(
-            "Please contact your administrator to reset your password.",
-            "info"
+      if (!data.token || !data.user?.role) {
+        throw new Error(
+          "The server did not return a valid token and user role. Check your login controller response."
         );
+      }
+
+      const role = data.user.role;
+      const destination = dashboardRoutes[role];
+
+      if (!destination) {
+        throw new Error(`Unsupported account role: ${role}`);
+      }
+
+      // Use the same keys as the protected admin layout.
+      sessionStorage.setItem("token", data.token);
+
+      sessionStorage.setItem(
+        "user",
+        JSON.stringify({
+          id: data.user._id || data.user.userId,
+          userId: data.user.userId,
+          name: data.user.name,
+          email: data.user.email,
+          role: data.user.role,
+        })
+      );
+
+      // Clear legacy keys if they were used previously.
+      sessionStorage.removeItem("appwars_token");
+      sessionStorage.removeItem("appwars_user");
+
+      router.replace(destination);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to sign in. Please try again."
+      );
+      setMessageType("error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // INITIAL ADMIN REGISTRATION
+  async function handleAdminRegistration(event) {
+    event.preventDefault();
+
+    if (loading) return;
+
+    if (
+      !name.trim() ||
+      !email.trim() ||
+      !password ||
+      !confirmPassword
+    ) {
+      setMessage("Please complete all registration fields.");
+      setMessageType("error");
+      return;
     }
 
-    const statusClasses = {
-        info: "bg-blue-50 text-blue-800",
-        success: "bg-green-50 text-green-800",
-        error: "bg-red-50 text-red-700",
-    };
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-    return (
-        <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-8">
-            <div className="grid w-full max-w-5xl overflow-hidden rounded-2xl bg-white shadow-xl md:grid-cols-2">
+    if (!emailRegex.test(email.trim())) {
+      setMessage("Please enter a valid email address.");
+      setMessageType("error");
+      return;
+    }
 
-                {/* LEFT PANEL */}
-                <section className="flex flex-col justify-between bg-[#102e60] p-8 text-white sm:p-12">
-                    <div>
-                        <div className="flex items-center gap-3">
-                            <GraduationCap
-                                size={38}
-                                className="text-sky-400"
-                            />
+    if (password.length < 12 || password.length > 128) {
+      setMessage("Password must contain 12 to 128 characters.");
+      setMessageType("error");
+      return;
+    }
 
-                            <div>
-                                <h1 className="text-lg font-bold">
-                                    APPWARS LMS
-                                </h1>
+    if (password !== confirmPassword) {
+      setMessage("Passwords do not match.");
+      setMessageType("error");
+      return;
+    }
 
-                                <p className="text-xs text-blue-200">
-                                    APPWARS TECHNOLOGIES PVT. LTD.
-                                </p>
-                            </div>
-                        </div>
+    setLoading(true);
+    setMessage("");
 
-                        <div className="mt-14">
-                            <p className="text-sm font-semibold text-sky-300">
-                                LEARN. BUILD. LEAD.
-                            </p>
+    try {
+      const response = await fetch(
+        `${API_URL}/auth/register-admin`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: name.trim(),
+            email: email.trim(),
+            password,
+          }),
+        }
+      );
 
-                            <h2 className="mt-4 text-3xl font-bold leading-tight sm:text-4xl">
-                                Your learning journey starts here.
-                            </h2>
+      const data = await readResponse(response);
 
-                            <p className="mt-5 text-sm leading-7 text-blue-100">
-                                Access courses, manage classes, track
-                                progress, and collaborate through one
-                                learning management platform.
-                            </p>
-                        </div>
-                    </div>
+      // Supports either { user: { userId } } or { userId }.
+      const newAdminId = data.user?.userId || data.userId;
 
-                    <div className="mt-12 rounded-xl border border-blue-800 bg-blue-900/40 p-5">
-                        <h3 className="font-semibold text-sky-300">
-                            One Platform. Every Role.
-                        </h3>
+      if (!newAdminId) {
+        throw new Error(
+          "Admin registration succeeded, but the generated ID was not returned. Check your backend response."
+        );
+      }
 
-                        <p className="mt-2 text-sm leading-6 text-blue-100">
-                            A centralized learning platform for students,
-                            trainers, counsellors, and administrators.
-                        </p>
-                    </div>
-                </section>
+      setGeneratedAdminId(newAdminId);
+      setMessage(
+        "Admin registration successful! Save your Admin ID before continuing."
+      );
+      setMessageType("success");
 
-                {/* RIGHT PANEL */}
-                <section className="p-7 sm:p-12">
+      setPassword("");
+      setConfirmPassword("");
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to register Admin. Please try again."
+      );
+      setMessageType("error");
+    } finally {
+      setLoading(false);
+    }
+  }
 
-                    {/* REGISTRATION SUCCESS SCREEN */}
-                    {registrationComplete ? (
-                        <div className="py-4">
-                            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
-                                <ShieldCheck
-                                    size={36}
-                                    className="text-green-600"
-                                />
-                            </div>
+  // COPY GENERATED ADMIN ID
+  async function copyAdminId() {
+    try {
+      await navigator.clipboard.writeText(generatedAdminId);
+      setCopied(true);
+    } catch {
+      setMessage("Please select and copy your Admin ID manually.");
+      setMessageType("error");
+    }
+  }
 
-                            <h2 className="mt-6 text-2xl font-bold text-[#102e60]">
-                                Registration Successful!
-                            </h2>
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-8">
+      <div className="grid w-full max-w-5xl overflow-hidden rounded-2xl bg-white shadow-xl md:grid-cols-2">
+        {/* LEFT PANEL */}
+        <section className="flex flex-col justify-between bg-[#102e60] p-8 text-white sm:p-12">
+          <div>
+            <div className="flex items-center gap-3">
+              <GraduationCap
+                size={40}
+                className="text-sky-400"
+              />
 
-                            <p className="mt-3 text-sm leading-6 text-slate-500">
-                                Welcome to APPWARS LMS, {name}.
-                                Your administrator account has been created.
-                                Save your Admin ID for future sign-ins.
-                            </p>
+              <div>
+                <h1 className="text-lg font-bold">
+                  APPWARS LMS
+                </h1>
 
-                            <div className="mt-7 rounded-xl border border-blue-200 bg-blue-50 p-5">
-                                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                                    Your Generated Admin ID
-                                </p>
-
-                                <div className="mt-3 flex items-center justify-between gap-3">
-                                    <p className="break-all text-xl font-bold tracking-wide text-[#102e60] sm:text-2xl">
-                                        {generatedId}
-                                    </p>
-
-                                    <button
-                                        type="button"
-                                        onClick={copyGeneratedId}
-                                        className="flex shrink-0 items-center gap-2 rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100"
-                                    >
-                                        {copied ? (
-                                            <Check size={17} />
-                                        ) : (
-                                            <Copy size={17} />
-                                        )}
-
-                                        {copied ? "Copied" : "Copy ID"}
-                                    </button>
-                                </div>
-
-                                <p className="mt-3 text-xs leading-5 text-slate-500">
-                                    Keep this ID safe. You will use it
-                                    to sign in to your Admin Dashboard.
-                                </p>
-                            </div>
-
-                            {message && (
-                                <p
-                                    role="status"
-                                    className={`mt-5 rounded-lg p-3 text-sm ${statusClasses[messageType]}`}
-                                >
-                                    {message}
-                                </p>
-                            )}
-
-                            <button
-                                type="button"
-                                onClick={continueToDashboard}
-                                className="mt-6 w-full rounded-lg bg-blue-600 py-3.5 text-sm font-semibold text-white transition hover:bg-blue-700"
-                            >
-                                Continue to Admin Dashboard
-                            </button>
-
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setMode("login");
-                                    setRole("Admin");
-                                    setId(generatedId);
-                                    setMessage("");
-                                }}
-                                className="mt-4 w-full rounded-lg border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                            >
-                                Go to Admin Sign In
-                            </button>
-                        </div>
-                    ) : (
-                        <>
-                            {isRegistering && (
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setMode("login");
-                                        setMessage("");
-                                    }}
-                                    className="mb-5 flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-800"
-                                >
-                                    <ArrowLeft size={16} />
-                                    Back to Sign In
-                                </button>
-                            )}
-
-                            <h2 className="text-2xl font-bold text-[#102e60]">
-                                {isRegistering
-                                    ? "Register Admin"
-                                    : "Welcome back"}
-                            </h2>
-
-                            <p className="mt-2 text-sm text-slate-500">
-                                {isRegistering
-                                    ? "Create your APPWARS LMS administrator account."
-                                    : "Sign in to access your portal."}
-                            </p>
-
-                            <form
-                                onSubmit={
-                                    isRegistering
-                                        ? handleRegister
-                                        : handleLogin
-                                }
-                                className="mt-8 space-y-5"
-                            >
-                                {/* ROLE */}
-                                <div>
-                                    <label
-                                        htmlFor="role"
-                                        className="mb-2 block text-sm font-semibold text-slate-700"
-                                    >
-                                        {isRegistering
-                                            ? "Account Type"
-                                            : "Sign in as"}
-                                    </label>
-
-                                    <select
-                                        id="role"
-                                        value={role}
-                                        onChange={changeRole}
-                                        disabled={isRegistering}
-                                        className="w-full rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
-                                    >
-                                        {roles.map((item) => (
-                                            <option key={item} value={item}>
-                                                {item}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-
-                                {/* NAME */}
-                                {isRegistering && (
-                                    <div>
-                                        <label
-                                            htmlFor="name"
-                                            className="mb-2 block text-sm font-semibold text-slate-700"
-                                        >
-                                            Full Name
-                                        </label>
-
-                                        <div className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 focus-within:border-blue-500">
-                                            <UserRound
-                                                size={18}
-                                                className="shrink-0 text-slate-400"
-                                            />
-
-                                            <input
-                                                id="name"
-                                                type="text"
-                                                value={name}
-                                                onChange={(event) =>
-                                                    setName(event.target.value)
-                                                }
-                                                placeholder="Enter your full name"
-                                                autoComplete="name"
-                                                required
-                                                className="w-full py-3 text-sm outline-none"
-                                            />
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* EMAIL */}
-                                {isRegistering && (
-                                    <div>
-                                        <label
-                                            htmlFor="email"
-                                            className="mb-2 block text-sm font-semibold text-slate-700"
-                                        >
-                                            Email Address
-                                        </label>
-
-                                        <div className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 focus-within:border-blue-500">
-                                            <Mail
-                                                size={18}
-                                                className="shrink-0 text-slate-400"
-                                            />
-
-                                            <input
-                                                id="email"
-                                                type="email"
-                                                value={email}
-                                                onChange={(event) =>
-                                                    setEmail(event.target.value)
-                                                }
-                                                placeholder="Enter your email"
-                                                autoComplete="email"
-                                                required
-                                                className="w-full py-3 text-sm outline-none"
-                                            />
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* ID */}
-                                {!isRegistering && (
-                                    <div>
-                                        <label
-                                            htmlFor="loginId"
-                                            className="mb-2 block text-sm font-semibold text-slate-700"
-                                        >
-                                            ID
-                                        </label>
-
-                                        <div className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 focus-within:border-blue-500">
-                                            <UserRound
-                                                size={18}
-                                                className="shrink-0 text-slate-400"
-                                            />
-
-                                            <input
-                                                id="loginId"
-                                                type="text"
-                                                value={id}
-                                                onChange={(event) =>
-                                                    setId(event.target.value)
-                                                }
-                                                placeholder={`Enter your ${role} ID`}
-                                                autoComplete="username"
-                                                required
-                                                className="w-full py-3 text-sm outline-none"
-                                            />
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* PASSWORD */}
-                                <div>
-                                    <label
-                                        htmlFor="password"
-                                        className="mb-2 block text-sm font-semibold text-slate-700"
-                                    >
-                                        Password
-                                    </label>
-
-                                    <div className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 focus-within:border-blue-500">
-                                        <LockKeyhole
-                                            size={18}
-                                            className="shrink-0 text-slate-400"
-                                        />
-
-                                        <input
-                                            id="password"
-                                            type={
-                                                showPassword
-                                                    ? "text"
-                                                    : "password"
-                                            }
-                                            value={password}
-                                            onChange={(event) =>
-                                                setPassword(event.target.value)
-                                            }
-                                            placeholder={
-                                                isRegistering
-                                                    ? "Create a password"
-                                                    : "Enter your password"
-                                            }
-                                            autoComplete={
-                                                isRegistering
-                                                    ? "new-password"
-                                                    : "current-password"
-                                            }
-                                            minLength={
-                                                isRegistering ? 8 : undefined
-                                            }
-                                            required
-                                            className="w-full py-3 text-sm outline-none"
-                                        />
-
-                                        <button
-                                            type="button"
-                                            aria-label={
-                                                showPassword
-                                                    ? "Hide password"
-                                                    : "Show password"
-                                            }
-                                            onClick={() =>
-                                                setShowPassword(!showPassword)
-                                            }
-                                            className="shrink-0 text-slate-400 hover:text-blue-600"
-                                        >
-                                            {showPassword ? (
-                                                <EyeOff size={18} />
-                                            ) : (
-                                                <Eye size={18} />
-                                            )}
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {/* CONFIRM PASSWORD */}
-                                {isRegistering && (
-                                    <div>
-                                        <label
-                                            htmlFor="confirmPassword"
-                                            className="mb-2 block text-sm font-semibold text-slate-700"
-                                        >
-                                            Confirm Password
-                                        </label>
-
-                                        <div className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 focus-within:border-blue-500">
-                                            <LockKeyhole
-                                                size={18}
-                                                className="shrink-0 text-slate-400"
-                                            />
-
-                                            <input
-                                                id="confirmPassword"
-                                                type={
-                                                    showConfirmPassword
-                                                        ? "text"
-                                                        : "password"
-                                                }
-                                                value={confirmPassword}
-                                                onChange={(event) =>
-                                                    setConfirmPassword(
-                                                        event.target.value
-                                                    )
-                                                }
-                                                placeholder="Confirm your password"
-                                                autoComplete="new-password"
-                                                minLength={8}
-                                                required
-                                                className="w-full py-3 text-sm outline-none"
-                                            />
-
-                                            <button
-                                                type="button"
-                                                aria-label={
-                                                    showConfirmPassword
-                                                        ? "Hide password"
-                                                        : "Show password"
-                                                }
-                                                onClick={() =>
-                                                    setShowConfirmPassword(
-                                                        !showConfirmPassword
-                                                    )
-                                                }
-                                                className="shrink-0 text-slate-400 hover:text-blue-600"
-                                            >
-                                                {showConfirmPassword ? (
-                                                    <EyeOff size={18} />
-                                                ) : (
-                                                    <Eye size={18} />
-                                                )}
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* FORGOT PASSWORD */}
-                                {!isRegistering && (
-                                    <div className="text-right">
-                                        <button
-                                            type="button"
-                                            onClick={handleForgotPassword}
-                                            className="text-xs font-semibold text-blue-600 hover:underline"
-                                        >
-                                            Forgot password?
-                                        </button>
-                                    </div>
-                                )}
-
-                                {/* STATUS */}
-                                {message && (
-                                    <p
-                                        role="status"
-                                        aria-live="polite"
-                                        className={`rounded-lg p-3 text-xs leading-5 ${statusClasses[messageType]}`}
-                                    >
-                                        {message}
-                                    </p>
-                                )}
-
-                                {/* SUBMIT */}
-                                <button
-                                    type="submit"
-                                    className="w-full rounded-lg bg-blue-600 py-3.5 text-sm font-semibold text-white transition hover:bg-blue-700"
-                                >
-                                    {isRegistering
-                                        ? "Generate Admin ID & Register"
-                                        : `Sign In as ${role}`}
-                                </button>
-                            </form>
-
-                            {/* ADMIN REGISTRATION OPTION */}
-                            {!isRegistering && role === "Admin" && (
-                                <div className="mt-6 text-center">
-                                    <p className="text-sm text-slate-500">
-                                        Need an administrator account?
-                                    </p>
-
-                                    <button
-                                        type="button"
-                                        onClick={openAdminRegistration}
-                                        className="mt-2 text-sm font-semibold text-blue-600 hover:underline"
-                                    >
-                                        Register Admin
-                                    </button>
-                                </div>
-                            )}
-
-                            <p className="mt-6 text-center text-xs leading-5 text-slate-500">
-                                Access is provided by your institution.
-                                Contact your administrator if you need an
-                                account.
-                            </p>
-                        </>
-                    )}
-                </section>
+                <p className="text-xs text-blue-200">
+                  APPWARS TECHNOLOGIES PVT. LTD.
+                </p>
+              </div>
             </div>
-        </main>
-    );
+
+            <div className="mt-14">
+              <p className="text-sm font-semibold text-sky-300">
+                LEARN. BUILD. LEAD.
+              </p>
+
+              <h2 className="mt-4 text-3xl font-bold leading-tight sm:text-4xl">
+                Your learning journey starts here.
+              </h2>
+
+              <p className="mt-5 text-sm leading-7 text-blue-100">
+                Access courses, manage classes, track progress,
+                and collaborate through one learning management
+                platform.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-12 rounded-xl border border-blue-800 bg-blue-900/40 p-5">
+            <h3 className="flex items-center gap-2 font-semibold text-sky-300">
+              <ShieldCheck size={20} />
+              Secure Portal Access
+            </h3>
+
+            <p className="mt-2 text-sm leading-6 text-blue-100">
+              Admins manage user accounts, while Students,
+              Trainers, and Counsellors use the credentials
+              assigned to them.
+            </p>
+          </div>
+        </section>
+
+        {/* RIGHT PANEL */}
+        <section className="flex flex-col justify-center p-7 sm:p-12">
+          {generatedAdminId ? (
+            <>
+              <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-green-50 text-green-600">
+                <CheckCircle2 size={32} />
+              </div>
+
+              <h2 className="text-2xl font-bold text-[#102e60]">
+                Admin Registered!
+              </h2>
+
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                Your Admin account has been created. Keep this
+                ID safe because you will use it to sign in.
+              </p>
+
+              <div className="mt-7 rounded-xl border border-blue-200 bg-blue-50 p-5">
+                <p className="text-sm font-semibold text-slate-600">
+                  Your Generated Admin ID
+                </p>
+
+                <div className="mt-3 flex items-center gap-2">
+                  <p className="flex-1 break-all text-xl font-bold tracking-wide text-[#102e60]">
+                    {generatedAdminId}
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={copyAdminId}
+                    aria-label="Copy Admin ID"
+                    className="rounded-lg border border-blue-200 bg-white p-3 text-blue-700 hover:bg-blue-100"
+                  >
+                    {copied ? (
+                      <CheckCircle2 size={20} />
+                    ) : (
+                      <Copy size={20} />
+                    )}
+                  </button>
+                </div>
+
+                {copied && (
+                  <p className="mt-2 text-xs text-green-700">
+                    Admin ID copied successfully.
+                  </p>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setId(generatedAdminId);
+                  changeMode("login");
+                }}
+                className="mt-6 w-full rounded-lg bg-blue-600 py-3.5 text-sm font-semibold text-white hover:bg-blue-700"
+              >
+                Continue to Sign In
+              </button>
+            </>
+          ) : (
+            <>
+              {mode === "register" && (
+                <button
+                  type="button"
+                  onClick={() => changeMode("login")}
+                  className="mb-5 flex w-fit items-center gap-2 text-sm text-slate-500 hover:text-blue-600"
+                >
+                  <ArrowLeft size={16} />
+                  Back to Sign In
+                </button>
+              )}
+
+              <h2 className="text-2xl font-bold text-[#102e60]">
+                {mode === "login"
+                  ? "Welcome Back!"
+                  : "Register Admin"}
+              </h2>
+
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                {mode === "login"
+                  ? "Sign in using your assigned ID and password."
+                  : "Create the initial Admin account for APPWARS LMS."}
+              </p>
+
+              <form
+                onSubmit={
+                  mode === "login"
+                    ? handleLogin
+                    : handleAdminRegistration
+                }
+                className="mt-8 space-y-5"
+              >
+                {/* NAME */}
+                {mode === "register" && (
+                  <>
+                    <div>
+                      <label
+                        htmlFor="name"
+                        className="mb-2 block text-sm font-semibold text-slate-700"
+                      >
+                        Full Name
+                      </label>
+
+                      <div className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+                        <UserRound
+                          size={18}
+                          className="shrink-0 text-slate-400"
+                        />
+
+                        <input
+                          id="name"
+                          type="text"
+                          value={name}
+                          onChange={(event) =>
+                            setName(event.target.value)
+                          }
+                          placeholder="Enter your full name"
+                          autoComplete="name"
+                          maxLength={100}
+                          required
+                          disabled={loading}
+                          className="w-full bg-transparent py-3 text-sm text-slate-800 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* EMAIL */}
+                    <div>
+                      <label
+                        htmlFor="email"
+                        className="mb-2 block text-sm font-semibold text-slate-700"
+                      >
+                        Email Address
+                      </label>
+
+                      <div className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+                        <Mail
+                          size={18}
+                          className="shrink-0 text-slate-400"
+                        />
+
+                        <input
+                          id="email"
+                          type="email"
+                          value={email}
+                          onChange={(event) =>
+                            setEmail(event.target.value)
+                          }
+                          placeholder="Enter your email"
+                          autoComplete="email"
+                          maxLength={254}
+                          required
+                          disabled={loading}
+                          className="w-full bg-transparent py-3 text-sm text-slate-800 outline-none"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* USER ID */}
+                {mode === "login" && (
+                  <div>
+                    <label
+                      htmlFor="userId"
+                      className="mb-2 block text-sm font-semibold text-slate-700"
+                    >
+                      User ID
+                    </label>
+
+                    <div className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+                      <UserRound
+                        size={18}
+                        className="shrink-0 text-slate-400"
+                      />
+
+                      <input
+                        id="userId"
+                        type="text"
+                        value={id}
+                        onChange={(event) =>
+                          setId(event.target.value)
+                        }
+                        placeholder="Enter your assigned ID"
+                        autoComplete="username"
+                        maxLength={50}
+                        required
+                        disabled={loading}
+                        className="w-full bg-transparent py-3 text-sm text-slate-800 outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* PASSWORD */}
+                <div>
+                  <label
+                    htmlFor="password"
+                    className="mb-2 block text-sm font-semibold text-slate-700"
+                  >
+                    {mode === "register"
+                      ? "Create Password"
+                      : "Password"}
+                  </label>
+
+                  <div className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+                    <LockKeyhole
+                      size={18}
+                      className="shrink-0 text-slate-400"
+                    />
+
+                    <input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(event) =>
+                        setPassword(event.target.value)
+                      }
+                      placeholder={
+                        mode === "register"
+                          ? "Create a strong password"
+                          : "Enter your password"
+                      }
+                      autoComplete={
+                        mode === "register"
+                          ? "new-password"
+                          : "current-password"
+                      }
+                      minLength={
+                        mode === "register" ? 12 : undefined
+                      }
+                      maxLength={128}
+                      required
+                      disabled={loading}
+                      className="w-full bg-transparent py-3 text-sm text-slate-800 outline-none"
+                    />
+
+                    <button
+                      type="button"
+                      aria-label={
+                        showPassword
+                          ? "Hide password"
+                          : "Show password"
+                      }
+                      onClick={() =>
+                        setShowPassword((previous) => !previous)
+                      }
+                      className="shrink-0 text-slate-400 hover:text-blue-600"
+                    >
+                      {showPassword ? (
+                        <EyeOff size={18} />
+                      ) : (
+                        <Eye size={18} />
+                      )}
+                    </button>
+                  </div>
+
+                  {mode === "register" && (
+                    <p className="mt-2 text-xs text-slate-500">
+                      Use 12–128 characters for your password.
+                    </p>
+                  )}
+                </div>
+
+                {/* CONFIRM PASSWORD */}
+                {mode === "register" && (
+                  <div>
+                    <label
+                      htmlFor="confirmPassword"
+                      className="mb-2 block text-sm font-semibold text-slate-700"
+                    >
+                      Confirm Password
+                    </label>
+
+                    <div className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+                      <LockKeyhole
+                        size={18}
+                        className="shrink-0 text-slate-400"
+                      />
+
+                      <input
+                        id="confirmPassword"
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(event) =>
+                          setConfirmPassword(event.target.value)
+                        }
+                        placeholder="Re-enter your password"
+                        autoComplete="new-password"
+                        maxLength={128}
+                        required
+                        disabled={loading}
+                        className="w-full bg-transparent py-3 text-sm text-slate-800 outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* SUCCESS / ERROR MESSAGE */}
+                {message && (
+                  <p
+                    role="alert"
+                    aria-live="polite"
+                    className={`rounded-lg p-3 text-sm ${
+                      messageType === "success"
+                        ? "bg-green-50 text-green-700"
+                        : "bg-red-50 text-red-700"
+                    }`}
+                  >
+                    {message}
+                  </p>
+                )}
+
+                {/* SUBMIT */}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full rounded-lg bg-blue-600 py-3.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {loading
+                    ? mode === "login"
+                      ? "Signing In..."
+                      : "Registering Admin..."
+                    : mode === "login"
+                      ? "Sign In"
+                      : "Create Admin Account"}
+                </button>
+              </form>
+
+              {mode === "login" && (
+                <div className="mt-6 rounded-lg bg-slate-50 p-4">
+                  <p className="text-center text-xs leading-5 text-slate-500">
+                    Forgot your password or login ID? Please
+                    contact your administrator.
+                  </p>
+                </div>
+              )}
+
+              {mode === "login" && (
+                <div className="mt-6 text-center">
+                  <p className="text-sm text-slate-600">
+                    Setting up the LMS for the first time?
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() => changeMode("register")}
+                    className="mt-2 text-sm font-semibold text-blue-600 hover:text-blue-800"
+                  >
+                    Register Initial Admin
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          <p className="mt-8 text-center text-xs text-slate-400">
+            © {new Date().getFullYear()} APPWARS TECHNOLOGIES
+            PVT. LTD.
+          </p>
+        </section>
+      </div>
+    </main>
+  );
 }

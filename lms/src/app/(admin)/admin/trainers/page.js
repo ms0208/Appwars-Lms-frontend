@@ -1,6 +1,7 @@
+
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Users,
   UserPlus,
@@ -16,74 +17,17 @@ import {
   GraduationCap,
   CheckCircle2,
   BriefcaseBusiness,
+  RefreshCw,
 } from "lucide-react";
 
-const initialTrainers = [
-  {
-    id: "TR001",
-    name: "Amit Kumar",
-    email: "amit@example.com",
-    phone: "9876543210",
-    specialization: "MERN Stack Development",
-    experience: "5",
-    qualification: "B.Tech Computer Science",
-    assignedCourses: "MERN Stack Development, React.js",
-    joiningDate: "2026-01-10",
-    status: "Active",
-  },
-  {
-    id: "TR002",
-    name: "Neha Gupta",
-    email: "neha@example.com",
-    phone: "9876543211",
-    specialization: "AWS Cloud Computing",
-    experience: "4",
-    qualification: "M.Tech Computer Science",
-    assignedCourses: "AWS Cloud Computing",
-    joiningDate: "2026-02-15",
-    status: "Active",
-  },
-  {
-    id: "TR003",
-    name: "Rohit Jain",
-    email: "rohit@example.com",
-    phone: "9876543212",
-    specialization: "Software Testing",
-    experience: "3",
-    qualification: "B.Tech IT",
-    assignedCourses: "Manual Testing, Automation Testing",
-    joiningDate: "2026-03-01",
-    status: "Inactive",
-  },
-  {
-    id: "TR004",
-    name: "Priya Sharma",
-    email: "priya.trainer@example.com",
-    phone: "9876543213",
-    specialization: "Python Programming",
-    experience: "6",
-    qualification: "MCA",
-    assignedCourses: "Python, Data Structures",
-    joiningDate: "2026-04-05",
-    status: "Active",
-  },
-  {
-    id: "TR005",
-    name: "Rahul Verma",
-    email: "rahul.trainer@example.com",
-    phone: "9876543214",
-    specialization: "Frontend Development",
-    experience: "2",
-    qualification: "B.Tech Computer Science",
-    assignedCourses: "HTML, CSS, JavaScript",
-    joiningDate: "2026-05-12",
-    status: "Pending",
-  },
-];
+const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
+).replace(/\/$/, "");
 
 const emptyTrainer = {
   name: "",
   email: "",
+  password: "",
   phone: "",
   specialization: "",
   experience: "",
@@ -99,15 +43,112 @@ const statusStyles = {
   Inactive: "bg-slate-100 text-slate-600",
 };
 
+function getToken() {
+  if (typeof window === "undefined") return "";
+  return sessionStorage.getItem("token") || "";
+}
+
+async function apiRequest(path, options = {}) {
+  const token = getToken();
+
+  if (!token) {
+    throw new Error("Authentication token not found. Please log in again.");
+  }
+
+  const response = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...options.headers,
+    },
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.message || data.error || `Request failed (${response.status})`
+    );
+  }
+
+  return data;
+}
+
+function mapTrainer(user) {
+  return {
+    id: user.userId || user.id || user._id,
+    name: user.name || "",
+    email: user.email || "",
+    phone: user.phone || "",
+    specialization: user.specialization || "",
+    experience: String(user.experience ?? ""),
+    qualification: user.qualification || "",
+    assignedCourses: Array.isArray(user.assignedCourses)
+      ? user.assignedCourses.join(", ")
+      : user.assignedCourses || "",
+    joiningDate: user.joiningDate
+      ? String(user.joiningDate).slice(0, 10)
+      : user.createdAt
+        ? String(user.createdAt).slice(0, 10)
+        : "",
+    status:
+      user.trainerStatus ||
+      (user.isActive === false ? "Inactive" : "Active"),
+  };
+}
+
+function extractUsers(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data.users)) return data.users;
+  if (Array.isArray(data.results)) return data.results;
+  if (Array.isArray(data.data)) return data.data;
+  if (Array.isArray(data.data?.users)) return data.data.users;
+  return [];
+}
+
 export default function TrainersPage() {
-  const [trainers, setTrainers] = useState(initialTrainers);
+  const [trainers, setTrainers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
+
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [viewTrainer, setViewTrainer] = useState(null);
-  const [form, setForm] = useState(emptyTrainer);
-  const [notice, setNotice] = useState("");
+  const [form, setForm] = useState({ ...emptyTrainer });
+
+  async function loadTrainers() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const data = await apiRequest("/admin/users?role=Trainer");
+      const users = extractUsers(data);
+
+      setTrainers(
+        users
+          .filter(
+            (user) =>
+              !user.role ||
+              String(user.role).toLowerCase() === "trainer"
+          )
+          .map(mapTrainer)
+      );
+    } catch (err) {
+      setError(err.message || "Unable to load trainers.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadTrainers();
+  }, []);
 
   const filteredTrainers = trainers.filter((trainer) => {
     const searchableValues = [
@@ -121,7 +162,7 @@ export default function TrainersPage() {
     ];
 
     const matchesSearch = searchableValues.some((value) =>
-      value.toLowerCase().includes(search.toLowerCase())
+      String(value ?? "").toLowerCase().includes(search.toLowerCase())
     );
 
     const matchesStatus =
@@ -150,14 +191,17 @@ export default function TrainersPage() {
   function openAddModal() {
     setEditingId(null);
     setForm({ ...emptyTrainer });
+    setError("");
     setShowModal(true);
   }
 
   function openEditModal(trainer) {
     setEditingId(trainer.id);
+
     setForm({
       name: trainer.name,
       email: trainer.email,
+      password: "",
       phone: trainer.phone,
       specialization: trainer.specialization,
       experience: trainer.experience,
@@ -166,47 +210,97 @@ export default function TrainersPage() {
       joiningDate: trainer.joiningDate,
       status: trainer.status,
     });
+
+    setError("");
     setShowModal(true);
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
 
-    if (editingId) {
-      setTrainers((previous) =>
-        previous.map((trainer) =>
-          trainer.id === editingId
-            ? { ...trainer, ...form }
-            : trainer
-        )
-      );
-      setNotice("Trainer details updated successfully.");
-    } else {
-      const newTrainer = {
-        ...form,
-        id: `TR${String(Date.now()).slice(-6)}`,
+    setSaving(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const payload = {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        role: "Trainer",
+        phone: form.phone.trim(),
+        specialization: form.specialization,
+        experience: Number(form.experience) || 0,
+        qualification: form.qualification.trim(),
+        assignedCourses: form.assignedCourses
+          .split(",")
+          .map((course) => course.trim())
+          .filter(Boolean),
+        joiningDate: form.joiningDate || undefined,
+        trainerStatus: form.status,
+        isActive: form.status !== "Inactive",
       };
 
-      setTrainers((previous) => [newTrainer, ...previous]);
-      setNotice("New trainer added successfully.");
-    }
+      if (editingId) {
+        await apiRequest(
+          `/admin/users/${encodeURIComponent(editingId)}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          }
+        );
 
-    setShowModal(false);
-    setEditingId(null);
+        setNotice("Trainer details updated successfully.");
+      } else {
+        if (!form.password || form.password.length < 8) {
+          throw new Error(
+            "Enter a temporary password with at least 8 characters."
+          );
+        }
+
+        await apiRequest("/admin/users", {
+          method: "POST",
+          body: JSON.stringify({
+            ...payload,
+            password: form.password,
+          }),
+        });
+
+        setNotice("New trainer added successfully.");
+      }
+
+      setShowModal(false);
+      setEditingId(null);
+      setForm({ ...emptyTrainer });
+
+      await loadTrainers();
+    } catch (err) {
+      setError(err.message || "Unable to save trainer.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function deleteTrainer(id) {
+  async function deleteTrainer(id) {
     const confirmed = window.confirm(
-      "Are you sure you want to delete this trainer?"
+      "Are you sure you want to deactivate this trainer?"
     );
 
     if (!confirmed) return;
 
-    setTrainers((previous) =>
-      previous.filter((trainer) => trainer.id !== id)
-    );
+    setError("");
+    setNotice("");
 
-    setNotice("Trainer deleted successfully.");
+    try {
+      await apiRequest(
+        `/admin/users/${encodeURIComponent(id)}`,
+        { method: "DELETE" }
+      );
+
+      setNotice("Trainer deactivated successfully.");
+      await loadTrainers();
+    } catch (err) {
+      setError(err.message || "Unable to deactivate trainer.");
+    }
   }
 
   function exportCSV() {
@@ -223,7 +317,7 @@ export default function TrainersPage() {
       "status",
     ];
 
-    const csvRows = [
+    const rows = [
       headers.join(","),
       ...filteredTrainers.map((trainer) =>
         headers
@@ -235,7 +329,7 @@ export default function TrainersPage() {
       ),
     ];
 
-    const blob = new Blob(["\uFEFF" + csvRows.join("\n")], {
+    const blob = new Blob(["\uFEFF" + rows.join("\n")], {
       type: "text/csv;charset=utf-8;",
     });
 
@@ -251,7 +345,6 @@ export default function TrainersPage() {
 
   return (
     <div className="space-y-6">
-      {/* Page heading */}
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <h1 className="text-2xl font-bold text-[#102f63]">
@@ -263,6 +356,15 @@ export default function TrainersPage() {
         </div>
 
         <div className="flex flex-wrap gap-3">
+          <button
+            onClick={loadTrainers}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <RefreshCw size={17} />
+            Refresh
+          </button>
+
           <button
             onClick={exportCSV}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
@@ -281,24 +383,27 @@ export default function TrainersPage() {
         </div>
       </div>
 
-      {/* Success message */}
+      {error && (
+        <div className="flex items-center justify-between rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+          <span>{error}</span>
+          <button onClick={() => setError("")} aria-label="Dismiss error">
+            <X size={18} />
+          </button>
+        </div>
+      )}
+
       {notice && (
         <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
           <span className="flex items-center gap-2">
             <CheckCircle2 size={18} />
             {notice}
           </span>
-
-          <button
-            onClick={() => setNotice("")}
-            aria-label="Dismiss notification"
-          >
+          <button onClick={() => setNotice("")} aria-label="Dismiss notification">
             <X size={18} />
           </button>
         </div>
       )}
 
-      {/* Statistics */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           title="Total Trainers"
@@ -307,7 +412,6 @@ export default function TrainersPage() {
           color="blue"
           description="Registered trainers"
         />
-
         <StatCard
           title="Active Trainers"
           value={activeCount}
@@ -315,7 +419,6 @@ export default function TrainersPage() {
           color="green"
           description="Currently available"
         />
-
         <StatCard
           title="Pending Approval"
           value={pendingCount}
@@ -323,7 +426,6 @@ export default function TrainersPage() {
           color="amber"
           description="Awaiting confirmation"
         />
-
         <StatCard
           title="Average Experience"
           value={`${averageExperience} yrs`}
@@ -333,7 +435,6 @@ export default function TrainersPage() {
         />
       </div>
 
-      {/* Trainers table */}
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-col justify-between gap-4 border-b border-slate-100 p-5 lg:flex-row lg:items-center">
           <div>
@@ -351,7 +452,6 @@ export default function TrainersPage() {
                 size={18}
                 className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
               />
-
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
@@ -365,7 +465,6 @@ export default function TrainersPage() {
                 size={16}
                 className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
               />
-
               <select
                 value={statusFilter}
                 onChange={(event) => setStatusFilter(event.target.value)}
@@ -389,31 +488,27 @@ export default function TrainersPage() {
                 <th className="px-5 py-4 font-semibold">Specialization</th>
                 <th className="px-5 py-4 font-semibold">Experience</th>
                 <th className="px-5 py-4 font-semibold">Status</th>
-                <th className="px-5 py-4 text-right font-semibold">
-                  Actions
-                </th>
+                <th className="px-5 py-4 text-right font-semibold">Actions</th>
               </tr>
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {filteredTrainers.map((trainer) => (
-                <tr
-                  key={trainer.id}
-                  className="transition hover:bg-slate-50"
-                >
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="px-5 py-12 text-center text-slate-500">
+                    Loading trainers...
+                  </td>
+                </tr>
+              ) : filteredTrainers.map((trainer) => (
+                <tr key={trainer.id} className="transition hover:bg-slate-50">
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-3">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-700">
                         {trainer.name.charAt(0).toUpperCase()}
                       </div>
-
                       <div>
-                        <p className="font-semibold text-slate-800">
-                          {trainer.name}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {trainer.id}
-                        </p>
+                        <p className="font-semibold text-slate-800">{trainer.name}</p>
+                        <p className="mt-1 text-xs text-slate-500">{trainer.id}</p>
                       </div>
                     </div>
                   </td>
@@ -425,16 +520,16 @@ export default function TrainersPage() {
                     </p>
                     <p className="mt-1 flex items-center gap-2 text-xs text-slate-500">
                       <Phone size={13} />
-                      {trainer.phone}
+                      {trainer.phone || "—"}
                     </p>
                   </td>
 
                   <td className="px-5 py-4">
                     <p className="font-medium text-slate-700">
-                      {trainer.specialization}
+                      {trainer.specialization || "—"}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
-                      {trainer.qualification}
+                      {trainer.qualification || "—"}
                     </p>
                   </td>
 
@@ -443,12 +538,9 @@ export default function TrainersPage() {
                   </td>
 
                   <td className="px-5 py-4">
-                    <span
-                      className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-                        statusStyles[trainer.status] ||
-                        "bg-slate-100 text-slate-600"
-                      }`}
-                    >
+                    <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                      statusStyles[trainer.status] || "bg-slate-100 text-slate-600"
+                    }`}>
                       {trainer.status}
                     </span>
                   </td>
@@ -462,7 +554,6 @@ export default function TrainersPage() {
                       >
                         <Eye size={17} />
                       </button>
-
                       <button
                         onClick={() => openEditModal(trainer)}
                         title="Edit trainer"
@@ -470,10 +561,9 @@ export default function TrainersPage() {
                       >
                         <Pencil size={17} />
                       </button>
-
                       <button
                         onClick={() => deleteTrainer(trainer.id)}
-                        title="Delete trainer"
+                        title="Deactivate trainer"
                         className="rounded-lg p-2 text-rose-600 hover:bg-rose-50"
                       >
                         <Trash2 size={17} />
@@ -483,12 +573,9 @@ export default function TrainersPage() {
                 </tr>
               ))}
 
-              {filteredTrainers.length === 0 && (
+              {!loading && filteredTrainers.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={6}
-                    className="px-5 py-12 text-center text-slate-500"
-                  >
+                  <td colSpan={6} className="px-5 py-12 text-center text-slate-500">
                     No trainers found. Try another search or add a trainer.
                   </td>
                 </tr>
@@ -505,7 +592,6 @@ export default function TrainersPage() {
         </div>
       </section>
 
-      {/* Add / Edit Trainer Modal */}
       {showModal && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-y-auto bg-slate-950/50 p-4">
           <div className="my-auto w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
@@ -515,10 +601,9 @@ export default function TrainersPage() {
                   {editingId ? "Edit Trainer" : "Add New Trainer"}
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Enter the trainers professional information.
+                  Enter the trainer's professional information.
                 </p>
               </div>
-
               <button
                 onClick={() => setShowModal(false)}
                 aria-label="Close modal"
@@ -534,9 +619,7 @@ export default function TrainersPage() {
                   label="Full Name"
                   required
                   value={form.name}
-                  onChange={(value) =>
-                    setForm({ ...form, name: value })
-                  }
+                  onChange={(value) => setForm({ ...form, name: value })}
                   placeholder="Enter trainer name"
                 />
 
@@ -545,19 +628,26 @@ export default function TrainersPage() {
                   type="email"
                   required
                   value={form.email}
-                  onChange={(value) =>
-                    setForm({ ...form, email: value })
-                  }
+                  onChange={(value) => setForm({ ...form, email: value })}
                   placeholder="trainer@example.com"
                 />
+
+                {!editingId && (
+                  <FormField
+                    label="Temporary Password"
+                    type="password"
+                    required
+                    value={form.password}
+                    onChange={(value) => setForm({ ...form, password: value })}
+                    placeholder="At least 8 characters"
+                  />
+                )}
 
                 <FormField
                   label="Phone Number"
                   required
                   value={form.phone}
-                  onChange={(value) =>
-                    setForm({ ...form, phone: value })
-                  }
+                  onChange={(value) => setForm({ ...form, phone: value })}
                   placeholder="Enter phone number"
                 />
 
@@ -565,15 +655,11 @@ export default function TrainersPage() {
                   <label className="mb-2 block text-sm font-medium text-slate-700">
                     Specialization
                   </label>
-
                   <select
                     required
                     value={form.specialization}
                     onChange={(event) =>
-                      setForm({
-                        ...form,
-                        specialization: event.target.value,
-                      })
+                      setForm({ ...form, specialization: event.target.value })
                     }
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 outline-none focus:border-blue-500"
                   >
@@ -595,9 +681,7 @@ export default function TrainersPage() {
                   type="number"
                   required
                   value={form.experience}
-                  onChange={(value) =>
-                    setForm({ ...form, experience: value })
-                  }
+                  onChange={(value) => setForm({ ...form, experience: value })}
                   placeholder="e.g. 4"
                 />
 
@@ -605,9 +689,7 @@ export default function TrainersPage() {
                   label="Qualification"
                   required
                   value={form.qualification}
-                  onChange={(value) =>
-                    setForm({ ...form, qualification: value })
-                  }
+                  onChange={(value) => setForm({ ...form, qualification: value })}
                   placeholder="e.g. B.Tech Computer Science"
                 />
 
@@ -615,15 +697,11 @@ export default function TrainersPage() {
                   <label className="mb-2 block text-sm font-medium text-slate-700">
                     Assigned Courses
                   </label>
-
                   <textarea
                     rows={2}
                     value={form.assignedCourses}
                     onChange={(event) =>
-                      setForm({
-                        ...form,
-                        assignedCourses: event.target.value,
-                      })
+                      setForm({ ...form, assignedCourses: event.target.value })
                     }
                     placeholder="Enter assigned courses, separated by commas"
                     className="w-full rounded-xl border border-slate-200 px-3 py-3 outline-none focus:border-blue-500"
@@ -635,21 +713,16 @@ export default function TrainersPage() {
                   type="date"
                   required
                   value={form.joiningDate}
-                  onChange={(value) =>
-                    setForm({ ...form, joiningDate: value })
-                  }
+                  onChange={(value) => setForm({ ...form, joiningDate: value })}
                 />
 
                 <div>
                   <label className="mb-2 block text-sm font-medium text-slate-700">
                     Trainer Status
                   </label>
-
                   <select
                     value={form.status}
-                    onChange={(event) =>
-                      setForm({ ...form, status: event.target.value })
-                    }
+                    onChange={(event) => setForm({ ...form, status: event.target.value })}
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 outline-none focus:border-blue-500"
                   >
                     <option value="Active">Active</option>
@@ -667,12 +740,16 @@ export default function TrainersPage() {
                 >
                   Cancel
                 </button>
-
                 <button
                   type="submit"
-                  className="rounded-xl bg-[#174ea6] px-5 py-2.5 font-semibold text-white hover:bg-[#102f63]"
+                  disabled={saving}
+                  className="rounded-xl bg-[#174ea6] px-5 py-2.5 font-semibold text-white hover:bg-[#102f63] disabled:opacity-60"
                 >
-                  {editingId ? "Update Trainer" : "Add Trainer"}
+                  {saving
+                    ? "Saving..."
+                    : editingId
+                      ? "Update Trainer"
+                      : "Add Trainer"}
                 </button>
               </div>
             </form>
@@ -680,7 +757,6 @@ export default function TrainersPage() {
         </div>
       )}
 
-      {/* Trainer Details Modal */}
       {viewTrainer && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-y-auto bg-slate-950/50 p-4">
           <div className="my-auto w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
@@ -688,7 +764,6 @@ export default function TrainersPage() {
               <h2 className="text-xl font-bold text-[#102f63]">
                 Trainer Details
               </h2>
-
               <button
                 onClick={() => setViewTrainer(null)}
                 aria-label="Close details"
@@ -700,22 +775,14 @@ export default function TrainersPage() {
 
             <div className="mb-5 flex items-center gap-4 rounded-xl bg-blue-50 p-4">
               <div className="flex h-14 w-14 items-center justify-center rounded-full bg-blue-200 text-xl font-bold text-blue-800">
-                {viewTrainer.name.charAt(0)}
+                {viewTrainer.name.charAt(0).toUpperCase()}
               </div>
-
               <div>
-                <p className="font-bold text-[#102f63]">
-                  {viewTrainer.name}
-                </p>
-                <p className="text-sm text-slate-500">
-                  {viewTrainer.id}
-                </p>
-                <span
-                  className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-                    statusStyles[viewTrainer.status] ||
-                    "bg-slate-100 text-slate-600"
-                  }`}
-                >
+                <p className="font-bold text-[#102f63]">{viewTrainer.name}</p>
+                <p className="text-sm text-slate-500">{viewTrainer.id}</p>
+                <span className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                  statusStyles[viewTrainer.status] || "bg-slate-100 text-slate-600"
+                }`}>
                   {viewTrainer.status}
                 </span>
               </div>
@@ -771,12 +838,10 @@ function StatCard({ title, value, icon: Icon, color, description }) {
           <p className="text-sm font-medium text-slate-500">{title}</p>
           <p className="mt-3 text-3xl font-bold text-[#102f63]">{value}</p>
         </div>
-
         <div className={`rounded-xl p-3 ${colors[color]}`}>
           <Icon size={22} />
         </div>
       </div>
-
       <p className="mt-3 text-xs text-slate-500">{description}</p>
     </div>
   );
@@ -795,7 +860,6 @@ function FormField({
       <label className="mb-2 block text-sm font-medium text-slate-700">
         {label}
       </label>
-
       <input
         type={type}
         min={type === "number" ? "0" : undefined}

@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Search,
   Plus,
@@ -11,15 +11,25 @@ import {
   X,
   Users,
   IndianRupee,
-  CalendarDays,
   Filter,
   Eye,
   CheckCircle2,
   Clock,
+  RefreshCw,
 } from "lucide-react";
+
+const API_BASE = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
+).replace(/\/+$/, "");
+
+const API_ROOT = API_BASE.endsWith("/api")
+  ? API_BASE
+  : `${API_BASE}/api`;
 
 const emptyAdmission = {
   studentName: "",
+  email: "",
+  batch: "",
   course: "",
   totalFee: "",
   registrationFee: "",
@@ -37,77 +47,7 @@ const emptyAdmission = {
   time: "",
   batchEndDate: "",
   videoAccess: "Yes",
-  admissionDate: "",
 };
-
-const demoAdmissions = [
-  {
-    id: 1,
-    studentName: "Rahul Sharma",
-    course: "MERN Stack Development",
-    totalFee: 45000,
-    registrationFee: 5000,
-    installment0: 10000,
-    installment1: 10000,
-    installment2: 10000,
-    installment3: 10000,
-    bajajFinance: "No",
-    paymentMode: "UPI",
-    feeStatus: "Pending",
-    trainer: "Manav Sharma",
-    mode: "Online",
-    batchType: "Mon-Th",
-    batchStartDate: "2026-10-05",
-    time: "10:00 AM",
-    batchEndDate: "2027-02-05",
-    videoAccess: "Yes",
-    admissionDate: "2026-10-05",
-  },
-  {
-    id: 2,
-    studentName: "Priya Verma",
-    course: "AWS Cloud Computing",
-    totalFee: 35000,
-    registrationFee: 5000,
-    installment0: 15000,
-    installment1: 15000,
-    installment2: 0,
-    installment3: 0,
-    bajajFinance: "Yes",
-    paymentMode: "Bajaj Finance",
-    feeStatus: "Clear",
-    trainer: "Amit Kumar",
-    mode: "Hybrid",
-    batchType: "Weekend",
-    batchStartDate: "2026-10-12",
-    time: "11:00 AM",
-    batchEndDate: "2027-01-12",
-    videoAccess: "Yes",
-    admissionDate: "2026-10-12",
-  },
-  {
-    id: 3,
-    studentName: "Aman Gupta",
-    course: "Full Stack Development",
-    totalFee: 50000,
-    registrationFee: 5000,
-    installment0: 10000,
-    installment1: 10000,
-    installment2: 0,
-    installment3: 0,
-    bajajFinance: "No",
-    paymentMode: "Bank Transfer",
-    feeStatus: "Pending",
-    trainer: "Manav Sharma",
-    mode: "Offline",
-    batchType: "Custom",
-    batchStartDate: "2026-10-15",
-    time: "02:00 PM",
-    batchEndDate: "2027-03-15",
-    videoAccess: "No",
-    admissionDate: "2026-10-15",
-  },
-];
 
 const inputClass =
   "mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
@@ -131,15 +71,127 @@ function money(value) {
   }).format(Number(value) || 0);
 }
 
+function dateOnly(value) {
+  if (!value) return "";
+
+  const date = String(value).slice(0, 10);
+
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : "";
+}
+
 function displayDate(value) {
-  if (!value) return "—";
-  const [year, month, day] = value.split("-");
+  const date = dateOnly(value);
+
+  if (!date) return "—";
+
+  const [year, month, day] = date.split("-");
   return `${day}/${month}/${year}`;
+}
+
+function mapAdmission(student) {
+  const details = student.admissionDetails || {};
+  const payments = student.payments || [];
+
+  const paidFromPayments = payments
+    .filter((payment) => payment.status === "Paid")
+    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+
+  const pendingFromPayments = payments
+    .filter((payment) => payment.status === "Pending")
+    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+
+  const paid = Number(student.totalPaid ?? paidFromPayments);
+  const pending = Number(student.totalPending ?? pendingFromPayments);
+
+  return {
+    id: student._id,
+    userId: student.userId || "",
+    studentName: student.name || "",
+    email: student.email || "",
+    batch: student.batch || "",
+    course: details.course || payments[0]?.courseName || "",
+    totalFee: details.totalFee ?? 0,
+    registrationFee: details.registrationFee ?? 0,
+    installment0: details.installment0 ?? 0,
+    installment1: details.installment1 ?? 0,
+    installment2: details.installment2 ?? 0,
+    installment3: details.installment3 ?? 0,
+    bajajFinance: details.bajajFinance || "No",
+    paymentMode: details.paymentMode || "UPI",
+    feeStatus:
+      pending > 0
+        ? "Pending"
+        : paid > 0
+          ? "Clear"
+          : details.feeStatus || "Pending",
+    trainer: details.trainer || "",
+    mode: details.mode || "Online",
+    batchType: details.batchType || "Mon-Th",
+    batchStartDate: dateOnly(details.batchStartDate),
+    time: details.time || "",
+    batchEndDate: dateOnly(details.batchEndDate),
+    videoAccess: details.videoAccess || "Yes",
+    admissionDate: dateOnly(student.createdAt),
+    totalPaid: paid,
+    totalPending: pending,
+    isActive: student.isActive !== false,
+    payments,
+  };
+}
+
+async function apiRequest(endpoint, options = {}) {
+  const token =
+   typeof window !== "undefined"
+    ? (
+        sessionStorage.getItem("token") ||
+        localStorage.getItem("token") ||
+        sessionStorage.getItem("token") ||
+        localStorage.getItem("token")
+      )
+    : null;
+
+if (!token) {
+  throw new Error(
+    "Your session has expired. Please log in again."
+  );
+}
+  const response = await fetch(`${API_ROOT}${endpoint}`, {
+    method: options.method || "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    ...(options.body !== undefined
+      ? { body: JSON.stringify(options.body) }
+      : {}),
+    cache: "no-store",
+  });
+
+  const result = await response.json().catch(() => ({}));
+
+  if (response.status === 401 || response.status === 403) {
+    throw new Error(
+      result.message ||
+        "You are not authorized to manage admissions. Please sign in again or check your permissions."
+    );
+  }
+
+  if (!response.ok || result.success === false) {
+    throw new Error(
+      result.message || `Request failed (${response.status}).`
+    );
+  }
+
+  return result;
 }
 
 function downloadCSV(rows) {
   const columns = [
+    "userId",
     "studentName",
+    "email",
+    "batch",
     "course",
     "totalFee",
     "registrationFee",
@@ -176,40 +228,77 @@ function downloadCSV(rows) {
 
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
+
   link.href = url;
   link.download = "appwars-admissions.csv";
+  document.body.appendChild(link);
   link.click();
+  link.remove();
+
   URL.revokeObjectURL(url);
 }
 
 export default function AdmissionsPage() {
-  const [admissions, setAdmissions] = useState(demoAdmissions);
+  const [admissions, setAdmissions] = useState([]);
   const [search, setSearch] = useState("");
   const [feeFilter, setFeeFilter] = useState("All");
   const [modeFilter, setModeFilter] = useState("All");
   const [monthFilter, setMonthFilter] = useState("All");
+
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [selectedAdmission, setSelectedAdmission] = useState(null);
+
   const [form, setForm] = useState(emptyAdmission);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [currentMonth, setCurrentMonth] = useState("");
 
-  useEffect(() => {
-    const now = new Date();
-    setCurrentMonth(
-      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
-    );
+  const fetchAdmissions = useCallback(async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      // Fetch all records so the frontend filters and CSV export
+      // operate on the complete admission list.
+      const result = await apiRequest(
+        "/counsellor/admissions?limit=100"
+      );
+
+      const records = Array.isArray(result.data) ? result.data : [];
+
+      setAdmissions(records.map(mapAdmission));
+
+      const now = new Date();
+
+      setCurrentMonth(
+        `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
+      );
+    } catch (err) {
+      setError(err.message || "Unable to load admissions.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const months = useMemo(() => {
-    return [
-      ...new Set(
-        admissions
-          .map((item) => item.admissionDate?.slice(0, 7))
-          .filter(Boolean)
-      ),
-    ].sort((a, b) => b.localeCompare(a));
-  }, [admissions]);
+  useEffect(() => {
+    fetchAdmissions();
+  }, [fetchAdmissions]);
+
+  const months = useMemo(
+    () =>
+      [
+        ...new Set(
+          admissions
+            .map((item) => item.admissionDate?.slice(0, 7))
+            .filter(Boolean)
+        ),
+      ].sort((a, b) => b.localeCompare(a)),
+    [admissions]
+  );
 
   const filteredAdmissions = useMemo(() => {
     return admissions.filter((item) => {
@@ -218,6 +307,9 @@ export default function AdmissionsPage() {
       const matchesSearch =
         !term ||
         item.studentName.toLowerCase().includes(term) ||
+        item.email.toLowerCase().includes(term) ||
+        item.userId.toLowerCase().includes(term) ||
+        item.batch.toLowerCase().includes(term) ||
         item.course.toLowerCase().includes(term) ||
         item.trainer.toLowerCase().includes(term);
 
@@ -232,7 +324,10 @@ export default function AdmissionsPage() {
         item.admissionDate?.startsWith(monthFilter);
 
       return (
-        matchesSearch && matchesFee && matchesMode && matchesMonth
+        matchesSearch &&
+        matchesFee &&
+        matchesMode &&
+        matchesMonth
       );
     });
   }, [admissions, search, feeFilter, modeFilter, monthFilter]);
@@ -248,85 +343,181 @@ export default function AdmissionsPage() {
 
   function openAddModal() {
     setEditingId(null);
+
     setForm({
       ...emptyAdmission,
-      admissionDate: currentMonth
-        ? `${currentMonth}-${new Date().getDate().toString().padStart(2, "0")}`
-        : "",
+      ...(currentMonth
+        ? {
+            batchStartDate: "",
+          }
+        : {}),
     });
+
+    setError("");
+    setNotice("");
     setModalOpen(true);
   }
 
   function openEditModal(admission) {
     setEditingId(admission.id);
-    setForm({ ...emptyAdmission, ...admission });
+
+    setForm({
+      ...emptyAdmission,
+      ...admission,
+    });
+
+    setError("");
+    setNotice("");
     setModalOpen(true);
   }
 
   function updateField(event) {
     const { name, value } = event.target;
-    setForm((previous) => ({ ...previous, [name]: value }));
+
+    setForm((previous) => ({
+      ...previous,
+      [name]: value,
+    }));
   }
 
-  function saveAdmission(event) {
+  function buildPayload() {
+    return {
+      name: form.studentName.trim(),
+      email: form.email.trim().toLowerCase(),
+      batch: form.batch.trim(),
+
+      admissionDetails: {
+        course: form.course.trim(),
+        totalFee: Number(form.totalFee) || 0,
+        registrationFee: Number(form.registrationFee) || 0,
+
+        installment0: Number(form.installment0) || 0,
+        installment1: Number(form.installment1) || 0,
+        installment2: Number(form.installment2) || 0,
+        installment3: Number(form.installment3) || 0,
+
+        bajajFinance: form.bajajFinance,
+        paymentMode: form.paymentMode,
+        feeStatus: form.feeStatus,
+        trainer: form.trainer.trim(),
+
+        mode: form.mode,
+        batchType: form.batchType,
+        batchStartDate: form.batchStartDate || null,
+        time: form.time.trim(),
+        batchEndDate: form.batchEndDate || null,
+
+        videoAccess: form.videoAccess,
+      },
+    };
+  }
+
+  async function saveAdmission(event) {
     event.preventDefault();
 
-    const record = {
-      ...form,
-      studentName: form.studentName.trim(),
-      course: form.course.trim(),
-      trainer: form.trainer.trim(),
-      totalFee: Number(form.totalFee) || 0,
-      registrationFee: Number(form.registrationFee) || 0,
-      installment0: Number(form.installment0) || 0,
-      installment1: Number(form.installment1) || 0,
-      installment2: Number(form.installment2) || 0,
-      installment3: Number(form.installment3) || 0,
-    };
+    if (saving) return;
 
-    if (editingId !== null) {
-      setAdmissions((previous) =>
-        previous.map((item) =>
-          item.id === editingId ? { ...record, id: editingId } : item
-        )
-      );
-    } else {
-      setAdmissions((previous) => [
-        { ...record, id: Date.now() },
-        ...previous,
-      ]);
+    setSaving(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const payload = buildPayload();
+
+      let result;
+
+      if (editingId) {
+        result = await apiRequest(
+          `/counsellor/admissions/${editingId}`,
+          {
+            method: "PATCH",
+            body: payload,
+          }
+        );
+
+        setNotice("Admission updated successfully.");
+      } else {
+        result = await apiRequest("/counsellor/admissions", {
+          method: "POST",
+          body: payload,
+        });
+
+        setNotice("Admission created successfully.");
+
+        const student = result.data?.student;
+
+        // Display generated credentials once, only when returned
+        // by the existing backend credential-generation workflow.
+        if (student?.userId && result.data?.temporaryPassword) {
+          window.alert(
+            `Student admission created successfully.\n\n` +
+              `Student ID: ${student.userId}\n` +
+              `Temporary password: ${result.data.temporaryPassword}\n\n` +
+              `Share these credentials securely.`
+          );
+        }
+      }
+
+      setModalOpen(false);
+      setEditingId(null);
+      setForm(emptyAdmission);
+
+      await fetchAdmissions();
+    } catch (err) {
+      setError(err.message || "Unable to save admission.");
+    } finally {
+      setSaving(false);
     }
-
-    setModalOpen(false);
-    setEditingId(null);
-    setForm(emptyAdmission);
   }
 
-  function deleteAdmission(id) {
+  async function deleteAdmission(id) {
     const confirmed = window.confirm(
-      "Are you sure you want to delete this admission?"
+      "This will deactivate the student account. Existing payment history will be preserved. Continue?"
     );
 
     if (!confirmed) return;
 
-    setAdmissions((previous) => previous.filter((item) => item.id !== id));
+    setDeletingId(id);
+    setError("");
+    setNotice("");
 
-    if (selectedAdmission?.id === id) {
-      setSelectedAdmission(null);
+    try {
+      await apiRequest(`/counsellor/admissions/${id}`, {
+        method: "DELETE",
+      });
+
+      setAdmissions((previous) =>
+        previous.map((item) =>
+          item.id === id ? { ...item, isActive: false } : item
+        )
+      );
+
+      if (selectedAdmission?.id === id) {
+        setSelectedAdmission(null);
+      }
+
+      setNotice("Student account deactivated successfully.");
+      await fetchAdmissions();
+    } catch (err) {
+      setError(err.message || "Unable to deactivate student.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
   return (
     <div className="min-h-screen space-y-6 bg-slate-50 p-4 sm:p-6 lg:p-8">
-      {/* Heading */}
+      {/* Page heading */}
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <p className="text-sm font-semibold text-blue-700">
             Counsellor Portal
           </p>
+
           <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">
             Admissions
           </h1>
+
           <p className="mt-2 text-sm text-slate-500">
             Manage student registrations, course fees, and batch details.
           </p>
@@ -334,14 +525,17 @@ export default function AdmissionsPage() {
 
         <div className="flex flex-wrap gap-2">
           <button
+            type="button"
             onClick={() => downloadCSV(filteredAdmissions)}
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+            disabled={loading || filteredAdmissions.length === 0}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
           >
             <Download size={17} />
             Export CSV
           </button>
 
           <button
+            type="button"
             onClick={openAddModal}
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
           >
@@ -350,6 +544,34 @@ export default function AdmissionsPage() {
           </button>
         </div>
       </div>
+
+      {/* Notifications */}
+      {error && (
+        <div
+          role="alert"
+          className="flex flex-col justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 sm:flex-row sm:items-center"
+        >
+          <p>{error}</p>
+
+          <button
+            type="button"
+            onClick={fetchAdmissions}
+            className="inline-flex shrink-0 items-center gap-2 font-semibold underline"
+          >
+            <RefreshCw size={15} />
+            Retry
+          </button>
+        </div>
+      )}
+
+      {notice && (
+        <div
+          role="status"
+          className="rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-800"
+        >
+          {notice}
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -374,7 +596,9 @@ export default function AdmissionsPage() {
           },
           {
             label: "Fee Clear Accounts",
-            value: filteredAdmissions.length - pendingCount,
+            value: filteredAdmissions.filter(
+              (item) => item.feeStatus === "Clear"
+            ).length,
             icon: CheckCircle2,
             color: "bg-green-100 text-green-700",
           },
@@ -389,10 +613,12 @@ export default function AdmissionsPage() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm text-slate-500">{stat.label}</p>
+
                   <p className="mt-3 text-2xl font-bold text-slate-900">
-                    {stat.value}
+                    {loading ? "—" : stat.value}
                   </p>
                 </div>
+
                 <div className={`rounded-xl p-3 ${stat.color}`}>
                   <Icon size={23} />
                 </div>
@@ -402,7 +628,7 @@ export default function AdmissionsPage() {
         })}
       </div>
 
-      {/* Filters */}
+      {/* Search and filters */}
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="mb-4 flex items-center gap-2">
           <Filter size={18} className="text-blue-700" />
@@ -417,10 +643,11 @@ export default function AdmissionsPage() {
               size={18}
               className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
             />
+
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search student, course, trainer..."
+              placeholder="Search student, course, ID..."
               className="w-full rounded-lg border border-slate-200 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-blue-500"
             />
           </div>
@@ -431,14 +658,25 @@ export default function AdmissionsPage() {
             className={inputClass}
           >
             <option value="All">All Admission Months</option>
-            {months.map((month) => (
-              <option key={month} value={month}>
-                {new Date(`${month}-01T12:00:00`).toLocaleDateString("en-IN", {
-                  month: "long",
-                  year: "numeric",
-                })}
-              </option>
-            ))}
+
+            {months.map((month) => {
+              const [year, monthNumber] = month.split("-");
+
+              const label = new Date(
+                Number(year),
+                Number(monthNumber) - 1,
+                1
+              ).toLocaleDateString("en-IN", {
+                month: "long",
+                year: "numeric",
+              });
+
+              return (
+                <option key={month} value={month}>
+                  {label}
+                </option>
+              );
+            })}
           </select>
 
           <select
@@ -471,17 +709,28 @@ export default function AdmissionsPage() {
             <h2 className="text-lg font-bold text-slate-900">
               Student Admission Records
             </h2>
+
             <p className="mt-1 text-sm text-slate-500">
               Showing {filteredAdmissions.length} admission(s)
             </p>
           </div>
-          <span className="text-xs text-slate-400">
-            Use the horizontal scroll to view all columns.
-          </span>
+
+          <button
+            type="button"
+            onClick={fetchAdmissions}
+            disabled={loading}
+            className="inline-flex items-center gap-2 self-start rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <RefreshCw
+              size={15}
+              className={loading ? "animate-spin" : ""}
+            />
+            Refresh
+          </button>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1250px] text-left text-sm">
+          <table className="w-full min-w-[1350px] text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 {[
@@ -507,140 +756,201 @@ export default function AdmissionsPage() {
             </thead>
 
             <tbody>
-              {filteredAdmissions.map((item) => (
-                <tr
-                  key={item.id}
-                  className="border-t border-slate-100 hover:bg-slate-50"
-                >
-                  <td className="px-4 py-4">
-                    <p className="font-semibold text-slate-800">
-                      {item.studentName}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      {displayDate(item.admissionDate)}
-                    </p>
-                  </td>
-
-                  <td className="px-4 py-4 text-slate-600">{item.course}</td>
-
-                  <td className="px-4 py-4 font-semibold text-slate-800">
-                    {money(item.totalFee)}
-                  </td>
-
-                  <td className="px-4 py-4 text-slate-600">
-                    {money(item.registrationFee)}
-                  </td>
-
-                  <td className="px-4 py-4 text-slate-600">
-                    <p>0: {money(item.installment0)}</p>
-                    <p>1: {money(item.installment1)}</p>
-                    <p>2: {money(item.installment2)}</p>
-                    <p>3: {money(item.installment3)}</p>
-                  </td>
-
-                  <td className="px-4 py-4">
-                    <p className="text-slate-700">{item.paymentMode}</p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      Bajaj: {item.bajajFinance}
-                    </p>
-                  </td>
-
-                  <td className="px-4 py-4">
-                    <span
-                      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                        item.feeStatus === "Clear"
-                          ? "bg-green-100 text-green-700"
-                          : "bg-amber-100 text-amber-700"
-                      }`}
-                    >
-                      {item.feeStatus}
-                    </span>
-                  </td>
-
-                  <td className="px-4 py-4 text-slate-600">{item.trainer}</td>
-
-                  <td className="px-4 py-4">
-                    <p className="font-medium text-slate-700">{item.mode}</p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      {item.batchType}
-                    </p>
-                  </td>
-
-                  <td className="px-4 py-4 text-slate-600">
-                    {displayDate(item.batchStartDate)}
-                  </td>
-
-                  <td className="px-4 py-4 text-slate-600">{item.time}</td>
-
-                  <td className="px-4 py-4">
-                    <span
-                      className={
-                        item.videoAccess === "Yes"
-                          ? "font-medium text-green-700"
-                          : "font-medium text-slate-400"
-                      }
-                    >
-                      {item.videoAccess}
-                    </span>
-                  </td>
-
-                  <td className="px-4 py-4">
-                    <div className="flex items-center gap-1">
-                      <button
-                        title="View details"
-                        onClick={() => setSelectedAdmission(item)}
-                        className="rounded-lg p-2 text-slate-500 hover:bg-blue-50 hover:text-blue-700"
-                      >
-                        <Eye size={17} />
-                      </button>
-
-                      <button
-                        title="Edit admission"
-                        onClick={() => openEditModal(item)}
-                        className="rounded-lg p-2 text-slate-500 hover:bg-amber-50 hover:text-amber-700"
-                      >
-                        <Pencil size={17} />
-                      </button>
-
-                      <button
-                        title="Delete admission"
-                        onClick={() => deleteAdmission(item.id)}
-                        className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-600"
-                      >
-                        <Trash2 size={17} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-
-              {filteredAdmissions.length === 0 && (
+              {loading ? (
                 <tr>
                   <td colSpan={13} className="px-4 py-16 text-center">
-                    <Users className="mx-auto mb-3 h-10 w-10 text-slate-300" />
-                    <p className="font-semibold text-slate-700">
-                      No admissions found
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Change the filters or add a new student admission.
+                    <RefreshCw className="mx-auto h-7 w-7 animate-spin text-blue-700" />
+                    <p className="mt-3 text-sm text-slate-500">
+                      Loading admissions from the server...
                     </p>
                   </td>
                 </tr>
+              ) : (
+                <>
+                  {filteredAdmissions.map((item) => (
+                    <tr
+                      key={item.id}
+                      className={`border-t border-slate-100 hover:bg-slate-50 ${
+                        !item.isActive ? "opacity-60" : ""
+                      }`}
+                    >
+                      <td className="px-4 py-4">
+                        <p className="font-semibold text-slate-800">
+                          {item.studentName}
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-500">
+                          {item.userId}
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-400">
+                          {item.email}
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-400">
+                          {displayDate(item.admissionDate)}
+                        </p>
+
+                        {!item.isActive && (
+                          <span className="mt-1 inline-block text-xs font-semibold text-red-600">
+                            Inactive
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-4 text-slate-600">
+                        {item.course || "—"}
+                      </td>
+
+                      <td className="px-4 py-4 font-semibold text-slate-800">
+                        {money(item.totalFee)}
+                      </td>
+
+                      <td className="px-4 py-4 text-slate-600">
+                        {money(item.registrationFee)}
+                      </td>
+
+                      <td className="px-4 py-4 text-slate-600">
+                        {[0, 1, 2, 3].map((number) => (
+                          <p key={number}>
+                            {number}:{" "}
+                            {money(item[`installment${number}`])}
+                          </p>
+                        ))}
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <p className="text-slate-700">
+                          {item.paymentMode}
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-400">
+                          Bajaj: {item.bajajFinance}
+                        </p>
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            item.feeStatus === "Clear"
+                              ? "bg-green-100 text-green-700"
+                              : "bg-amber-100 text-amber-700"
+                          }`}
+                        >
+                          {item.feeStatus}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-4 text-slate-600">
+                        {item.trainer || "—"}
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <p className="font-medium text-slate-700">
+                          {item.batch || "Not assigned"}
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-500">
+                          {item.mode} · {item.batchType}
+                        </p>
+                      </td>
+
+                      <td className="px-4 py-4 text-slate-600">
+                        {displayDate(item.batchStartDate)}
+                      </td>
+
+                      <td className="px-4 py-4 text-slate-600">
+                        {item.time || "—"}
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <span
+                          className={
+                            item.videoAccess === "Yes"
+                              ? "font-medium text-green-700"
+                              : "font-medium text-slate-400"
+                          }
+                        >
+                          {item.videoAccess}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            title="View details"
+                            onClick={() => setSelectedAdmission(item)}
+                            className="rounded-lg p-2 text-slate-500 hover:bg-blue-50 hover:text-blue-700"
+                          >
+                            <Eye size={17} />
+                          </button>
+
+                          <button
+                            type="button"
+                            title="Edit admission"
+                            onClick={() => openEditModal(item)}
+                            disabled={!item.isActive}
+                            className="rounded-lg p-2 text-slate-500 hover:bg-amber-50 hover:text-amber-700 disabled:opacity-40"
+                          >
+                            <Pencil size={17} />
+                          </button>
+
+                          <button
+                            type="button"
+                            title="Deactivate student"
+                            onClick={() => deleteAdmission(item.id)}
+                            disabled={
+                              !item.isActive || deletingId === item.id
+                            }
+                            className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                          >
+                            {deletingId === item.id ? (
+                              <RefreshCw
+                                size={17}
+                                className="animate-spin"
+                              />
+                            ) : (
+                              <Trash2 size={17} />
+                            )}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+
+                  {filteredAdmissions.length === 0 && (
+                    <tr>
+                      <td colSpan={13} className="px-4 py-16 text-center">
+                        <Users className="mx-auto mb-3 h-10 w-10 text-slate-300" />
+
+                        <p className="font-semibold text-slate-700">
+                          No admissions found
+                        </p>
+
+                        <p className="mt-1 text-sm text-slate-500">
+                          Change the filters or add a new admission.
+                        </p>
+                      </td>
+                    </tr>
+                  )}
+                </>
               )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Add / Edit admission modal */}
+      {/* Add / Edit modal */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/50 p-3 py-6 sm:p-6">
           <div className="my-auto w-full max-w-5xl rounded-2xl bg-white shadow-2xl">
             <div className="sticky top-0 z-10 flex items-center justify-between rounded-t-2xl border-b border-slate-100 bg-white p-5">
               <div>
                 <h2 className="text-xl font-bold text-slate-900">
-                  {editingId !== null ? "Edit Admission" : "Add New Admission"}
+                  {editingId ? "Edit Admission" : "Add New Admission"}
                 </h2>
+
                 <p className="mt-1 text-sm text-slate-500">
                   Enter student, fee, and batch details.
                 </p>
@@ -665,11 +975,35 @@ export default function AdmissionsPage() {
                   <Field label="Student Name *">
                     <input
                       required
+                      minLength={2}
+                      maxLength={100}
                       name="studentName"
                       value={form.studentName}
                       onChange={updateField}
                       className={inputClass}
                       placeholder="Enter full name"
+                    />
+                  </Field>
+
+                  <Field label="Student Email *">
+                    <input
+                      required
+                      type="email"
+                      name="email"
+                      value={form.email}
+                      onChange={updateField}
+                      className={inputClass}
+                      placeholder="student@example.com"
+                    />
+                  </Field>
+
+                  <Field label="Batch Name">
+                    <input
+                      name="batch"
+                      value={form.batch}
+                      onChange={updateField}
+                      className={inputClass}
+                      placeholder="Existing active batch name"
                     />
                   </Field>
 
@@ -681,17 +1015,6 @@ export default function AdmissionsPage() {
                       onChange={updateField}
                       className={inputClass}
                       placeholder="e.g. MERN Stack"
-                    />
-                  </Field>
-
-                  <Field label="Admission Date *">
-                    <input
-                      required
-                      type="date"
-                      name="admissionDate"
-                      value={form.admissionDate}
-                      onChange={updateField}
-                      className={inputClass}
                     />
                   </Field>
 
@@ -718,9 +1041,8 @@ export default function AdmissionsPage() {
                     />
                   </Field>
 
-                  <Field label="Trainer *">
+                  <Field label="Trainer">
                     <input
-                      required
                       name="trainer"
                       value={form.trainer}
                       onChange={updateField}
@@ -764,8 +1086,8 @@ export default function AdmissionsPage() {
                       onChange={updateField}
                       className={inputClass}
                     >
-                      <option>No</option>
-                      <option>Yes</option>
+                      <option value="No">No</option>
+                      <option value="Yes">Yes</option>
                     </select>
                   </Field>
 
@@ -792,8 +1114,8 @@ export default function AdmissionsPage() {
                       onChange={updateField}
                       className={inputClass}
                     >
-                      <option>Pending</option>
-                      <option>Clear</option>
+                      <option value="Pending">Pending</option>
+                      <option value="Clear">Clear</option>
                     </select>
                   </Field>
                 </div>
@@ -831,9 +1153,8 @@ export default function AdmissionsPage() {
                     </select>
                   </Field>
 
-                  <Field label="Batch Time *">
+                  <Field label="Batch Time">
                     <input
-                      required
                       name="time"
                       value={form.time}
                       onChange={updateField}
@@ -869,8 +1190,8 @@ export default function AdmissionsPage() {
                       onChange={updateField}
                       className={inputClass}
                     >
-                      <option>Yes</option>
-                      <option>No</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
                     </select>
                   </Field>
                 </div>
@@ -880,18 +1201,26 @@ export default function AdmissionsPage() {
                 <button
                   type="button"
                   onClick={() => setModalOpen(false)}
-                  className="rounded-lg border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  disabled={saving}
+                  className="rounded-lg border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 >
                   Cancel
                 </button>
 
                 <button
                   type="submit"
-                  className="rounded-lg bg-blue-700 px-6 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
+                  disabled={saving}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-6 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {editingId !== null
-                    ? "Update Admission"
-                    : "Save Admission"}
+                  {saving && (
+                    <RefreshCw size={16} className="animate-spin" />
+                  )}
+
+                  {saving
+                    ? "Saving..."
+                    : editingId
+                      ? "Update Admission"
+                      : "Save Admission"}
                 </button>
               </div>
             </form>
@@ -908,12 +1237,18 @@ export default function AdmissionsPage() {
                 <h2 className="text-xl font-bold text-slate-900">
                   Admission Details
                 </h2>
+
                 <p className="mt-1 text-sm text-slate-500">
                   {selectedAdmission.studentName}
+                </p>
+
+                <p className="mt-1 text-xs text-slate-400">
+                  {selectedAdmission.userId}
                 </p>
               </div>
 
               <button
+                type="button"
                 onClick={() => setSelectedAdmission(null)}
                 className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
               >
@@ -923,6 +1258,8 @@ export default function AdmissionsPage() {
 
             <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
               {[
+                ["Email", selectedAdmission.email],
+                ["Batch", selectedAdmission.batch],
                 ["Course", selectedAdmission.course],
                 ["Admission Date", displayDate(selectedAdmission.admissionDate)],
                 ["Total Fee", money(selectedAdmission.totalFee)],
@@ -931,6 +1268,8 @@ export default function AdmissionsPage() {
                 ["Installment 1", money(selectedAdmission.installment1)],
                 ["Installment 2", money(selectedAdmission.installment2)],
                 ["Installment 3", money(selectedAdmission.installment3)],
+                ["Recorded Payments", money(selectedAdmission.totalPaid)],
+                ["Recorded Pending", money(selectedAdmission.totalPending)],
                 ["Payment Mode", selectedAdmission.paymentMode],
                 ["Bajaj Finance", selectedAdmission.bajajFinance],
                 ["Fee Status", selectedAdmission.feeStatus],
@@ -941,12 +1280,14 @@ export default function AdmissionsPage() {
                 ["Batch End", displayDate(selectedAdmission.batchEndDate)],
                 ["Batch Time", selectedAdmission.time],
                 ["Video Access", selectedAdmission.videoAccess],
+                ["Account Status", selectedAdmission.isActive ? "Active" : "Inactive"],
               ].map(([label, value]) => (
                 <div
                   key={label}
                   className="rounded-xl border border-slate-100 bg-slate-50 p-3"
                 >
                   <p className="text-xs text-slate-500">{label}</p>
+
                   <p className="mt-1 break-words text-sm font-semibold text-slate-800">
                     {value || "—"}
                   </p>
@@ -954,18 +1295,22 @@ export default function AdmissionsPage() {
               ))}
             </div>
 
-            <div className="flex justify-end gap-2 border-t border-slate-100 p-5">
-              <button
-                onClick={() => {
-                  openEditModal(selectedAdmission);
-                  setSelectedAdmission(null);
-                }}
-                className="rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
-              >
-                Edit Admission
-              </button>
+            <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 p-5">
+              {selectedAdmission.isActive && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    openEditModal(selectedAdmission);
+                    setSelectedAdmission(null);
+                  }}
+                  className="rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
+                >
+                  Edit Admission
+                </button>
+              )}
 
               <button
+                type="button"
                 onClick={() => setSelectedAdmission(null)}
                 className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >

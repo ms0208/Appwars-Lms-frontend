@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
   Plus,
@@ -12,144 +12,232 @@ import {
   X,
   Eye,
   Users,
-  BookOpen,
   CheckCircle2,
   Clock,
   GraduationCap,
+  RefreshCw,
 } from "lucide-react";
 
-const initialBatches = [
-  {
-    id: 1,
-    name: "MERN Weekend Batch",
-    code: "BATCH-MERN-01",
-    course: "MERN Stack Development",
-    trainer: "Rahul Sharma",
-    startDate: "2026-11-01",
-    endDate: "2027-02-28",
-    schedule: "Sat - Sun",
-    time: "10:00 AM - 12:00 PM",
-    capacity: 30,
-    enrolled: 24,
-    mode: "Online",
-    status: "Ongoing",
-  },
-  {
-    id: 2,
-    name: "AWS Evening Batch",
-    code: "BATCH-AWS-01",
-    course: "AWS Cloud Computing",
-    trainer: "Amit Verma",
-    startDate: "2026-11-10",
-    endDate: "2027-02-10",
-    schedule: "Mon - Thu",
-    time: "7:00 PM - 8:30 PM",
-    capacity: 25,
-    enrolled: 18,
-    mode: "Online",
-    status: "Upcoming",
-  },
-  {
-    id: 3,
-    name: "Software Testing Weekday",
-    code: "BATCH-TEST-01",
-    course: "Software Testing",
-    trainer: "Priya Singh",
-    startDate: "2026-10-05",
-    endDate: "2027-01-05",
-    schedule: "Mon - Fri",
-    time: "11:00 AM - 12:30 PM",
-    capacity: 25,
-    enrolled: 20,
-    mode: "Offline",
-    status: "Ongoing",
-  },
-  {
-    id: 4,
-    name: "Python Beginner Batch",
-    code: "BATCH-PY-01",
-    course: "Python Programming",
-    trainer: "Neha Gupta",
-    startDate: "2026-12-01",
-    endDate: "2027-01-31",
-    schedule: "Tue - Thu - Sat",
-    time: "5:00 PM - 6:00 PM",
-    capacity: 20,
-    enrolled: 0,
-    mode: "Online",
-    status: "Upcoming",
-  },
-];
+const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
+).replace(/\/$/, "");
 
-const emptyBatch = {
+const EMPTY_BATCH = {
   name: "",
   code: "",
   course: "",
   trainer: "",
   startDate: "",
   endDate: "",
-  schedule: "",
-  time: "",
   capacity: 30,
-  enrolled: 0,
-  mode: "Online",
   status: "Upcoming",
 };
 
-export default function BatchesPage() {
-  const [batches, setBatches] = useState(initialBatches);
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("All");
-  const [modal, setModal] = useState(null);
-  const [selectedBatch, setSelectedBatch] = useState(null);
-  const [form, setForm] = useState(emptyBatch);
-  const [error, setError] = useState("");
+const inputClass =
+  "w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
 
-  const ongoing = batches.filter((b) => b.status === "Ongoing").length;
-  const upcoming = batches.filter((b) => b.status === "Upcoming").length;
-  const totalStudents = batches.reduce((sum, b) => sum + Number(b.enrolled || 0), 0);
+async function apiRequest(path, options = {}) {
+  const token =
+    typeof window !== "undefined"
+      ? sessionStorage.getItem("token")
+      : null;
 
-  const filteredBatches = batches.filter((batch) => {
-    const query = search.toLowerCase();
-
-    const matchesSearch =
-      batch.name.toLowerCase().includes(query) ||
-      batch.code.toLowerCase().includes(query) ||
-      batch.course.toLowerCase().includes(query) ||
-      batch.trainer.toLowerCase().includes(query);
-
-    const matchesStatus =
-      statusFilter === "All" || batch.status === statusFilter;
-
-    return matchesSearch && matchesStatus;
+  const response = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers: {
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options.headers,
+    },
   });
 
-  function openAdd() {
-    setForm({ ...emptyBatch });
-    setSelectedBatch(null);
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(
+        data.message || "Authentication failed. Please log in again."
+      );
+    }
+
+    throw new Error(
+      data.message || data.error || `Request failed (${response.status}).`
+    );
+  }
+
+  return data;
+}
+
+function getItems(data, key) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.[key])) return data[key];
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.data)) return data.data;
+  return [];
+}
+
+function getId(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  return String(value._id || value.id || "");
+}
+
+function getName(value) {
+  if (!value) return "Not assigned";
+  if (typeof value === "string") return value;
+  return value.name || value.title || value.userId || "Not assigned";
+}
+
+function dateInputValue(value) {
+  if (!value) return "";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function mapBatch(batch) {
+  const students = Array.isArray(batch.students) ? batch.students : [];
+
+  return {
+    id: getId(batch),
+    name: batch.name || "",
+    code: batch.code || "",
+    courseId: getId(batch.course),
+    course: getName(batch.course),
+    trainerId: getId(batch.trainer),
+    trainer: getName(batch.trainer),
+    studentIds: students.map(getId).filter(Boolean),
+    enrolled: students.length,
+    startDate: dateInputValue(batch.startDate),
+    endDate: dateInputValue(batch.endDate),
+    capacity: Number(batch.capacity || 0),
+    status: batch.status || "Upcoming",
+  };
+}
+
+function displayStatus(status) {
+  return status === "Running" ? "Ongoing" : status;
+}
+
+function csvCell(value) {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+}
+
+export default function BatchesPage() {
+  const [batches, setBatches] = useState([]);
+  const [courses, setCourses] = useState([]);
+  const [trainers, setTrainers] = useState([]);
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+
+  const [modal, setModal] = useState(null);
+  const [selectedBatch, setSelectedBatch] = useState(null);
+  const [form, setForm] = useState({ ...EMPTY_BATCH });
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
     setError("");
+
+    try {
+      const [batchData, courseData, trainerData] = await Promise.all([
+        apiRequest("/admin/batches"),
+        apiRequest("/admin/courses"),
+        apiRequest("/admin/users?role=Trainer&active=true&limit=100"),
+      ]);
+
+      setBatches(getItems(batchData, "items").map(mapBatch));
+      setCourses(getItems(courseData, "items"));
+
+      const trainerList = getItems(trainerData, "users");
+      setTrainers(trainerList);
+    } catch (err) {
+      setError(err.message || "Unable to load batches.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const ongoing = batches.filter((b) => b.status === "Running").length;
+  const upcoming = batches.filter((b) => b.status === "Upcoming").length;
+
+  const totalStudents = batches.reduce(
+    (sum, batch) => sum + batch.enrolled,
+    0
+  );
+
+  const filteredBatches = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    return batches.filter((batch) => {
+      const matchesSearch = [
+        batch.name,
+        batch.code,
+        batch.course,
+        batch.trainer,
+      ].some((value) => String(value || "").toLowerCase().includes(query));
+
+      const matchesStatus =
+        statusFilter === "All" || batch.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [batches, search, statusFilter]);
+
+  function openAdd() {
+    setSelectedBatch(null);
+    setForm({ ...EMPTY_BATCH });
+    setError("");
+    setNotice("");
     setModal("form");
   }
 
   function openEdit(batch) {
-    setForm({ ...batch });
     setSelectedBatch(batch);
+    setForm({
+      name: batch.name,
+      code: batch.code,
+      course: batch.courseId,
+      trainer: batch.trainerId,
+      startDate: batch.startDate,
+      endDate: batch.endDate,
+      capacity: batch.capacity,
+      status: batch.status,
+    });
     setError("");
+    setNotice("");
     setModal("form");
   }
 
   function updateField(field, value) {
-    setForm((prev) => ({ ...prev, [field]: value }));
+    setForm((previous) => ({ ...previous, [field]: value }));
   }
 
-  function saveBatch(event) {
+  async function saveBatch(event) {
     event.preventDefault();
+    setError("");
+    setNotice("");
 
     if (
       !form.name.trim() ||
       !form.code.trim() ||
-      !form.course.trim() ||
-      !form.trainer.trim() ||
+      !form.course ||
+      !form.trainer ||
       !form.startDate ||
       !form.endDate
     ) {
@@ -162,14 +250,15 @@ export default function BatchesPage() {
       return;
     }
 
-    if (Number(form.enrolled) > Number(form.capacity)) {
-      setError("Enrolled students cannot exceed batch capacity.");
+    if (!Number.isInteger(Number(form.capacity)) || Number(form.capacity) < 1) {
+      setError("Capacity must be a whole number greater than zero.");
       return;
     }
 
     const duplicateCode = batches.some(
       (batch) =>
-        batch.code.toLowerCase() === form.code.trim().toLowerCase() &&
+        batch.code.trim().toLowerCase() ===
+          form.code.trim().toLowerCase() &&
         batch.id !== selectedBatch?.id
     );
 
@@ -178,37 +267,66 @@ export default function BatchesPage() {
       return;
     }
 
-    const savedBatch = {
-      ...form,
+    const payload = {
       name: form.name.trim(),
       code: form.code.trim(),
-      capacity: Number(form.capacity) || 0,
-      enrolled: Number(form.enrolled) || 0,
+      course: form.course,
+      trainer: form.trainer,
+      startDate: form.startDate,
+      endDate: form.endDate,
+      capacity: Number(form.capacity),
+      status: form.status,
     };
 
-    if (selectedBatch) {
-      setBatches((prev) =>
-        prev.map((batch) =>
-          batch.id === selectedBatch.id
-            ? { ...batch, ...savedBatch }
-            : batch
-        )
-      );
-    } else {
-      setBatches((prev) => [
-        ...prev,
-        { ...savedBatch, id: Date.now() },
-      ]);
-    }
+    setSaving(true);
 
-    setModal(null);
-    setSelectedBatch(null);
-    setError("");
+    try {
+      if (selectedBatch) {
+        await apiRequest(`/admin/batches/${selectedBatch.id}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+        setNotice("Batch updated successfully.");
+      } else {
+        await apiRequest("/admin/batches", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        setNotice("Batch created successfully.");
+      }
+
+      setModal(null);
+      setSelectedBatch(null);
+      await loadData();
+    } catch (err) {
+      setError(err.message || "Unable to save batch.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function deleteBatch(id) {
-    if (window.confirm("Are you sure you want to delete this batch?")) {
-      setBatches((prev) => prev.filter((batch) => batch.id !== id));
+  async function deleteBatch(batch) {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${batch.name}"? This will delete the record from the database.`
+    );
+
+    if (!confirmed) return;
+
+    setError("");
+    setNotice("");
+
+    try {
+      await apiRequest(`/admin/batches/${batch.id}`, {
+        method: "DELETE",
+      });
+
+      setBatches((previous) =>
+        previous.filter((item) => item.id !== batch.id)
+      );
+
+      setNotice("Batch deleted successfully.");
+    } catch (err) {
+      setError(err.message || "Unable to delete batch.");
     }
   }
 
@@ -220,34 +338,26 @@ export default function BatchesPage() {
       "Trainer",
       "Start Date",
       "End Date",
-      "Schedule",
-      "Time",
       "Capacity",
       "Enrolled Students",
-      "Mode",
       "Status",
     ];
 
-    const rows = filteredBatches.map((b) => [
-      b.code,
-      b.name,
-      b.course,
-      b.trainer,
-      b.startDate,
-      b.endDate,
-      b.schedule,
-      b.time,
-      b.capacity,
-      b.enrolled,
-      b.mode,
-      b.status,
+    const rows = filteredBatches.map((batch) => [
+      batch.code,
+      batch.name,
+      batch.course,
+      batch.trainer,
+      batch.startDate,
+      batch.endDate,
+      batch.capacity,
+      batch.enrolled,
+      displayStatus(batch.status),
     ]);
 
     const csv = [headers, ...rows]
-      .map((row) =>
-        row.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(",")
-      )
-      .join("\n");
+      .map((row) => row.map(csvCell).join(","))
+      .join("\r\n");
 
     const blob = new Blob(["\uFEFF" + csv], {
       type: "text/csv;charset=utf-8;",
@@ -277,13 +387,36 @@ export default function BatchesPage() {
             </p>
           </div>
 
-          <button
-            onClick={openAdd}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
-          >
-            <Plus size={18} /> Create Batch
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={loadData}
+              disabled={loading}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              <RefreshCw size={17} />
+              Refresh
+            </button>
+
+            <button
+              onClick={openAdd}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
+            >
+              <Plus size={18} /> Create Batch
+            </button>
+          </div>
         </div>
+
+        {error && !modal && (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        {notice && (
+          <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+            {notice}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard title="Total Batches" value={batches.length} icon={CalendarDays} />
@@ -303,17 +436,17 @@ export default function BatchesPage() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search batch, code, course or trainer..."
-                className="w-full rounded-lg border border-slate-200 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                className={`${inputClass} pl-10`}
               />
             </div>
 
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+              className={inputClass + " lg:w-48"}
             >
               <option value="All">All Statuses</option>
-              <option value="Ongoing">Ongoing</option>
+              <option value="Running">Ongoing</option>
               <option value="Upcoming">Upcoming</option>
               <option value="Completed">Completed</option>
             </select>
@@ -330,26 +463,32 @@ export default function BatchesPage() {
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
             <h2 className="font-semibold text-slate-800">All Batches</h2>
-            <span className="text-sm text-slate-500">{filteredBatches.length} results</span>
+            <span className="text-sm text-slate-500">
+              {filteredBatches.length} results
+            </span>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1100px] text-left text-sm">
+            <table className="w-full min-w-[950px] text-left text-sm">
               <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                 <tr>
                   <th className="px-5 py-4">Batch</th>
                   <th className="px-5 py-4">Course / Trainer</th>
                   <th className="px-5 py-4">Duration</th>
-                  <th className="px-5 py-4">Schedule</th>
                   <th className="px-5 py-4">Enrollment</th>
-                  <th className="px-5 py-4">Mode</th>
                   <th className="px-5 py-4">Status</th>
                   <th className="px-5 py-4 text-right">Actions</th>
                 </tr>
               </thead>
 
               <tbody className="divide-y divide-slate-100">
-                {filteredBatches.map((batch) => (
+                {loading ? (
+                  <tr>
+                    <td colSpan={6} className="px-5 py-12 text-center text-slate-500">
+                      Loading batches...
+                    </td>
+                  </tr>
+                ) : filteredBatches.map((batch) => (
                   <tr key={batch.id} className="hover:bg-slate-50">
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-3">
@@ -370,12 +509,9 @@ export default function BatchesPage() {
 
                     <td className="px-5 py-4">
                       <p className="text-slate-700">{formatDate(batch.startDate)}</p>
-                      <p className="mt-1 text-xs text-slate-500">to {formatDate(batch.endDate)}</p>
-                    </td>
-
-                    <td className="px-5 py-4">
-                      <p className="font-medium text-slate-700">{batch.schedule}</p>
-                      <p className="mt-1 text-xs text-slate-500">{batch.time}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        to {formatDate(batch.endDate)}
+                      </p>
                     </td>
 
                     <td className="px-5 py-4">
@@ -386,13 +522,15 @@ export default function BatchesPage() {
                         <div
                           className="h-full rounded-full bg-blue-600"
                           style={{
-                            width: `${batch.capacity ? Math.min((batch.enrolled / batch.capacity) * 100, 100) : 0}%`,
+                            width: `${
+                              batch.capacity
+                                ? Math.min((batch.enrolled / batch.capacity) * 100, 100)
+                                : 0
+                            }%`,
                           }}
                         />
                       </div>
                     </td>
-
-                    <td className="px-5 py-4 text-slate-600">{batch.mode}</td>
 
                     <td className="px-5 py-4">
                       <StatusBadge status={batch.status} />
@@ -414,8 +552,8 @@ export default function BatchesPage() {
                         </ActionButton>
                         <ActionButton
                           label="Delete"
-                          onClick={() => deleteBatch(batch.id)}
                           danger
+                          onClick={() => deleteBatch(batch)}
                         >
                           <Trash2 size={16} />
                         </ActionButton>
@@ -424,9 +562,9 @@ export default function BatchesPage() {
                   </tr>
                 ))}
 
-                {filteredBatches.length === 0 && (
+                {!loading && filteredBatches.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-5 py-12 text-center text-slate-500">
+                    <td colSpan={6} className="px-5 py-12 text-center text-slate-500">
                       No batches found. Try another search or create a new batch.
                     </td>
                   </tr>
@@ -438,74 +576,147 @@ export default function BatchesPage() {
       </div>
 
       {modal === "form" && (
-        <Modal title={selectedBatch ? "Edit Batch" : "Create New Batch"} onClose={() => setModal(null)}>
+        <Modal
+          title={selectedBatch ? "Edit Batch" : "Create New Batch"}
+          onClose={() => {
+            if (!saving) setModal(null);
+          }}
+        >
           <form onSubmit={saveBatch} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <FormField label="Batch Name *">
-                <input required value={form.name} onChange={(e) => updateField("name", e.target.value)} className={inputClass} placeholder="e.g. MERN Weekend Batch" />
+                <input
+                  required
+                  value={form.name}
+                  onChange={(e) => updateField("name", e.target.value)}
+                  className={inputClass}
+                  placeholder="MERN Weekend Batch"
+                />
               </FormField>
 
               <FormField label="Batch Code *">
-                <input required value={form.code} onChange={(e) => updateField("code", e.target.value)} className={inputClass} placeholder="e.g. BATCH-MERN-01" />
+                <input
+                  required
+                  value={form.code}
+                  onChange={(e) => updateField("code", e.target.value)}
+                  className={inputClass}
+                  placeholder="BATCH-MERN-01"
+                />
               </FormField>
 
               <FormField label="Course *">
-                <input required value={form.course} onChange={(e) => updateField("course", e.target.value)} className={inputClass} placeholder="Course name" />
+                <select
+                  required
+                  value={form.course}
+                  onChange={(e) => updateField("course", e.target.value)}
+                  className={inputClass}
+                >
+                  <option value="">Select a course</option>
+                  {courses.map((course) => (
+                    <option key={getId(course)} value={getId(course)}>
+                      {course.title || course.name || "Unnamed course"}
+                    </option>
+                  ))}
+                </select>
+                {courses.length === 0 && (
+                  <p className="text-xs text-amber-700">
+                    No courses found. Create a course first.
+                  </p>
+                )}
               </FormField>
 
               <FormField label="Trainer *">
-                <input required value={form.trainer} onChange={(e) => updateField("trainer", e.target.value)} className={inputClass} placeholder="Trainer name" />
+                <select
+                  required
+                  value={form.trainer}
+                  onChange={(e) => updateField("trainer", e.target.value)}
+                  className={inputClass}
+                >
+                  <option value="">Select a trainer</option>
+                  {trainers.map((trainer) => (
+                    <option key={getId(trainer)} value={getId(trainer)}>
+                      {trainer.name} ({trainer.userId})
+                    </option>
+                  ))}
+                </select>
+                {trainers.length === 0 && (
+                  <p className="text-xs text-amber-700">
+                    No active trainers found. Create or activate a trainer first.
+                  </p>
+                )}
               </FormField>
 
               <FormField label="Start Date *">
-                <input type="date" required value={form.startDate} onChange={(e) => updateField("startDate", e.target.value)} className={inputClass} />
+                <input
+                  type="date"
+                  required
+                  value={form.startDate}
+                  onChange={(e) => updateField("startDate", e.target.value)}
+                  className={inputClass}
+                />
               </FormField>
 
               <FormField label="End Date *">
-                <input type="date" required value={form.endDate} min={form.startDate || undefined} onChange={(e) => updateField("endDate", e.target.value)} className={inputClass} />
+                <input
+                  type="date"
+                  required
+                  min={form.startDate || undefined}
+                  value={form.endDate}
+                  onChange={(e) => updateField("endDate", e.target.value)}
+                  className={inputClass}
+                />
               </FormField>
 
-              <FormField label="Class Days">
-                <input value={form.schedule} onChange={(e) => updateField("schedule", e.target.value)} className={inputClass} placeholder="e.g. Mon - Fri" />
-              </FormField>
-
-              <FormField label="Class Time">
-                <input value={form.time} onChange={(e) => updateField("time", e.target.value)} className={inputClass} placeholder="e.g. 7:00 PM - 8:30 PM" />
-              </FormField>
-
-              <FormField label="Batch Capacity">
-                <input type="number" min="1" value={form.capacity} onChange={(e) => updateField("capacity", e.target.value)} className={inputClass} />
-              </FormField>
-
-              <FormField label="Currently Enrolled">
-                <input type="number" min="0" value={form.enrolled} onChange={(e) => updateField("enrolled", e.target.value)} className={inputClass} />
-              </FormField>
-
-              <FormField label="Class Mode">
-                <select value={form.mode} onChange={(e) => updateField("mode", e.target.value)} className={inputClass}>
-                  <option>Online</option>
-                  <option>Offline</option>
-                  <option>Hybrid</option>
-                </select>
+              <FormField label="Batch Capacity *">
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  required
+                  value={form.capacity}
+                  onChange={(e) => updateField("capacity", e.target.value)}
+                  className={inputClass}
+                />
               </FormField>
 
               <FormField label="Status">
-                <select value={form.status} onChange={(e) => updateField("status", e.target.value)} className={inputClass}>
-                  <option>Upcoming</option>
-                  <option>Ongoing</option>
-                  <option>Completed</option>
+                <select
+                  value={form.status}
+                  onChange={(e) => updateField("status", e.target.value)}
+                  className={inputClass}
+                >
+                  <option value="Upcoming">Upcoming</option>
+                  <option value="Running">Ongoing</option>
+                  <option value="Completed">Completed</option>
                 </select>
               </FormField>
             </div>
 
-            {error && <p className="text-sm text-red-600">{error}</p>}
+            {error && (
+              <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                {error}
+              </p>
+            )}
 
             <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
-              <button type="button" onClick={() => setModal(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setModal(null)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
                 Cancel
               </button>
-              <button type="submit" className="rounded-lg bg-blue-700 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-800">
-                {selectedBatch ? "Save Changes" : "Create Batch"}
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-lg bg-blue-700 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-50"
+              >
+                {saving
+                  ? "Saving..."
+                  : selectedBatch
+                    ? "Save Changes"
+                    : "Create Batch"}
               </button>
             </div>
           </form>
@@ -520,9 +731,13 @@ export default function BatchesPage() {
                 <CalendarDays size={28} />
               </div>
               <div className="min-w-0 flex-1">
-                <h3 className="text-lg font-bold text-slate-900">{selectedBatch.name}</h3>
+                <h3 className="text-lg font-bold text-slate-900">
+                  {selectedBatch.name}
+                </h3>
                 <p className="mt-1 text-sm text-slate-500">{selectedBatch.code}</p>
-                <div className="mt-2"><StatusBadge status={selectedBatch.status} /></div>
+                <div className="mt-2">
+                  <StatusBadge status={selectedBatch.status} />
+                </div>
               </div>
             </div>
 
@@ -531,10 +746,11 @@ export default function BatchesPage() {
               <Detail label="Trainer" value={selectedBatch.trainer} />
               <Detail label="Start Date" value={formatDate(selectedBatch.startDate)} />
               <Detail label="End Date" value={formatDate(selectedBatch.endDate)} />
-              <Detail label="Class Days" value={selectedBatch.schedule || "Not specified"} />
-              <Detail label="Class Time" value={selectedBatch.time || "Not specified"} />
-              <Detail label="Mode" value={selectedBatch.mode} />
-              <Detail label="Enrollment" value={`${selectedBatch.enrolled} / ${selectedBatch.capacity}`} />
+              <Detail label="Capacity" value={selectedBatch.capacity} />
+              <Detail
+                label="Enrolled Students"
+                value={`${selectedBatch.enrolled} / ${selectedBatch.capacity}`}
+              />
             </div>
           </div>
         </Modal>
@@ -543,13 +759,14 @@ export default function BatchesPage() {
   );
 }
 
-const inputClass =
-  "w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
-
 function formatDate(date) {
   if (!date) return "—";
 
-  return new Date(`${date}T00:00:00`).toLocaleDateString("en-IN", {
+  const parsed = new Date(`${date}T00:00:00`);
+
+  if (Number.isNaN(parsed.getTime())) return "—";
+
+  return parsed.toLocaleDateString("en-IN", {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -561,7 +778,9 @@ function StatCard({ title, value, icon: Icon }) {
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium text-slate-500">{title}</p>
-        <span className="rounded-lg bg-blue-50 p-2 text-blue-700"><Icon size={20} /></span>
+        <span className="rounded-lg bg-blue-50 p-2 text-blue-700">
+          <Icon size={20} />
+        </span>
       </div>
       <p className="mt-4 text-2xl font-bold text-slate-900">{value}</p>
     </div>
@@ -569,15 +788,21 @@ function StatCard({ title, value, icon: Icon }) {
 }
 
 function StatusBadge({ status }) {
+  const label = displayStatus(status);
+
   const styles = {
-    Ongoing: "bg-green-50 text-green-700",
+    Running: "bg-green-50 text-green-700",
     Upcoming: "bg-blue-50 text-blue-700",
     Completed: "bg-slate-100 text-slate-600",
   };
 
   return (
-    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${styles[status] || styles.Completed}`}>
-      {status}
+    <span
+      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+        styles[status] || styles.Completed
+      }`}
+    >
+      {label}
     </span>
   );
 }
@@ -589,7 +814,11 @@ function ActionButton({ children, label, onClick, danger = false }) {
       title={label}
       aria-label={label}
       onClick={onClick}
-      className={`rounded-lg p-2 ${danger ? "text-red-500 hover:bg-red-50" : "text-slate-500 hover:bg-blue-50 hover:text-blue-700"}`}
+      className={`rounded-lg p-2 ${
+        danger
+          ? "text-red-500 hover:bg-red-50"
+          : "text-slate-500 hover:bg-blue-50 hover:text-blue-700"
+      }`}
     >
       {children}
     </button>
@@ -602,7 +831,12 @@ function Modal({ title, onClose, children }) {
       <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl sm:p-6">
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-lg font-bold text-slate-900">{title}</h2>
-          <button onClick={onClose} aria-label="Close" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+          >
             <X size={20} />
           </button>
         </div>
@@ -625,7 +859,9 @@ function Detail({ label, value }) {
   return (
     <div className="rounded-lg bg-slate-50 p-3">
       <p className="text-xs font-medium text-slate-500">{label}</p>
-      <p className="mt-1 break-words text-sm font-semibold text-slate-800">{value}</p>
+      <p className="mt-1 break-words text-sm font-semibold text-slate-800">
+        {value ?? "—"}
+      </p>
     </div>
   );
 }

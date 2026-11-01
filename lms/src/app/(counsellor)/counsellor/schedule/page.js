@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
   Clock3,
@@ -19,90 +19,36 @@ import {
   CalendarClock,
   ExternalLink,
   Filter,
+  RefreshCw,
+  AlertCircle,
 } from "lucide-react";
 
-const initialSchedules = [
-  {
-    id: 1,
-    title: "React.js Fundamentals",
-    batch: "MERN-2026-A",
-    course: "MERN Stack Development",
-    trainer: "Rahul Sharma",
-    date: "2026-10-25",
-    startTime: "10:00",
-    endTime: "11:30",
-    mode: "Online",
-    meetingLink: "https://meet.google.com/",
-    location: "",
-    type: "Lecture",
-    status: "Scheduled",
-    notes: "Components, props and state",
-  },
-  {
-    id: 2,
-    title: "Node.js and Express",
-    batch: "MERN-2026-A",
-    course: "MERN Stack Development",
-    trainer: "Amit Verma",
-    date: "2026-10-26",
-    startTime: "14:00",
-    endTime: "15:30",
-    mode: "Online",
-    meetingLink: "https://meet.google.com/",
-    location: "",
-    type: "Lecture",
-    status: "Scheduled",
-    notes: "Express routes and middleware",
-  },
-  {
-    id: 3,
-    title: "MongoDB Practical",
-    batch: "MERN-2026-B",
-    course: "MERN Stack Development",
-    trainer: "Neha Singh",
-    date: "2026-10-27",
-    startTime: "11:00",
-    endTime: "12:30",
-    mode: "Offline",
-    meetingLink: "",
-    location: "Training Room 2",
-    type: "Practical",
-    status: "Scheduled",
-    notes: "CRUD operations and aggregation",
-  },
-  {
-    id: 4,
-    title: "JavaScript Assessment",
-    batch: "MERN-2026-B",
-    course: "MERN Stack Development",
-    trainer: "Rahul Sharma",
-    date: "2026-10-28",
-    startTime: "16:00",
-    endTime: "17:00",
-    mode: "Online",
-    meetingLink: "https://meet.google.com/",
-    location: "",
-    type: "Assessment",
-    status: "Scheduled",
-    notes: "JavaScript fundamentals test",
-  },
-  {
-    id: 5,
-    title: "Git and GitHub Workshop",
-    batch: "FULLSTACK-2026",
-    course: "Full Stack Development",
-    trainer: "Amit Verma",
-    date: "2026-10-29",
-    startTime: "10:00",
-    endTime: "12:00",
-    mode: "Offline",
-    meetingLink: "",
-    location: "Computer Lab 1",
-    type: "Workshop",
-    status: "Completed",
-    notes: "Branching and collaboration",
-  },
-];
+// ============================================
+// API CONFIGURATION
+// ============================================
+
+const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+).replace(/\/+$/, "");
+
+const SCHEDULE_API = `${API_URL}/api/counsellor/schedule`;
+
+// JWT authentication
+const getAuthHeaders = () => {
+  const token =
+    typeof window !== "undefined"
+      ? sessionStorage.getItem("token")
+      : null;
+
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+};
+
+// ============================================
+// DEFAULT FORM
+// ============================================
 
 const emptyForm = {
   title: "",
@@ -123,13 +69,28 @@ const emptyForm = {
 const inputClass =
   "mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
 
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
 function formatDate(date) {
   if (!date) return "—";
 
   const [year, month, day] = date.split("-");
+
   const months = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
   ];
 
   return `${Number(day)} ${months[Number(month) - 1]} ${year}`;
@@ -139,11 +100,16 @@ function formatTime(time) {
   if (!time) return "—";
 
   const [hours, minutes] = time.split(":").map(Number);
+
   const period = hours >= 12 ? "PM" : "AM";
   const displayHour = hours % 12 || 12;
 
   return `${displayHour}:${String(minutes).padStart(2, "0")} ${period}`;
 }
+
+// ============================================
+// STATUS BADGE
+// ============================================
 
 function StatusBadge({ status }) {
   const styles = {
@@ -163,14 +129,26 @@ function StatusBadge({ status }) {
   );
 }
 
+// ============================================
+// STAT CARD
+// ============================================
+
 function StatCard({ title, value, description, icon: Icon, color }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-medium text-slate-500">{title}</p>
-          <h2 className="mt-2 text-2xl font-bold text-slate-900">{value}</h2>
-          <p className="mt-1 text-xs text-slate-500">{description}</p>
+          <p className="text-sm font-medium text-slate-500">
+            {title}
+          </p>
+
+          <h2 className="mt-2 text-2xl font-bold text-slate-900">
+            {value}
+          </h2>
+
+          <p className="mt-1 text-xs text-slate-500">
+            {description}
+          </p>
         </div>
 
         <div className={`rounded-xl p-3 ${color}`}>
@@ -181,18 +159,93 @@ function StatCard({ title, value, description, icon: Icon, color }) {
   );
 }
 
+// ============================================
+// MAIN COMPONENT
+// ============================================
+
 export default function BatchSchedulePage() {
-  const [schedules, setSchedules] = useState(initialSchedules);
+  // ------------------------------------------
+  // STATES
+  // ------------------------------------------
+
+  const [schedules, setSchedules] = useState([]);
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [updatingId, setUpdatingId] = useState(null);
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [modeFilter, setModeFilter] = useState("All");
   const [dateFilter, setDateFilter] = useState("");
+
   const [activeTab, setActiveTab] = useState("List");
+
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [viewSchedule, setViewSchedule] = useState(null);
+
   const [form, setForm] = useState(emptyForm);
+
   const [error, setError] = useState("");
+  const [formError, setFormError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  // ------------------------------------------
+  // FETCH SCHEDULES FROM BACKEND
+  // ------------------------------------------
+
+  const fetchSchedules = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const response = await fetch(SCHEDULE_API, {
+        method: "GET",
+        headers: getAuthHeaders(),
+        cache: "no-store",
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.message || "Failed to fetch schedules"
+        );
+      }
+
+      setSchedules(
+        Array.isArray(result.data) ? result.data : []
+      );
+    } catch (err) {
+      setError(
+        err.message || "Unable to load schedules. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSchedules();
+  }, [fetchSchedules]);
+
+  // ------------------------------------------
+  // SUCCESS MESSAGE
+  // ------------------------------------------
+
+  function showSuccessMessage(message) {
+    setSuccess(message);
+
+    window.setTimeout(() => {
+      setSuccess("");
+    }, 3000);
+  }
+
+  // ------------------------------------------
+  // STATISTICS
+  // ------------------------------------------
 
   const scheduledCount = schedules.filter(
     (item) => item.status === "Scheduled"
@@ -206,76 +259,168 @@ export default function BatchSchedulePage() {
     (item) => item.status === "Cancelled"
   ).length;
 
-  const filteredSchedules = schedules
-    .filter((item) => {
-      const query = search.toLowerCase();
+  // ------------------------------------------
+  // SEARCH AND FILTER
+  // ------------------------------------------
 
-      const matchesSearch =
-        item.title.toLowerCase().includes(query) ||
-        item.batch.toLowerCase().includes(query) ||
-        item.course.toLowerCase().includes(query) ||
-        item.trainer.toLowerCase().includes(query);
+  const filteredSchedules = useMemo(() => {
+    return schedules
+      .filter((item) => {
+        const query = search.toLowerCase();
 
-      const matchesStatus =
-        statusFilter === "All" || item.status === statusFilter;
+        const matchesSearch =
+          (item.title || "").toLowerCase().includes(query) ||
+          (item.batch || "").toLowerCase().includes(query) ||
+          (item.course || "").toLowerCase().includes(query) ||
+          (item.trainer || "").toLowerCase().includes(query);
 
-      const matchesMode = modeFilter === "All" || item.mode === modeFilter;
+        const matchesStatus =
+          statusFilter === "All" ||
+          item.status === statusFilter;
 
-      const matchesDate = !dateFilter || item.date === dateFilter;
+        const matchesMode =
+          modeFilter === "All" ||
+          item.mode === modeFilter;
 
-      return matchesSearch && matchesStatus && matchesMode && matchesDate;
-    })
-    .sort((a, b) =>
-      `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`)
-    );
+        const matchesDate =
+          !dateFilter || item.date === dateFilter;
+
+        return (
+          matchesSearch &&
+          matchesStatus &&
+          matchesMode &&
+          matchesDate
+        );
+      })
+      .sort((a, b) =>
+        `${a.date} ${a.startTime}`.localeCompare(
+          `${b.date} ${b.startTime}`
+        )
+      );
+  }, [
+    schedules,
+    search,
+    statusFilter,
+    modeFilter,
+    dateFilter,
+  ]);
+
+  // ------------------------------------------
+  // OPEN ADD MODAL
+  // ------------------------------------------
 
   function openAddModal() {
     setEditingId(null);
     setForm({ ...emptyForm });
-    setError("");
+    setFormError("");
     setShowModal(true);
   }
+
+  // ------------------------------------------
+  // OPEN EDIT MODAL
+  // ------------------------------------------
 
   function openEditModal(schedule) {
-    setEditingId(schedule.id);
-    setForm({ ...schedule });
+    setEditingId(schedule._id);
+
+    setForm({
+      title: schedule.title || "",
+      batch: schedule.batch || "",
+      course: schedule.course || "",
+      trainer: schedule.trainer || "",
+      date: schedule.date || "",
+      startTime: schedule.startTime || "10:00",
+      endTime: schedule.endTime || "11:30",
+      mode: schedule.mode || "Online",
+      meetingLink: schedule.meetingLink || "",
+      location: schedule.location || "",
+      type: schedule.type || "Lecture",
+      status: schedule.status || "Scheduled",
+      notes: schedule.notes || "",
+    });
+
+    setFormError("");
     setError("");
     setShowModal(true);
   }
 
-  function handleSubmit(event) {
-    event.preventDefault();
-    setError("");
+  // ------------------------------------------
+  // CLOSE MODAL
+  // ------------------------------------------
 
+  function closeModal() {
+    setShowModal(false);
+    setEditingId(null);
+    setForm({ ...emptyForm });
+    setFormError("");
+  }
+
+  // ------------------------------------------
+  // FORM INPUT HANDLING
+  // ------------------------------------------
+
+  function handleFormChange(event) {
+    const { name, value } = event.target;
+
+    setForm((previous) => ({
+      ...previous,
+      [name]: value,
+    }));
+  }
+
+  // ------------------------------------------
+  // VALIDATE FORM
+  // ------------------------------------------
+
+  function validateForm() {
     if (
       !form.title.trim() ||
       !form.batch.trim() ||
       !form.course.trim() ||
       !form.trainer.trim() ||
-      !form.date
+      !form.date ||
+      !form.startTime ||
+      !form.endTime
     ) {
-      setError("Please complete all required fields.");
-      return;
+      setFormError("Please complete all required fields.");
+      return false;
     }
 
     if (form.endTime <= form.startTime) {
-      setError("End time must be later than start time.");
-      return;
+      setFormError(
+        "End time must be later than start time."
+      );
+      return false;
     }
 
     if (form.mode === "Online" && form.meetingLink.trim()) {
       try {
-        const url = new URL(form.meetingLink);
+        const url = new URL(form.meetingLink.trim());
 
         if (!["http:", "https:"].includes(url.protocol)) {
-          setError("Please enter a valid meeting URL.");
-          return;
+          setFormError("Please enter a valid meeting URL.");
+          return false;
         }
       } catch {
-        setError("Please enter a valid meeting URL.");
-        return;
+        setFormError("Please enter a valid meeting URL.");
+        return false;
       }
     }
+
+    return true;
+  }
+
+  // ------------------------------------------
+  // CREATE / UPDATE SCHEDULE
+  // ------------------------------------------
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+
+    setFormError("");
+    setError("");
+
+    if (!validateForm()) return;
 
     const normalizedForm = {
       ...form,
@@ -288,47 +433,160 @@ export default function BatchSchedulePage() {
       notes: form.notes.trim(),
     };
 
-    if (editingId !== null) {
-      setSchedules((previous) =>
-        previous.map((item) =>
-          item.id === editingId ? { ...item, ...normalizedForm } : item
-        )
+    try {
+      setSaving(true);
+
+      const isEditing = Boolean(editingId);
+
+      const url = isEditing
+        ? `${SCHEDULE_API}/${editingId}`
+        : SCHEDULE_API;
+
+      const response = await fetch(url, {
+        method: isEditing ? "PATCH" : "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(normalizedForm),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.message ||
+            `Failed to ${isEditing ? "update" : "create"} schedule`
+        );
+      }
+
+      // Refresh data from MongoDB
+      await fetchSchedules();
+
+      closeModal();
+
+      showSuccessMessage(
+        isEditing
+          ? "Schedule updated successfully."
+          : "Schedule created successfully."
       );
-    } else {
-      setSchedules((previous) => [
-        ...previous,
-        { ...normalizedForm, id: Date.now() },
-      ]);
+    } catch (err) {
+      setFormError(
+        err.message || "Something went wrong while saving."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ------------------------------------------
+  // DELETE SCHEDULE
+  // ------------------------------------------
+
+  async function deleteSchedule(id) {
+    if (!window.confirm("Delete this schedule permanently?")) {
+      return;
     }
 
-    setShowModal(false);
-    setForm({ ...emptyForm });
-    setEditingId(null);
+    try {
+      setDeletingId(id);
+      setError("");
+
+      const response = await fetch(
+        `${SCHEDULE_API}/${id}`,
+        {
+          method: "DELETE",
+          headers: getAuthHeaders(),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.message || "Failed to delete schedule"
+        );
+      }
+
+      setSchedules((previous) =>
+        previous.filter((item) => item._id !== id)
+      );
+
+      if (viewSchedule?._id === id) {
+        setViewSchedule(null);
+      }
+
+      showSuccessMessage("Schedule deleted successfully.");
+    } catch (err) {
+      setError(
+        err.message || "Unable to delete schedule."
+      );
+    } finally {
+      setDeletingId(null);
+    }
   }
 
-  function deleteSchedule(id) {
-    if (!window.confirm("Delete this schedule permanently?")) return;
+  // ------------------------------------------
+  // UPDATE SCHEDULE STATUS
+  // ------------------------------------------
 
-    setSchedules((previous) =>
-      previous.filter((item) => item.id !== id)
-    );
+  async function updateStatus(schedule, status) {
+    try {
+      setUpdatingId(schedule._id);
+      setError("");
 
-    if (viewSchedule?.id === id) setViewSchedule(null);
+      const response = await fetch(
+        `${SCHEDULE_API}/${schedule._id}/status`,
+        {
+          method: "PATCH",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ status }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.message || "Failed to update status"
+        );
+      }
+
+      const updatedStatus = result.data?.status || status;
+
+      setSchedules((previous) =>
+        previous.map((item) =>
+          item._id === schedule._id
+            ? { ...item, status: updatedStatus }
+            : item
+        )
+      );
+
+      setViewSchedule((previous) =>
+        previous?._id === schedule._id
+          ? { ...previous, status: updatedStatus }
+          : previous
+      );
+
+      showSuccessMessage(
+        `Schedule marked as ${updatedStatus}.`
+      );
+    } catch (err) {
+      setError(
+        err.message || "Unable to update schedule status."
+      );
+    } finally {
+      setUpdatingId(null);
+    }
   }
 
-  function updateStatus(schedule, status) {
-    setSchedules((previous) =>
-      previous.map((item) =>
-        item.id === schedule.id ? { ...item, status } : item
-      )
-    );
-
-    setViewSchedule((previous) =>
-      previous?.id === schedule.id ? { ...previous, status } : previous
-    );
-  }
+  // ------------------------------------------
+  // CSV EXPORT
+  // ------------------------------------------
 
   function exportCSV() {
+    if (filteredSchedules.length === 0) {
+      alert("No schedules available to export.");
+      return;
+    }
+
     const headers = [
       "Class",
       "Batch",
@@ -369,17 +627,28 @@ export default function BatchSchedulePage() {
       .join("\r\n");
 
     const url = URL.createObjectURL(
-      new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" })
+      new Blob(["\uFEFF" + csv], {
+        type: "text/csv;charset=utf-8;",
+      })
     );
 
     const anchor = document.createElement("a");
+
     anchor.href = url;
     anchor.download = "appwars-batch-schedule.csv";
+
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 1000);
   }
+
+  // ------------------------------------------
+  // RESET FILTERS
+  // ------------------------------------------
 
   function resetFilters() {
     setSearch("");
@@ -388,10 +657,35 @@ export default function BatchSchedulePage() {
     setDateFilter("");
   }
 
+  // ------------------------------------------
+  // LOADING SCREEN
+  // ------------------------------------------
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[70vh] flex-col items-center justify-center bg-slate-50">
+        <RefreshCw
+          size={35}
+          className="animate-spin text-blue-700"
+        />
+
+        <p className="mt-4 text-sm font-medium text-slate-600">
+          Loading batch schedules...
+        </p>
+      </div>
+    );
+  }
+
+  // ============================================
+  // MAIN UI
+  // ============================================
+
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
       <div className="mx-auto max-w-7xl space-y-6">
-        {/* Page heading */}
+
+        {/* PAGE HEADING */}
+
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div>
             <div className="flex items-center gap-2 text-sm font-medium text-blue-700">
@@ -408,16 +702,55 @@ export default function BatchSchedulePage() {
             </p>
           </div>
 
-          <button
-            onClick={openAddModal}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-800"
-          >
-            <Plus size={18} />
-            Schedule a Class
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={fetchSchedules}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <RefreshCw size={17} />
+              Refresh
+            </button>
+
+            <button
+              onClick={openAddModal}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-800"
+            >
+              <Plus size={18} />
+              Schedule a Class
+            </button>
+          </div>
         </div>
 
-        {/* Summary cards */}
+        {/* SUCCESS MESSAGE */}
+
+        {success && (
+          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-700">
+            <CircleCheck size={18} />
+            {success}
+          </div>
+        )}
+
+        {/* ERROR MESSAGE */}
+
+        {error && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <div className="flex items-center gap-2">
+              <AlertCircle size={18} />
+              {error}
+            </div>
+
+            <button
+              onClick={() => setError("")}
+              className="rounded p-1 hover:bg-red-100"
+              aria-label="Dismiss error"
+            >
+              <X size={17} />
+            </button>
+          </div>
+        )}
+
+        {/* STATISTICS */}
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             title="Total Classes"
@@ -452,7 +785,8 @@ export default function BatchSchedulePage() {
           />
         </div>
 
-        {/* Tabs */}
+        {/* TABS */}
+
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3">
           <div className="flex gap-2">
             {["List", "Calendar"].map((tab) => (
@@ -478,7 +812,8 @@ export default function BatchSchedulePage() {
           </button>
         </div>
 
-        {/* Filters */}
+        {/* FILTERS */}
+
         <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
           <div className="mb-4 flex items-center gap-2 font-semibold text-slate-800">
             <Filter size={17} />
@@ -491,6 +826,7 @@ export default function BatchSchedulePage() {
                 size={18}
                 className="absolute left-3 top-3 text-slate-400"
               />
+
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
@@ -501,7 +837,9 @@ export default function BatchSchedulePage() {
 
             <select
               value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
+              onChange={(event) =>
+                setStatusFilter(event.target.value)
+              }
               className={inputClass}
             >
               <option value="All">All Statuses</option>
@@ -512,7 +850,9 @@ export default function BatchSchedulePage() {
 
             <select
               value={modeFilter}
-              onChange={(event) => setModeFilter(event.target.value)}
+              onChange={(event) =>
+                setModeFilter(event.target.value)
+              }
               className={inputClass}
             >
               <option value="All">All Modes</option>
@@ -523,7 +863,9 @@ export default function BatchSchedulePage() {
             <input
               type="date"
               value={dateFilter}
-              onChange={(event) => setDateFilter(event.target.value)}
+              onChange={(event) =>
+                setDateFilter(event.target.value)
+              }
               className={inputClass}
               aria-label="Filter by class date"
             />
@@ -539,12 +881,48 @@ export default function BatchSchedulePage() {
           </div>
         </div>
 
-        {/* List view */}
+        {/* LIST / CALENDAR HEADER */}
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-slate-500">
+            Showing{" "}
+            <span className="font-semibold text-slate-800">
+              {filteredSchedules.length}
+            </span>{" "}
+            of{" "}
+            <span className="font-semibold text-slate-800">
+              {schedules.length}
+            </span>{" "}
+            schedules
+          </p>
+
+          <div className="flex gap-2">
+            {["List", "Calendar"].map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+                  activeTab === tab
+                    ? "bg-blue-700 text-white"
+                    : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {tab === "List" ? "List View" : "Calendar View"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* LIST VIEW */}
+
         {activeTab === "List" && (
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="flex flex-col justify-between gap-2 border-b border-slate-100 p-5 sm:flex-row sm:items-center">
               <div>
-                <h2 className="font-bold text-slate-900">Class Schedule</h2>
+                <h2 className="font-bold text-slate-900">
+                  Class Schedule
+                </h2>
+
                 <p className="mt-1 text-sm text-slate-500">
                   {filteredSchedules.length} session(s) found
                 </p>
@@ -567,7 +945,10 @@ export default function BatchSchedulePage() {
 
                 <tbody className="divide-y divide-slate-100">
                   {filteredSchedules.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-50">
+                    <tr
+                      key={item._id}
+                      className="hover:bg-slate-50"
+                    >
                       <td className="px-5 py-4">
                         <button
                           onClick={() => setViewSchedule(item)}
@@ -575,6 +956,7 @@ export default function BatchSchedulePage() {
                         >
                           {item.title}
                         </button>
+
                         <p className="mt-1 text-xs text-slate-500">
                           {item.type}
                         </p>
@@ -584,6 +966,7 @@ export default function BatchSchedulePage() {
                         <p className="font-medium text-slate-800">
                           {item.batch}
                         </p>
+
                         <p className="mt-1 text-xs text-slate-500">
                           {item.course}
                         </p>
@@ -593,8 +976,10 @@ export default function BatchSchedulePage() {
                         <p className="font-medium text-slate-800">
                           {formatDate(item.date)}
                         </p>
+
                         <p className="mt-1 text-xs text-slate-500">
-                          {formatTime(item.startTime)} – {formatTime(item.endTime)}
+                          {formatTime(item.startTime)} –{" "}
+                          {formatTime(item.endTime)}
                         </p>
                       </td>
 
@@ -609,6 +994,7 @@ export default function BatchSchedulePage() {
                           ) : (
                             <MapPin size={15} />
                           )}
+
                           {item.mode}
                         </span>
                       </td>
@@ -636,11 +1022,16 @@ export default function BatchSchedulePage() {
                           </button>
 
                           <button
-                            onClick={() => deleteSchedule(item.id)}
+                            onClick={() => deleteSchedule(item._id)}
+                            disabled={deletingId === item._id}
                             title="Delete schedule"
-                            className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-700"
+                            className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
                           >
-                            <Trash2 size={17} />
+                            {deletingId === item._id ? (
+                              <RefreshCw size={17} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={17} />
+                            )}
                           </button>
                         </div>
                       </td>
@@ -653,8 +1044,8 @@ export default function BatchSchedulePage() {
                         colSpan={7}
                         className="px-5 py-12 text-center text-slate-500"
                       >
-                        No classes match your filters. Try changing your search
-                        or schedule a new class.
+                        No classes match your filters. Try changing your
+                        search or schedule a new class.
                       </td>
                     </tr>
                   )}
@@ -664,14 +1055,18 @@ export default function BatchSchedulePage() {
           </div>
         )}
 
-        {/* Calendar-style grouped view */}
+        {/* CALENDAR VIEW */}
+
         {activeTab === "Calendar" && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
             <div className="mb-5">
-              <h2 className="font-bold text-slate-900">Schedule by Date</h2>
+              <h2 className="font-bold text-slate-900">
+                Schedule by Date
+              </h2>
+
               <p className="mt-1 text-sm text-slate-500">
-                Sessions are grouped by date. Use the date filter above to
-                focus on a particular day.
+                Sessions are grouped by date. Use the date filter above
+                to focus on a particular day.
               </p>
             </div>
 
@@ -686,7 +1081,11 @@ export default function BatchSchedulePage() {
                   .map((date) => (
                     <div key={date}>
                       <div className="mb-3 flex items-center gap-2 border-b border-slate-100 pb-2">
-                        <CalendarDays size={18} className="text-blue-700" />
+                        <CalendarDays
+                          size={18}
+                          className="text-blue-700"
+                        />
+
                         <h3 className="font-bold text-slate-800">
                           {formatDate(date)}
                         </h3>
@@ -697,7 +1096,7 @@ export default function BatchSchedulePage() {
                           .filter((item) => item.date === date)
                           .map((item) => (
                             <div
-                              key={item.id}
+                              key={item._id}
                               className="rounded-xl border border-slate-200 p-4 transition hover:border-blue-200 hover:bg-blue-50/30"
                             >
                               <div className="flex flex-col justify-between gap-3 sm:flex-row">
@@ -705,20 +1104,32 @@ export default function BatchSchedulePage() {
                                   <p className="font-semibold text-slate-900">
                                     {item.title}
                                   </p>
+
                                   <p className="mt-1 text-sm text-slate-500">
                                     {item.batch} · {item.course}
                                   </p>
                                 </div>
+
                                 <StatusBadge status={item.status} />
                               </div>
 
                               <div className="mt-4 grid grid-cols-1 gap-2 text-sm text-slate-600 sm:grid-cols-2">
                                 <p className="flex items-center gap-2">
-                                  <Clock3 size={16} className="text-blue-700" />
-                                  {formatTime(item.startTime)} – {formatTime(item.endTime)}
+                                  <Clock3
+                                    size={16}
+                                    className="text-blue-700"
+                                  />
+
+                                  {formatTime(item.startTime)} –{" "}
+                                  {formatTime(item.endTime)}
                                 </p>
+
                                 <p className="flex items-center gap-2">
-                                  <Users size={16} className="text-blue-700" />
+                                  <Users
+                                    size={16}
+                                    className="text-blue-700"
+                                  />
+
                                   {item.trainer}
                                 </p>
                               </div>
@@ -730,6 +1141,7 @@ export default function BatchSchedulePage() {
                                 >
                                   View
                                 </button>
+
                                 <button
                                   onClick={() => openEditModal(item)}
                                   className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-50"
@@ -747,22 +1159,29 @@ export default function BatchSchedulePage() {
           </div>
         )}
 
-        {/* Add/Edit modal */}
+        {/* ======================================
+            ADD / EDIT MODAL
+        ====================================== */}
+
         {showModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3 sm:p-5">
             <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+
               <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4 sm:px-6">
                 <div>
                   <h2 className="text-lg font-bold text-slate-900">
-                    {editingId !== null ? "Edit Class Schedule" : "Schedule a New Class"}
+                    {editingId
+                      ? "Edit Class Schedule"
+                      : "Schedule a New Class"}
                   </h2>
+
                   <p className="mt-1 text-sm text-slate-500">
                     Enter the session details below.
                   </p>
                 </div>
 
                 <button
-                  onClick={() => setShowModal(false)}
+                  onClick={closeModal}
                   className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
                   aria-label="Close modal"
                 >
@@ -770,14 +1189,19 @@ export default function BatchSchedulePage() {
                 </button>
               </div>
 
-              <form onSubmit={handleSubmit} className="space-y-5 p-5 sm:p-6">
+              <form
+                onSubmit={handleSubmit}
+                className="space-y-5 p-5 sm:p-6"
+              >
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+
                   <label className="text-sm font-semibold text-slate-700">
                     Class Title *
                     <input
                       required
+                      name="title"
                       value={form.title}
-                      onChange={(e) => setForm({ ...form, title: e.target.value })}
+                      onChange={handleFormChange}
                       className={inputClass}
                       placeholder="e.g. React Hooks"
                     />
@@ -787,8 +1211,9 @@ export default function BatchSchedulePage() {
                     Batch Name *
                     <input
                       required
+                      name="batch"
                       value={form.batch}
-                      onChange={(e) => setForm({ ...form, batch: e.target.value })}
+                      onChange={handleFormChange}
                       className={inputClass}
                       placeholder="e.g. MERN-2026-A"
                     />
@@ -798,8 +1223,9 @@ export default function BatchSchedulePage() {
                     Course *
                     <input
                       required
+                      name="course"
                       value={form.course}
-                      onChange={(e) => setForm({ ...form, course: e.target.value })}
+                      onChange={handleFormChange}
                       className={inputClass}
                       placeholder="e.g. MERN Stack Development"
                     />
@@ -809,8 +1235,9 @@ export default function BatchSchedulePage() {
                     Trainer *
                     <input
                       required
+                      name="trainer"
                       value={form.trainer}
-                      onChange={(e) => setForm({ ...form, trainer: e.target.value })}
+                      onChange={handleFormChange}
                       className={inputClass}
                       placeholder="Trainer name"
                     />
@@ -821,8 +1248,9 @@ export default function BatchSchedulePage() {
                     <input
                       required
                       type="date"
+                      name="date"
                       value={form.date}
-                      onChange={(e) => setForm({ ...form, date: e.target.value })}
+                      onChange={handleFormChange}
                       className={inputClass}
                     />
                   </label>
@@ -830,8 +1258,9 @@ export default function BatchSchedulePage() {
                   <label className="text-sm font-semibold text-slate-700">
                     Class Type
                     <select
+                      name="type"
                       value={form.type}
-                      onChange={(e) => setForm({ ...form, type: e.target.value })}
+                      onChange={handleFormChange}
                       className={inputClass}
                     >
                       <option>Lecture</option>
@@ -847,8 +1276,9 @@ export default function BatchSchedulePage() {
                     <input
                       required
                       type="time"
+                      name="startTime"
                       value={form.startTime}
-                      onChange={(e) => setForm({ ...form, startTime: e.target.value })}
+                      onChange={handleFormChange}
                       className={inputClass}
                     />
                   </label>
@@ -858,8 +1288,9 @@ export default function BatchSchedulePage() {
                     <input
                       required
                       type="time"
+                      name="endTime"
                       value={form.endTime}
-                      onChange={(e) => setForm({ ...form, endTime: e.target.value })}
+                      onChange={handleFormChange}
                       className={inputClass}
                     />
                   </label>
@@ -867,15 +1298,24 @@ export default function BatchSchedulePage() {
                   <label className="text-sm font-semibold text-slate-700">
                     Class Mode
                     <select
+                      name="mode"
                       value={form.mode}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          mode: e.target.value,
-                          location: e.target.value === "Online" ? "" : form.location,
-                          meetingLink: e.target.value === "Offline" ? "" : form.meetingLink,
-                        })
-                      }
+                      onChange={(event) => {
+                        const mode = event.target.value;
+
+                        setForm((previous) => ({
+                          ...previous,
+                          mode,
+                          location:
+                            mode === "Online"
+                              ? ""
+                              : previous.location,
+                          meetingLink:
+                            mode === "Offline"
+                              ? ""
+                              : previous.meetingLink,
+                        }));
+                      }}
                       className={inputClass}
                     >
                       <option>Online</option>
@@ -886,8 +1326,9 @@ export default function BatchSchedulePage() {
                   <label className="text-sm font-semibold text-slate-700">
                     Status
                     <select
+                      name="status"
                       value={form.status}
-                      onChange={(e) => setForm({ ...form, status: e.target.value })}
+                      onChange={handleFormChange}
                       className={inputClass}
                     >
                       <option>Scheduled</option>
@@ -901,8 +1342,9 @@ export default function BatchSchedulePage() {
                       Meeting Link
                       <input
                         type="url"
+                        name="meetingLink"
                         value={form.meetingLink}
-                        onChange={(e) => setForm({ ...form, meetingLink: e.target.value })}
+                        onChange={handleFormChange}
                         className={inputClass}
                         placeholder="https://meet.google.com/..."
                       />
@@ -911,8 +1353,9 @@ export default function BatchSchedulePage() {
                     <label className="text-sm font-semibold text-slate-700 sm:col-span-2">
                       Classroom / Location
                       <input
+                        name="location"
                         value={form.location}
-                        onChange={(e) => setForm({ ...form, location: e.target.value })}
+                        onChange={handleFormChange}
                         className={inputClass}
                         placeholder="e.g. Computer Lab 1"
                       />
@@ -923,34 +1366,51 @@ export default function BatchSchedulePage() {
                     Session Notes
                     <textarea
                       rows={3}
+                      name="notes"
                       value={form.notes}
-                      onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                      onChange={handleFormChange}
                       className={inputClass}
                       placeholder="Topics, instructions or preparation details..."
                     />
                   </label>
                 </div>
 
-                {error && (
-                  <p className="rounded-lg bg-red-50 p-3 text-sm font-medium text-red-700">
-                    {error}
-                  </p>
+                {/* FORM ERROR */}
+
+                {formError && (
+                  <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700">
+                    <AlertCircle size={17} />
+                    {formError}
+                  </div>
                 )}
 
                 <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end">
                   <button
                     type="button"
-                    onClick={() => setShowModal(false)}
-                    className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    onClick={closeModal}
+                    disabled={saving}
+                    className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                   >
                     Cancel
                   </button>
 
                   <button
                     type="submit"
-                    className="rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
+                    disabled={saving}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {editingId !== null ? "Save Changes" : "Create Schedule"}
+                    {saving && (
+                      <RefreshCw
+                        size={16}
+                        className="animate-spin"
+                      />
+                    )}
+
+                    {saving
+                      ? "Saving..."
+                      : editingId
+                      ? "Save Changes"
+                      : "Create Schedule"}
                   </button>
                 </div>
               </form>
@@ -958,15 +1418,20 @@ export default function BatchSchedulePage() {
           </div>
         )}
 
-        {/* View details modal */}
+        {/* ======================================
+            VIEW DETAILS MODAL
+        ====================================== */}
+
         {viewSchedule && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3 sm:p-5">
             <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+
               <div className="flex items-center justify-between border-b border-slate-200 p-5">
                 <div>
                   <h2 className="text-lg font-bold text-slate-900">
                     Class Details
                   </h2>
+
                   <p className="mt-1 text-sm text-slate-500">
                     Review the session information.
                   </p>
@@ -982,11 +1447,14 @@ export default function BatchSchedulePage() {
               </div>
 
               <div className="space-y-4 p-5">
+
                 <div>
                   <StatusBadge status={viewSchedule.status} />
+
                   <h3 className="mt-3 text-xl font-bold text-slate-900">
                     {viewSchedule.title}
                   </h3>
+
                   <p className="mt-1 text-sm text-slate-500">
                     {viewSchedule.course}
                   </p>
@@ -1004,10 +1472,14 @@ export default function BatchSchedulePage() {
                     ["Type", viewSchedule.type],
                     ["Mode", viewSchedule.mode],
                   ].map(([label, value]) => (
-                    <div key={label} className="rounded-xl bg-slate-50 p-3">
+                    <div
+                      key={label}
+                      className="rounded-xl bg-slate-50 p-3"
+                    >
                       <p className="text-xs font-medium text-slate-500">
                         {label}
                       </p>
+
                       <p className="mt-1 break-words text-sm font-semibold text-slate-800">
                         {value || "—"}
                       </p>
@@ -1015,73 +1487,89 @@ export default function BatchSchedulePage() {
                   ))}
                 </div>
 
-                {viewSchedule.mode === "Online" && viewSchedule.meetingLink && (
-                  <a
-                    href={viewSchedule.meetingLink}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-2 text-sm font-semibold text-blue-700 hover:underline"
-                  >
-                    <Video size={17} />
-                    Open Meeting Link
-                    <ExternalLink size={14} />
-                  </a>
-                )}
+                {viewSchedule.mode === "Online" &&
+                  viewSchedule.meetingLink && (
+                    <a
+                      href={viewSchedule.meetingLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 text-sm font-semibold text-blue-700 hover:underline"
+                    >
+                      <Video size={17} />
+                      Open Meeting Link
+                      <ExternalLink size={14} />
+                    </a>
+                  )}
 
-                {viewSchedule.mode === "Offline" && viewSchedule.location && (
-                  <p className="flex items-center gap-2 text-sm text-slate-600">
-                    <MapPin size={17} />
-                    {viewSchedule.location}
-                  </p>
-                )}
+                {viewSchedule.mode === "Offline" &&
+                  viewSchedule.location && (
+                    <p className="flex items-center gap-2 text-sm text-slate-600">
+                      <MapPin size={17} />
+                      {viewSchedule.location}
+                    </p>
+                  )}
 
                 <div className="rounded-xl border border-slate-200 p-4">
                   <p className="text-sm font-semibold text-slate-800">
                     Session Notes
                   </p>
+
                   <p className="mt-2 whitespace-pre-wrap text-sm text-slate-600">
                     {viewSchedule.notes || "No notes added."}
                   </p>
                 </div>
 
-                {viewSchedule.status === "Scheduled" && (
-                  <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
+                {/* STATUS ACTIONS */}
+
+                <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
+                  {viewSchedule.status !== "Completed" && (
                     <button
-                      onClick={() => updateStatus(viewSchedule, "Completed")}
-                      className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
+                      disabled={updatingId === viewSchedule._id}
+                      onClick={() =>
+                        updateStatus(viewSchedule, "Completed")
+                      }
+                      className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                     >
                       <CircleCheck size={16} />
                       Mark Completed
                     </button>
+                  )}
 
+                  {viewSchedule.status !== "Cancelled" && (
                     <button
+                      disabled={updatingId === viewSchedule._id}
                       onClick={() => {
                         if (window.confirm("Cancel this class?")) {
                           updateStatus(viewSchedule, "Cancelled");
                         }
                       }}
-                      className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-50"
+                      className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
                     >
                       <CircleX size={16} />
                       Cancel Class
                     </button>
-                  </div>
-                )}
+                  )}
 
-                {viewSchedule.status === "Cancelled" && (
-                  <button
-                    onClick={() => updateStatus(viewSchedule, "Scheduled")}
-                    className="rounded-lg border border-blue-200 px-4 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-50"
-                  >
-                    Restore Schedule
-                  </button>
-                )}
+                  {viewSchedule.status !== "Scheduled" && (
+                    <button
+                      disabled={updatingId === viewSchedule._id}
+                      onClick={() =>
+                        updateStatus(viewSchedule, "Scheduled")
+                      }
+                      className="rounded-lg border border-blue-200 px-4 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                    >
+                      Restore Schedule
+                    </button>
+                  )}
+                </div>
 
                 <div className="flex justify-end border-t border-slate-100 pt-4">
                   <button
                     onClick={() => {
+                      const selected = viewSchedule;
+
                       setViewSchedule(null);
-                      openEditModal(viewSchedule);
+                      openEditModal(selected);
                     }}
                     className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
                   >
@@ -1093,6 +1581,7 @@ export default function BatchSchedulePage() {
             </div>
           </div>
         )}
+
       </div>
     </div>
   );
