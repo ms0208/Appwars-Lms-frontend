@@ -352,7 +352,7 @@ export const createUser = async (req, res, next) => {
       batch = "",
       phone = "",
     } = req.body ?? {};
-
+    
     if (
       typeof name !== "string" ||
       typeof email !== "string" ||
