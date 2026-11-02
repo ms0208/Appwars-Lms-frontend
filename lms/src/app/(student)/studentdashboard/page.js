@@ -1,13 +1,16 @@
-
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+
 import {
   X,
   CalendarDays,
   Users,
   Clock3,
   RefreshCw,
+  BookOpen,
+  CheckCircle2,
+  FileText,
 } from "lucide-react";
 
 import StatCard from "@/src/components/student/StatCard";
@@ -21,37 +24,93 @@ const API_URL = (
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
 ).replace(/\/$/, "");
 
-const DEFAULT_STATS = [
-  {
-    title: "Overall progress",
-    value: "—",
-    subtitle: "No data available",
-    progress: 0,
-  },
-  {
-    title: "Attendance",
-    value: "—",
-    subtitle: "No data available",
-  },
-  {
-    title: "Pending assignments",
-    value: "—",
-    subtitle: "No data available",
-  },
-  {
-    title: "Next live class",
-    value: "—",
-    subtitle: "No upcoming class",
-  },
-];
+// ==========================================
+// RESPONSE HELPERS
+// ==========================================
 
 function getUser(data) {
-  return data.user || data.data?.user || data.data || data;
+  return (
+    data?.user ||
+    data?.data?.user ||
+    data?.data?.data?.user ||
+    data?.data ||
+    data
+  );
 }
 
 function getDashboard(data) {
-  return data.dashboard || data.data?.dashboard || data.data || data;
+  return (
+    data?.dashboard ||
+    data?.data?.dashboard ||
+    data?.data?.data?.dashboard ||
+    data?.data ||
+    data
+  );
 }
+
+function isObject(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  );
+}
+
+// Extract batch details from different possible API response structures.
+function getBatchDetails(...responses) {
+  for (const response of responses) {
+    if (!isObject(response)) continue;
+
+    const user = getUser(response);
+    const dashboard = getDashboard(response);
+
+    const candidates = [
+      response.batchDetails,
+      response.data?.batchDetails,
+      response.data?.data?.batchDetails,
+
+      response.dashboard?.batchDetails,
+      response.data?.dashboard?.batchDetails,
+      response.data?.data?.dashboard?.batchDetails,
+
+      response.user?.batchDetails,
+      response.data?.user?.batchDetails,
+      response.data?.data?.user?.batchDetails,
+
+      dashboard?.batchDetails,
+      dashboard?.batch,
+      dashboard?.student?.batch,
+
+      user?.batchDetails,
+      user?.batch,
+      user?.student?.batch,
+
+      response.batch,
+      response.data?.batch,
+      response.data?.data?.batch,
+    ];
+
+    for (const candidate of candidates) {
+      if (isObject(candidate)) {
+        // Some APIs return batch inside another batch property.
+        if (isObject(candidate.batch)) {
+          return {
+            ...candidate,
+            ...candidate.batch,
+          };
+        }
+
+        return candidate;
+      }
+    }
+  }
+
+  return {};
+}
+
+// ==========================================
+// DATE FORMATTER
+// ==========================================
 
 function formatDate(date) {
   if (!date) return "Not available";
@@ -69,15 +128,92 @@ function formatDate(date) {
   });
 }
 
+// ==========================================
+// STATUS STYLING
+// ==========================================
+
+function getStatusClass(status) {
+  const normalizedStatus = String(status || "").toLowerCase();
+
+  if (
+    normalizedStatus === "running" ||
+    normalizedStatus === "active"
+  ) {
+    return "bg-green-100 text-green-700";
+  }
+
+  if (normalizedStatus === "completed") {
+    return "bg-blue-100 text-blue-700";
+  }
+
+  if (normalizedStatus === "upcoming") {
+    return "bg-orange-100 text-orange-700";
+  }
+
+  if (
+    normalizedStatus === "inactive" ||
+    normalizedStatus === "cancelled"
+  ) {
+    return "bg-red-100 text-red-700";
+  }
+
+  return "bg-slate-100 text-slate-700";
+}
+
+// ==========================================
+// BATCH INFORMATION CARD
+// ==========================================
+
+function BatchInfoCard({
+  icon: Icon,
+  title,
+  value,
+  subtitle,
+  iconBackground = "bg-blue-50",
+  iconColor = "text-blue-600",
+}) {
+  return (
+    <div className="flex min-w-0 items-start gap-4 rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
+
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-slate-700 sm:text-base">
+          {title}
+        </p>
+
+        <p className="mt-2 break-words text-lg font-bold text-[#102e60]">
+          {value ?? "Not available"}
+        </p>
+
+        {subtitle && (
+          <p className="mt-1 text-xs text-slate-500">
+            {subtitle}
+          </p>
+        )}
+      </div>
+
+    </div>
+  );
+}
+
+// ==========================================
+// MAIN STUDENT DASHBOARD
+// ==========================================
+
 export default function DashboardPage() {
   const [student, setStudent] = useState(null);
   const [dashboard, setDashboard] = useState(null);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
   const [showBatchDetails, setShowBatchDetails] = useState(false);
+
+  // ==========================================
+  // LOAD STUDENT PROFILE AND DASHBOARD
+  // ==========================================
 
   const loadDashboard = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -89,9 +225,12 @@ export default function DashboardPage() {
     setError("");
 
     try {
+      // Get authentication token.
       const token =
         typeof window !== "undefined"
-          ? sessionStorage.getItem("token")
+          ? sessionStorage.getItem("token") ||
+            localStorage.getItem("appwars_token") ||
+            localStorage.getItem("token")
           : null;
 
       if (!token) {
@@ -105,7 +244,10 @@ export default function DashboardPage() {
         "Content-Type": "application/json",
       };
 
-      // Fetch the currently authenticated user.
+      // ==========================================
+      // FETCH STUDENT PROFILE
+      // ==========================================
+
       const profileResponse = await fetch(
         `${API_URL}/api/student/profile`,
         {
@@ -129,28 +271,30 @@ export default function DashboardPage() {
 
       const user = getUser(profileData);
 
-      if (!user || typeof user !== "object" || !user.name) {
+      if (
+        !user ||
+        typeof user !== "object" ||
+        !user.name
+      ) {
         throw new Error(
           "The server did not return valid student profile data."
         );
       }
 
-      if (user.role && user.role.toLowerCase() !== "student") {
+      if (
+        user.role &&
+        String(user.role).toLowerCase() !== "student"
+      ) {
         throw new Error(
           "This dashboard is available only to student accounts."
         );
       }
 
-      setStudent({
-        id: user.userId || user.id || user._id || "",
-        name: user.name || "Student",
-        email: user.email || "",
-        role: user.role || "Student",
-        batch: user.batch || "",
-      });
+      // ==========================================
+      // FETCH DASHBOARD DATA
+      // ==========================================
 
-      // Fetch student-specific dashboard statistics and batch details.
-      // This endpoint must be implemented in your backend.
+      // Your existing implementation uses the same profile endpoint.
       const dashboardResponse = await fetch(
         `${API_URL}/api/student/profile`,
         {
@@ -180,12 +324,69 @@ export default function DashboardPage() {
         throw new Error(
           dashboardData.message ||
             dashboardData.error ||
-            "Student profile loaded, but dashboard statistics could not be fetched. Check the student dashboard API."
+            "Unable to fetch student dashboard data."
         );
       }
 
-      setDashboard(getDashboard(dashboardData));
+      const dashboardResult = getDashboard(dashboardData);
+
+      // ==========================================
+      // EXTRACT COMPLETE BATCH OBJECT
+      // ==========================================
+
+      const completeBatch = getBatchDetails(
+        profileData,
+        dashboardData,
+        user,
+        dashboardResult
+      );
+
+      // Preserve the batch object instead of storing only its name.
+      const studentBatch = isObject(user.batch)
+        ? user.batch.batch || user.batch.name
+        : user.batch;
+
+      setStudent({
+        id: user.userId || user.id || user._id || "",
+        name: user.name || "Student",
+        email: user.email || "",
+        role: user.role || "Student",
+
+        batch:
+          completeBatch.batch ||
+          completeBatch.name ||
+          studentBatch ||
+          "Not assigned",
+      });
+
+      // Merge batch details into dashboard state.
+      setDashboard({
+        ...dashboardResult,
+        batchDetails: completeBatch,
+      });
+
+      // ==========================================
+      // DEBUG LOGS
+      // ==========================================
+
+      console.log(
+        "STUDENT PROFILE RESPONSE:",
+        profileData
+      );
+
+      console.log(
+        "STUDENT DASHBOARD RESPONSE:",
+        dashboardData
+      );
+
+      console.log(
+        "EXTRACTED BATCH DETAILS:",
+        completeBatch
+      );
+
     } catch (err) {
+      console.error("Student dashboard error:", err);
+
       setError(
         err.message ||
           "Unable to connect to the backend. Check your API URL and server."
@@ -196,9 +397,17 @@ export default function DashboardPage() {
     }
   }, []);
 
+  // ==========================================
+  // INITIAL LOAD
+  // ==========================================
+
   useEffect(() => {
     loadDashboard();
   }, [loadDashboard]);
+
+  // ==========================================
+  // JOIN LIVE CLASS
+  // ==========================================
 
   const handleJoin = (className) => {
     setNotice("");
@@ -211,6 +420,7 @@ export default function DashboardPage() {
       setNotice(
         `${className}: the meeting link is not available yet. Please contact your trainer.`
       );
+
       return;
     }
 
@@ -221,11 +431,22 @@ export default function DashboardPage() {
         throw new Error("Invalid meeting URL.");
       }
 
-      window.open(url.href, "_blank", "noopener,noreferrer");
+      window.open(
+        url.href,
+        "_blank",
+        "noopener,noreferrer"
+      );
+
     } catch {
-      setNotice("The meeting URL provided by the server is invalid.");
+      setNotice(
+        "The meeting URL provided by the server is invalid."
+      );
     }
   };
+
+  // ==========================================
+  // DASHBOARD STATISTICS
+  // ==========================================
 
   const overallProgress = Number(
     dashboard?.overallProgress ?? dashboard?.progress
@@ -267,7 +488,8 @@ export default function DashboardPage() {
         ? `${attendancePercentage}%`
         : "—",
       subtitle:
-        attendanceAttended != null && attendanceTotal != null
+        attendanceAttended != null &&
+        attendanceTotal != null
           ? `${attendanceAttended} of ${attendanceTotal} classes`
           : "Attendance summary",
     },
@@ -284,35 +506,72 @@ export default function DashboardPage() {
       value: nextLiveClass?.date
         ? formatDate(nextLiveClass.date)
         : nextLiveClass?.time || "—",
-      subtitle: nextLiveClass?.title || "No upcoming class",
+      subtitle:
+        nextLiveClass?.title || "No upcoming class",
     },
   ];
 
+  // ==========================================
+  // COMPLETE BATCH INFORMATION
+  // ==========================================
+
   const batchDetails = dashboard?.batchDetails || {};
 
-  const batchName = batchDetails.name || student?.batch || "Not assigned";
+  const batchName =
+    batchDetails.batch ||
+    batchDetails.name ||
+    student?.batch ||
+    "Not assigned";
 
   const trainerName =
+    batchDetails.trainer?.name ||
     batchDetails.trainerName ||
     dashboard?.trainerName ||
     "Not assigned";
 
-  const batchSize =
-    batchDetails.batchSize ?? dashboard?.batchSize;
+  const batchDurationMonths =
+    batchDetails.durationMonths ??
+    dashboard?.durationMonths;
 
   const batchStartDate =
-    batchDetails.startDate || dashboard?.batchStartDate;
+    batchDetails.startDate ||
+    dashboard?.batchStartDate;
 
-  const batchEndDate =
-    batchDetails.endDate || dashboard?.batchEndDate;
+  const batchStatus =
+    batchDetails.status ||
+    dashboard?.batchStatus ||
+    "Not available";
 
-  const schedule =
-    batchDetails.schedule || dashboard?.schedule;
+  const batchDescription =
+    batchDetails.description ||
+    dashboard?.batchDescription ||
+    "No description available.";
+
+  const batchIsActive =
+    batchDetails.isActive ??
+    dashboard?.batchIsActive;
+
+  const batchCreatedAt =
+    batchDetails.createdAt ||
+    dashboard?.batchCreatedAt;
+
+  const batchUpdatedAt =
+    batchDetails.updatedAt ||
+    dashboard?.batchUpdatedAt;
+
+  // ==========================================
+  // RENDER
+  // ==========================================
 
   return (
     <main className="px-4 py-6 sm:px-6 lg:px-8">
-      {/* Dashboard Header */}
+
+      {/* ==========================================
+          DASHBOARD HEADER
+      ========================================== */}
+
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
+
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[#102e60] sm:text-3xl">
             {loading
@@ -321,9 +580,14 @@ export default function DashboardPage() {
           </h1>
 
           <p className="mt-2 text-sm text-slate-600 sm:text-base">
-            {student?.id ? `ID: ${student.id} · ` : ""}
+            {student?.id
+              ? `ID: ${student.id} · `
+              : ""}
+
             Batch: {batchName}
+
             {" · "}
+
             Trainer: {trainerName}
           </p>
 
@@ -335,6 +599,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="flex flex-wrap gap-2">
+
           <button
             type="button"
             onClick={() => loadDashboard(true)}
@@ -344,44 +609,63 @@ export default function DashboardPage() {
             <RefreshCw
               size={17}
               className={
-                refreshing || loading ? "animate-spin" : ""
+                refreshing || loading
+                  ? "animate-spin"
+                  : ""
               }
             />
+
             Refresh
           </button>
 
           <button
             type="button"
             onClick={() =>
-              handleJoin(nextLiveClass?.title || "Live class")
+              handleJoin(
+                nextLiveClass?.title || "Live class"
+              )
             }
             disabled={loading}
             className="rounded-lg bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60 sm:text-base"
           >
             Join live class
           </button>
+
         </div>
       </header>
 
-      {/* Loading State */}
+      {/* ==========================================
+          LOADING STATE
+      ========================================== */}
+
       {loading && (
         <div
           role="status"
           className="mb-5 flex items-center gap-3 rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800"
         >
-          <RefreshCw size={18} className="animate-spin" />
+          <RefreshCw
+            size={18}
+            className="animate-spin"
+          />
+
           Fetching your profile and dashboard data...
         </div>
       )}
 
-      {/* Error Message */}
+      {/* ==========================================
+          ERROR MESSAGE
+      ========================================== */}
+
       {error && (
         <div
           role="alert"
           className="mb-5 flex items-start justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800"
         >
           <div>
-            <p className="font-semibold">Unable to load dashboard</p>
+            <p className="font-semibold">
+              Unable to load dashboard
+            </p>
+
             <p className="mt-1">{error}</p>
           </div>
 
@@ -395,7 +679,10 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Notification */}
+      {/* ==========================================
+          NOTIFICATION
+      ========================================== */}
+
       {notice && (
         <div
           role="status"
@@ -414,95 +701,276 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Statistics Cards */}
+      {/* ==========================================
+          STATISTICS CARDS
+      ========================================== */}
+
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+
         {stats.map((stat) => (
-          <StatCard key={stat.title} {...stat} />
+          <StatCard
+            key={stat.title}
+            {...stat}
+          />
         ))}
 
         <RankCard
           rank={dashboard?.rank ?? "—"}
-          total={dashboard?.batchDetails?.batchSize ?? batchSize ?? 0}
+          total={dashboard?.rankTotal ?? 0}
         />
+
       </section>
 
-      {/* Course Progress and Right Sidebar */}
+      {/* ==========================================
+          COURSE PROGRESS AND RIGHT SIDEBAR
+      ========================================== */}
+
       <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.65fr)_minmax(280px,1fr)]">
+
         <CourseProgress
           onDetails={() => setShowBatchDetails(true)}
         />
 
         <div className="flex min-w-0 flex-col gap-5">
-          <LiveClassSchedule onJoin={handleJoin} />
+
+          <LiveClassSchedule
+            onJoin={handleJoin}
+          />
 
           <Announcements />
+
         </div>
       </div>
 
-      {/* Batch Information */}
-      <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {/* Batch Duration */}
-        <div className="flex items-center gap-4 rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
-          <div className="shrink-0 rounded-lg bg-blue-50 p-3">
-            <CalendarDays className="text-blue-600" size={26} />
-          </div>
+      {/* ==========================================
+          COMPLETE BATCH INFORMATION
+      ========================================== */}
+
+      <section className="mt-8 rounded-xl border border-blue-100 bg-white p-5 shadow-sm sm:p-6">
+
+        {/* SECTION HEADER */}
+
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
 
           <div>
-            <p className="text-base font-semibold text-slate-800 sm:text-lg">
-              Batch duration
-            </p>
+            <h2 className="text-xl font-bold text-[#102e60] sm:text-2xl">
+              Batch Information
+            </h2>
 
-            <p className="mt-1 text-sm text-slate-600 sm:text-base">
-              {batchStartDate || batchEndDate
-                ? `${formatDate(batchStartDate)} – ${formatDate(batchEndDate)}`
-                : "Not available"}
+            <p className="mt-1 text-sm text-slate-500">
+              Complete details about your assigned batch.
             </p>
+          </div>
+
+          <span className="rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">
+            {batchName}
+          </span>
+
+        </div>
+
+        {/* BATCH DETAILS GRID */}
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+
+          {/* BATCH DURATION */}
+
+          <BatchInfoCard
+            icon={CalendarDays}
+            title="Batch Duration"
+            value={
+              batchDurationMonths != null
+                ? `${batchDurationMonths} Months`
+                : "Not available"
+            }
+            subtitle="Total training duration"
+            iconBackground="bg-blue-50"
+            iconColor="text-blue-600"
+          />
+
+          {/* START DATE */}
+
+          <BatchInfoCard
+            icon={CalendarDays}
+            title="Start Date"
+            value={formatDate(batchStartDate)}
+            subtitle="Training commencement date"
+            iconBackground="bg-green-50"
+            iconColor="text-green-600"
+          />
+
+          {/* BATCH STATUS */}
+
+          <div className="flex min-w-0 items-start gap-4 rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
+
+            <div className="shrink-0 rounded-lg bg-indigo-50 p-3 text-indigo-600">
+              <Clock3 size={25} />
+            </div>
+
+            <div className="min-w-0">
+
+              <p className="text-sm font-semibold text-slate-700 sm:text-base">
+                Batch Status
+              </p>
+
+              <span
+                className={`mt-2 inline-flex rounded-full px-4 py-2 text-sm font-bold ${getStatusClass(
+                  batchStatus
+                )}`}
+              >
+                {batchStatus}
+              </span>
+
+              <p className="mt-2 text-xs text-slate-500">
+                Current batch status
+              </p>
+
+            </div>
+          </div>
+
+          {/* ACTIVE STATUS */}
+
+          <div className="flex min-w-0 items-start gap-4 rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
+
+            <div className="shrink-0 rounded-lg bg-emerald-50 p-3 text-emerald-600">
+              <CheckCircle2 size={25} />
+            </div>
+
+            <div className="min-w-0">
+
+              <p className="text-sm font-semibold text-slate-700 sm:text-base">
+                Batch Availability
+              </p>
+
+              <span
+                className={`mt-2 inline-flex rounded-full px-4 py-2 text-sm font-bold ${
+                  batchIsActive === true
+                    ? "bg-green-100 text-green-700"
+                    : batchIsActive === false
+                      ? "bg-red-100 text-red-700"
+                      : "bg-slate-100 text-slate-700"
+                }`}
+              >
+                {batchIsActive === true
+                  ? "Active"
+                  : batchIsActive === false
+                    ? "Inactive"
+                    : "Not available"}
+              </span>
+
+              <p className="mt-2 text-xs text-slate-500">
+                Batch active status
+              </p>
+
+            </div>
+          </div>
+
+        </div>
+
+        {/* TRAINER INFORMATION */}
+
+        <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50 p-5">
+
+          <div className="flex items-center gap-3">
+
+            <div className="rounded-lg bg-blue-100 p-3 text-blue-700">
+              <Users size={22} />
+            </div>
+
+            <div>
+              <p className="text-sm font-semibold text-slate-500">
+                Assigned Trainer
+              </p>
+
+              <p className="mt-1 font-bold text-[#102e60]">
+                {trainerName}
+              </p>
+            </div>
+
+          </div>
+
+        </div>
+
+        {/* BATCH DESCRIPTION */}
+
+        <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-5">
+
+          <div className="mb-3 flex items-center gap-2">
+
+            <BookOpen
+              size={20}
+              className="text-blue-700"
+            />
+
+            <h3 className="font-bold text-[#102e60]">
+              Batch Description
+            </h3>
+
+          </div>
+
+          <p className="text-sm leading-7 text-slate-700">
+            {batchDescription}
+          </p>
+
+        </div>
+
+        {/* RECORD INFORMATION */}
+
+        <div className="mt-5 border-t border-slate-100 pt-5">
+
+          <div className="mb-4 flex items-center gap-2">
+
+            <FileText
+              size={19}
+              className="text-slate-500"
+            />
+
+            <h3 className="font-bold text-slate-800">
+              Record Information
+            </h3>
+
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+
+            <div className="rounded-lg bg-slate-50 p-4">
+
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Batch Created At
+              </p>
+
+              <p className="mt-2 text-sm font-semibold text-slate-700">
+                {formatDate(batchCreatedAt)}
+              </p>
+
+            </div>
+
+            <div className="rounded-lg bg-slate-50 p-4">
+
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Last Updated
+              </p>
+
+              <p className="mt-2 text-sm font-semibold text-slate-700">
+                {formatDate(batchUpdatedAt)}
+              </p>
+
+            </div>
+
           </div>
         </div>
 
-        {/* Batch Size */}
-        <div className="flex items-center gap-4 rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
-          <div className="shrink-0 rounded-lg bg-blue-50 p-3">
-            <Users className="text-blue-600" size={26} />
-          </div>
-
-          <div>
-            <p className="text-base font-semibold text-slate-800 sm:text-lg">
-              Batch size
-            </p>
-
-            <p className="mt-1 text-sm text-slate-600 sm:text-base">
-              {batchSize != null
-                ? `${batchSize} students`
-                : "Not available"}
-            </p>
-          </div>
-        </div>
-
-        {/* Weekly Schedule */}
-        <div className="flex items-center gap-4 rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
-          <div className="shrink-0 rounded-lg bg-blue-50 p-3">
-            <Clock3 className="text-blue-600" size={26} />
-          </div>
-
-          <div>
-            <p className="text-base font-semibold text-slate-800 sm:text-lg">
-              Weekly schedule
-            </p>
-
-            <p className="mt-1 text-sm text-slate-600 sm:text-base">
-              {schedule || "Not available"}
-            </p>
-          </div>
-        </div>
       </section>
 
-      {/* Batch Details Modal */}
+      {/* ==========================================
+          BATCH DETAILS MODAL
+      ========================================== */}
+
       {showBatchDetails && (
         <BatchDetailsModal
           onClose={() => setShowBatchDetails(false)}
         />
       )}
+
     </main>
   );
 }

@@ -12,7 +12,7 @@ export default function TopNavbar({ studentName = "Aarav" }) {
   useEffect(() => {
     const fetchStudentProfile = async () => {
       try {
-        const token = sessionStorage.getItem("appwars_token");
+        const token = sessionStorage.getItem("token");
 
         if (!token) {
           console.warn("Authentication token not found.");

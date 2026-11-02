@@ -414,7 +414,106 @@ export const createBatch = async (req, res) => {
     });
   }
 };
+// ==========================================
+// ASSIGN TRAINER TO BATCH
+// ==========================================
+// ==========================================
+// PATCH /api/admin/batches/:batchId/assign-trainer
+// ASSIGN OR REMOVE TRAINER FROM BATCH
+// ==========================================
+export const assignTrainerToBatch = async (req, res) => {
+  try {
+    const batchId = req.params.id;
+    const { trainerId } = req.body;
 
+    // 1. Validate batch ID
+    if (!isValidId(batchId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid batch ID.",
+      });
+    }
+
+    // 2. Find batch
+    const batchDocument = await Batch.findById(batchId);
+
+    if (!batchDocument) {
+      return res.status(404).json({
+        success: false,
+        message: "Batch not found.",
+      });
+    }
+
+    // 3. Allow trainer removal
+    if (trainerId === null || trainerId === "") {
+      batchDocument.trainer = null;
+      batchDocument.assignedDate = null;
+
+      await batchDocument.save();
+
+      const updatedBatch = await Batch.findById(batchId)
+        .populate("trainer", "userId name email isActive trainerDetails")
+        .lean();
+
+      return res.status(200).json({
+        success: true,
+        message: "Trainer removed from batch successfully.",
+        data: updatedBatch,
+      });
+    }
+    // 4. Validate trainer ID
+    if (!isValidId(trainerId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid trainer ID.",
+      });
+    }
+
+    // 5. Check whether trainer exists and is active
+    const trainerUser = await User.findOne({
+      _id: trainerId,
+      role: "Trainer",
+      isActive: true,
+    }).select("_id name userId email");
+
+    if (!trainerUser) {
+      return res.status(400).json({
+        success: false,
+        message: "Selected trainer does not exist or is inactive.",
+      });
+    }
+
+    // 6. Assign trainer
+    batchDocument.trainer = trainerUser._id;
+    batchDocument.assignedDate = new Date();
+
+    await batchDocument.save();
+
+    // 7. Fetch updated batch with trainer details
+    const updatedBatch = await Batch.findById(batchId)
+      .populate(
+        "trainer",
+        "userId name email isActive trainerDetails"
+      )
+      .lean();
+
+    // 8. Success response
+    return res.status(200).json({
+      success: true,
+      message: "Trainer assigned to batch successfully.",
+      data: updatedBatch,
+    });
+
+  } catch (error) {
+    console.error("Assign trainer error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to assign trainer to batch.",
+      error: error.message,
+    });
+  }
+};
 // PUT /api/admin/batches/:id
 export const updateBatch = async (req, res) => {
   try {

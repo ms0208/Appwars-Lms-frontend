@@ -10,6 +10,11 @@ const paymentSchema = new mongoose.Schema({
   status: { type: String, enum: ["Pending", "Paid", "Failed", "Refunded"], default: "Pending" },
   paymentMethod: { type: String, default: "" },
   paymentDate: { type: Date, default: null },
+  totalFee: {
+    type: Number,
+    required: true,
+    min: 0,
+  },
   providerReference: { type: String, default: "" }
 }, { timestamps: true });
 

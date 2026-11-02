@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -16,43 +17,49 @@ export default function BatchDetailsModal({ onClose }) {
       setLoading(true);
       setError("");
 
-      const token = sessionStorage.getItem("token");
+      const token =
+        sessionStorage.getItem("token") ||
+        localStorage.getItem("appwars_token");
 
       if (!token) {
         throw new Error("Please log in to view your batch details.");
       }
 
-      const response = await fetch(`${API_URL}/api/auth/me`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        cache: "no-store",
-      });
+      const response = await fetch(
+        `${API_URL}/api/student/profile`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          cache: "no-store",
+        }
+      );
 
       const result = await response.json();
 
       if (!response.ok) {
         throw new Error(
-          result.message ||
-            result.error ||
-            "Failed to fetch batch details."
+          result.message || "Failed to fetch batch details."
         );
       }
 
-      const batchData =
-        result.batch ??
-        result.data?.batch ??
-        result.data ??
-        null;
+      // Correctly access backend response
+      const student = result.user;
 
-      if (!batchData || typeof batchData !== "object") {
+      const batchData = student?.batchDetails;
+
+      if (!batchData) {
         setBatch(null);
         return;
       }
 
-      setBatch(batchData);
+      setBatch({
+        ...batchData,
+        batch: batchData.batch || student.batch,
+      });
+
     } catch (err) {
       setError(err.message || "Unable to load batch details.");
     } finally {
@@ -80,31 +87,33 @@ export default function BatchDetailsModal({ onClose }) {
     });
   }
 
-  const batchName =
-    batch?.name || batch?.batchName || batch?.batchCode || "Not assigned";
-
-  const schedule =
-    batch?.schedule ||
-    batch?.classSchedule ||
-    (batch?.days?.length
-      ? `${batch.days.join(", ")}${batch.startTime ? `, ${batch.startTime}` : ""}`
-      : "Not specified");
+  const batchName = batch?.batch || "Not assigned";
 
   const trainer =
-    typeof batch?.trainer === "string"
-      ? batch.trainer
-      : batch?.trainer?.name ||
-        batch?.trainerName ||
-        batch?.trainer?.fullName ||
-        "Not assigned";
+    typeof batch?.trainer === "object"
+      ? batch.trainer?.name || "Not assigned"
+      : batch?.trainer
+        ? "Trainer assigned"
+        : "Not assigned";
 
-  const startDate = batch?.startDate || batch?.start;
-  const endDate = batch?.endDate || batch?.end;
+  const duration = batch?.durationMonths
+    ? `${batch.durationMonths} Months`
+    : "Not specified";
 
-  const duration =
-    startDate || endDate
-      ? `${formatDate(startDate)} – ${formatDate(endDate)}`
-      : batch?.duration || "Not specified";
+  const startDate = formatDate(batch?.startDate);
+
+  const endDate = batch?.endDate
+    ? formatDate(batch.endDate)
+    : batch?.startDate && batch?.durationMonths
+      ? formatDate(
+          new Date(
+            new Date(batch.startDate).setMonth(
+              new Date(batch.startDate).getMonth() +
+                batch.durationMonths
+            )
+          )
+        )
+      : "Not specified";
 
   return (
     <div
@@ -123,7 +132,7 @@ export default function BatchDetailsModal({ onClose }) {
             id="batch-title"
             className="text-lg font-bold text-[#102e60]"
           >
-            Batch details
+            Batch Details
           </h2>
 
           <button
@@ -138,7 +147,10 @@ export default function BatchDetailsModal({ onClose }) {
 
         {loading ? (
           <div className="py-10 text-center">
-            <RefreshCw className="mx-auto animate-spin text-blue-600" size={24} />
+            <RefreshCw
+              className="mx-auto animate-spin text-blue-600"
+              size={24}
+            />
             <p className="mt-3 text-sm text-slate-500">
               Loading batch details...
             </p>
@@ -146,6 +158,7 @@ export default function BatchDetailsModal({ onClose }) {
         ) : error ? (
           <div className="py-6 text-center">
             <p className="text-sm text-red-600">{error}</p>
+
             <button
               type="button"
               onClick={fetchBatchDetails}
@@ -160,51 +173,81 @@ export default function BatchDetailsModal({ onClose }) {
           </p>
         ) : (
           <dl className="mt-5 space-y-4 text-sm">
+
             <div>
-              <dt className="text-xs text-slate-500">Batch name</dt>
+              <dt className="text-xs text-slate-500">
+                Batch Name
+              </dt>
               <dd className="mt-1 font-semibold text-slate-800">
                 {batchName}
               </dd>
             </div>
 
             <div>
-              <dt className="text-xs text-slate-500">Schedule</dt>
+              <dt className="text-xs text-slate-500">
+                Course
+              </dt>
               <dd className="mt-1 font-semibold text-slate-800">
-                {schedule}
+                {batch.course || "Not specified"}
               </dd>
             </div>
 
             <div>
-              <dt className="text-xs text-slate-500">Trainer</dt>
+              <dt className="text-xs text-slate-500">
+                Trainer
+              </dt>
               <dd className="mt-1 font-semibold text-slate-800">
                 {trainer}
               </dd>
             </div>
 
             <div>
-              <dt className="text-xs text-slate-500">Batch duration</dt>
+              <dt className="text-xs text-slate-500">
+                Start Date
+              </dt>
+              <dd className="mt-1 font-semibold text-slate-800">
+                {startDate}
+              </dd>
+            </div>
+
+            <div>
+              <dt className="text-xs text-slate-500">
+                End Date
+              </dt>
+              <dd className="mt-1 font-semibold text-slate-800">
+                {endDate}
+              </dd>
+            </div>
+
+            <div>
+              <dt className="text-xs text-slate-500">
+                Duration
+              </dt>
               <dd className="mt-1 font-semibold text-slate-800">
                 {duration}
               </dd>
             </div>
 
-            {batch.room && (
+            {batch.description && (
               <div>
-                <dt className="text-xs text-slate-500">Classroom / Room</dt>
-                <dd className="mt-1 font-semibold text-slate-800">
-                  {batch.room}
+                <dt className="text-xs text-slate-500">
+                  Description
+                </dt>
+                <dd className="mt-1 text-slate-700">
+                  {batch.description}
                 </dd>
               </div>
             )}
 
-            {batch.status && (
-              <div>
-                <dt className="text-xs text-slate-500">Status</dt>
-                <dd className="mt-1 font-semibold capitalize text-slate-800">
-                  {batch.status}
-                </dd>
-              </div>
-            )}
+            <div>
+              <dt className="text-xs text-slate-500">
+                Status
+              </dt>
+              <dd className="mt-1 font-semibold capitalize text-green-600">
+                {batch.status || "Not specified"}
+              </dd>
+            </div>
+
           </dl>
         )}
 

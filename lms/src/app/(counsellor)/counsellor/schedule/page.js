@@ -21,6 +21,9 @@ import {
   Filter,
   RefreshCw,
   AlertCircle,
+  GraduationCap,
+  UserRound,
+  ChevronDown,
 } from "lucide-react";
 
 // ============================================
@@ -31,14 +34,23 @@ const API_URL = (
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
 ).replace(/\/+$/, "");
 
+const BATCH_API = `${API_URL}/api/counsellor/batches`;
 const SCHEDULE_API = `${API_URL}/api/counsellor/schedule`;
 
-// JWT authentication
+// ============================================
+// AUTHENTICATION
+// ============================================
+
 const getAuthHeaders = () => {
+  if (typeof window === "undefined") {
+    return { "Content-Type": "application/json" };
+  }
+
   const token =
-    typeof window !== "undefined"
-      ? sessionStorage.getItem("token")
-      : null;
+    sessionStorage.getItem("token") ||
+    sessionStorage.getItem("appwars_token") ||
+    localStorage.getItem("token") ||
+    localStorage.getItem("appwars_token");
 
   return {
     "Content-Type": "application/json",
@@ -52,6 +64,7 @@ const getAuthHeaders = () => {
 
 const emptyForm = {
   title: "",
+  batchId: "",
   batch: "",
   course: "",
   trainer: "",
@@ -66,31 +79,100 @@ const emptyForm = {
   notes: "",
 };
 
+// ============================================
+// STYLING
+// ============================================
+
 const inputClass =
-  "mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
+  "mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100";
+
+const labelClass = "text-sm font-semibold text-slate-700";
 
 // ============================================
-// HELPER FUNCTIONS
+// DATA HELPERS
 // ============================================
+
+// Handles different batch name properties.
+
+function getBatchName(batch) {
+  if (!batch) return "";
+
+  if (typeof batch === "string") {
+    return batch;
+  }
+
+  return (
+    batch.batch ||
+    batch.name ||
+    batch.batchName ||
+    ""
+  );
+}
+
+// Handles populated trainer objects.
+
+function getTrainerName(trainer) {
+  if (!trainer) return "";
+
+  if (typeof trainer === "string") {
+    return trainer;
+  }
+
+  return (
+    trainer.name ||
+    trainer.fullName ||
+    trainer.userId ||
+    ""
+  );
+}
+
+function getTrainerId(trainer) {
+  if (!trainer || typeof trainer === "string") return "";
+
+  return trainer._id || trainer.id || "";
+}
+
+function getCourseName(course) {
+  if (!course) return "";
+
+  if (typeof course === "string") return course;
+
+  return course.title || course.name || "";
+}
+
+// Convert ISO date into YYYY-MM-DD without timezone shifting.
+
+function toInputDate(date) {
+  if (!date) return "";
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return date;
+  }
+
+  const parsed = new Date(date);
+
+  if (Number.isNaN(parsed.getTime())) return "";
+
+  return [
+    parsed.getFullYear(),
+    String(parsed.getMonth() + 1).padStart(2, "0"),
+    String(parsed.getDate()).padStart(2, "0"),
+  ].join("-");
+}
 
 function formatDate(date) {
   if (!date) return "—";
 
-  const [year, month, day] = date.split("-");
+  const dateString = toInputDate(date);
+
+  if (!dateString) return "—";
+
+  const [year, month, day] = dateString.split("-");
 
   const months = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
+    "Jan", "Feb", "Mar", "Apr",
+    "May", "Jun", "Jul", "Aug",
+    "Sep", "Oct", "Nov", "Dec",
   ];
 
   return `${Number(day)} ${months[Number(month) - 1]} ${year}`;
@@ -105,6 +187,31 @@ function formatTime(time) {
   const displayHour = hours % 12 || 12;
 
   return `${displayHour}:${String(minutes).padStart(2, "0")} ${period}`;
+}
+
+// Normalize schedule response before using it in the UI.
+
+function normalizeSchedule(item) {
+  return {
+    ...item,
+    batch: getBatchName(item.batch),
+    course: getCourseName(item.course),
+    trainer: getTrainerName(item.trainer),
+    batchId:
+      item.batchId?._id ||
+      item.batchId ||
+      item.batch?._id ||
+      "",
+    date: toInputDate(item.date || item.startDate),
+    startTime: item.startTime || "10:00",
+    endTime: item.endTime || "11:30",
+    mode: item.mode || "Online",
+    type: item.type || "Lecture",
+    status: item.status || "Scheduled",
+    meetingLink: item.meetingLink || "",
+    location: item.location || "",
+    notes: item.notes || item.description || "",
+  };
 }
 
 // ============================================
@@ -124,7 +231,7 @@ function StatusBadge({ status }) {
         styles[status] || "bg-slate-100 text-slate-600"
       }`}
     >
-      {status}
+      {status || "Unknown"}
     </span>
   );
 }
@@ -168,10 +275,13 @@ export default function BatchSchedulePage() {
   // STATES
   // ------------------------------------------
 
+  const [batches, setBatches] = useState([]);
   const [schedules, setSchedules] = useState([]);
 
   const [loading, setLoading] = useState(true);
+  const [batchLoading, setBatchLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+
   const [deletingId, setDeletingId] = useState(null);
   const [updatingId, setUpdatingId] = useState(null);
 
@@ -186,14 +296,52 @@ export default function BatchSchedulePage() {
   const [editingId, setEditingId] = useState(null);
   const [viewSchedule, setViewSchedule] = useState(null);
 
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState({ ...emptyForm });
 
   const [error, setError] = useState("");
+  const [batchError, setBatchError] = useState("");
   const [formError, setFormError] = useState("");
   const [success, setSuccess] = useState("");
 
   // ------------------------------------------
-  // FETCH SCHEDULES FROM BACKEND
+  // FETCH BATCHES
+  // ------------------------------------------
+
+  const fetchBatches = useCallback(async () => {
+    try {
+      setBatchLoading(true);
+      setBatchError("");
+
+      const response = await fetch(BATCH_API, {
+        method: "GET",
+        headers: getAuthHeaders(),
+        cache: "no-store",
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.message || "Failed to fetch batches."
+        );
+      }
+
+      const batchData = Array.isArray(result.data)
+        ? result.data
+        : [];
+
+      setBatches(batchData.filter((batch) => batch.isActive !== false));
+    } catch (err) {
+      setBatchError(
+        err.message || "Unable to load batches."
+      );
+    } finally {
+      setBatchLoading(false);
+    }
+  }, []);
+
+  // ------------------------------------------
+  // FETCH SCHEDULES
   // ------------------------------------------
 
   const fetchSchedules = useCallback(async () => {
@@ -211,25 +359,32 @@ export default function BatchSchedulePage() {
 
       if (!response.ok) {
         throw new Error(
-          result.message || "Failed to fetch schedules"
+          result.message || "Failed to fetch schedules."
         );
       }
 
-      setSchedules(
-        Array.isArray(result.data) ? result.data : []
-      );
+      const scheduleData = Array.isArray(result.data)
+        ? result.data
+        : [];
+
+      setSchedules(scheduleData.map(normalizeSchedule));
     } catch (err) {
       setError(
-        err.message || "Unable to load schedules. Please try again."
+        err.message || "Unable to load schedules."
       );
     } finally {
       setLoading(false);
     }
   }, []);
 
+  // ------------------------------------------
+  // INITIAL API CALLS
+  // ------------------------------------------
+
   useEffect(() => {
+    fetchBatches();
     fetchSchedules();
-  }, [fetchSchedules]);
+  }, [fetchBatches, fetchSchedules]);
 
   // ------------------------------------------
   // SUCCESS MESSAGE
@@ -243,9 +398,9 @@ export default function BatchSchedulePage() {
     }, 3000);
   }
 
-  // ------------------------------------------
+  // ==========================================
   // STATISTICS
-  // ------------------------------------------
+  // ==========================================
 
   const scheduledCount = schedules.filter(
     (item) => item.status === "Scheduled"
@@ -259,9 +414,11 @@ export default function BatchSchedulePage() {
     (item) => item.status === "Cancelled"
   ).length;
 
-  // ------------------------------------------
+  const activeBatchCount = batches.length;
+
+  // ==========================================
   // SEARCH AND FILTER
-  // ------------------------------------------
+  // ==========================================
 
   const filteredSchedules = useMemo(() => {
     return schedules
@@ -305,38 +462,101 @@ export default function BatchSchedulePage() {
     dateFilter,
   ]);
 
-  // ------------------------------------------
+  // ==========================================
+  // BATCH SELECTION
+  // ==========================================
+
+  function handleBatchSelection(event) {
+    const batchId = event.target.value;
+
+    const selectedBatch = batches.find(
+      (item) => item._id === batchId
+    );
+
+    if (!selectedBatch) {
+      setForm((previous) => ({
+        ...previous,
+        batchId: "",
+        batch: "",
+        course: "",
+        trainer: "",
+      }));
+
+      return;
+    }
+
+    setForm((previous) => ({
+      ...previous,
+
+      // Automatically populated from backend.
+      batchId: selectedBatch._id,
+
+      batch: getBatchName(selectedBatch),
+
+      course: getCourseName(selectedBatch.course),
+
+      trainer: getTrainerName(selectedBatch.trainer),
+    }));
+  }
+
+  // ==========================================
   // OPEN ADD MODAL
-  // ------------------------------------------
+  // ==========================================
 
   function openAddModal() {
     setEditingId(null);
     setForm({ ...emptyForm });
     setFormError("");
+    setError("");
     setShowModal(true);
   }
 
-  // ------------------------------------------
+  // ==========================================
   // OPEN EDIT MODAL
-  // ------------------------------------------
+  // ==========================================
 
   function openEditModal(schedule) {
+    const normalized = normalizeSchedule(schedule);
+
+    // Find the associated batch using its ID or name.
+    const selectedBatch = batches.find(
+      (batch) =>
+        batch._id === normalized.batchId ||
+        getBatchName(batch) === normalized.batch
+    );
+
     setEditingId(schedule._id);
 
     setForm({
-      title: schedule.title || "",
-      batch: schedule.batch || "",
-      course: schedule.course || "",
-      trainer: schedule.trainer || "",
-      date: schedule.date || "",
-      startTime: schedule.startTime || "10:00",
-      endTime: schedule.endTime || "11:30",
-      mode: schedule.mode || "Online",
-      meetingLink: schedule.meetingLink || "",
-      location: schedule.location || "",
-      type: schedule.type || "Lecture",
-      status: schedule.status || "Scheduled",
-      notes: schedule.notes || "",
+      ...emptyForm,
+
+      title: normalized.title || "",
+
+      batchId: selectedBatch?._id || normalized.batchId || "",
+
+      batch: normalized.batch || "",
+
+      course:
+        normalized.course ||
+        getCourseName(selectedBatch?.course),
+
+      trainer:
+        normalized.trainer ||
+        getTrainerName(selectedBatch?.trainer),
+
+      date: normalized.date,
+
+      startTime: normalized.startTime,
+      endTime: normalized.endTime,
+
+      mode: normalized.mode,
+
+      meetingLink: normalized.meetingLink,
+      location: normalized.location,
+
+      type: normalized.type,
+      status: normalized.status,
+      notes: normalized.notes,
     });
 
     setFormError("");
@@ -344,9 +564,9 @@ export default function BatchSchedulePage() {
     setShowModal(true);
   }
 
-  // ------------------------------------------
+  // ==========================================
   // CLOSE MODAL
-  // ------------------------------------------
+  // ==========================================
 
   function closeModal() {
     setShowModal(false);
@@ -355,9 +575,9 @@ export default function BatchSchedulePage() {
     setFormError("");
   }
 
-  // ------------------------------------------
+  // ==========================================
   // FORM INPUT HANDLING
-  // ------------------------------------------
+  // ==========================================
 
   function handleFormChange(event) {
     const { name, value } = event.target;
@@ -368,13 +588,14 @@ export default function BatchSchedulePage() {
     }));
   }
 
-  // ------------------------------------------
-  // VALIDATE FORM
-  // ------------------------------------------
+  // ==========================================
+  // FORM VALIDATION
+  // ==========================================
 
   function validateForm() {
     if (
       !form.title.trim() ||
+      !form.batchId ||
       !form.batch.trim() ||
       !form.course.trim() ||
       !form.trainer.trim() ||
@@ -382,7 +603,10 @@ export default function BatchSchedulePage() {
       !form.startTime ||
       !form.endTime
     ) {
-      setFormError("Please complete all required fields.");
+      setFormError(
+        "Please select a batch and complete all required fields."
+      );
+
       return false;
     }
 
@@ -390,29 +614,32 @@ export default function BatchSchedulePage() {
       setFormError(
         "End time must be later than start time."
       );
+
       return false;
     }
 
-    if (form.mode === "Online" && form.meetingLink.trim()) {
-      try {
-        const url = new URL(form.meetingLink.trim());
+    if (form.mode === "Online") {
+      if (form.meetingLink.trim()) {
+        try {
+          const url = new URL(form.meetingLink.trim());
 
-        if (!["http:", "https:"].includes(url.protocol)) {
+          if (!["http:", "https:"].includes(url.protocol)) {
+            setFormError("Please enter a valid meeting URL.");
+            return false;
+          }
+        } catch {
           setFormError("Please enter a valid meeting URL.");
           return false;
         }
-      } catch {
-        setFormError("Please enter a valid meeting URL.");
-        return false;
       }
     }
 
     return true;
   }
 
-  // ------------------------------------------
+  // ==========================================
   // CREATE / UPDATE SCHEDULE
-  // ------------------------------------------
+  // ==========================================
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -422,14 +649,50 @@ export default function BatchSchedulePage() {
 
     if (!validateForm()) return;
 
+    const selectedBatch = batches.find(
+      (item) => item._id === form.batchId
+    );
+
+    // Always use the latest batch details from the API.
+    if (!selectedBatch) {
+      setFormError(
+        "Selected batch is no longer available. Please select again."
+      );
+
+      return;
+    }
+
     const normalizedForm = {
-      ...form,
       title: form.title.trim(),
-      batch: form.batch.trim(),
-      course: form.course.trim(),
-      trainer: form.trainer.trim(),
-      meetingLink: form.meetingLink.trim(),
-      location: form.location.trim(),
+
+      batchId: selectedBatch._id,
+
+      batch: getBatchName(selectedBatch),
+
+      course: getCourseName(selectedBatch.course),
+
+      trainer: getTrainerName(selectedBatch.trainer),
+
+      date: form.date,
+
+      startTime: form.startTime,
+      endTime: form.endTime,
+
+      mode: form.mode,
+
+      meetingLink:
+        form.mode === "Online"
+          ? form.meetingLink.trim()
+          : "",
+
+      location:
+        form.mode === "Offline"
+          ? form.location.trim()
+          : "",
+
+      type: form.type,
+      status: form.status,
+
       notes: form.notes.trim(),
     };
 
@@ -453,11 +716,10 @@ export default function BatchSchedulePage() {
       if (!response.ok) {
         throw new Error(
           result.message ||
-            `Failed to ${isEditing ? "update" : "create"} schedule`
+            `Failed to ${isEditing ? "update" : "create"} schedule.`
         );
       }
 
-      // Refresh data from MongoDB
       await fetchSchedules();
 
       closeModal();
@@ -465,7 +727,7 @@ export default function BatchSchedulePage() {
       showSuccessMessage(
         isEditing
           ? "Schedule updated successfully."
-          : "Schedule created successfully."
+          : "Class scheduled successfully."
       );
     } catch (err) {
       setFormError(
@@ -476,9 +738,9 @@ export default function BatchSchedulePage() {
     }
   }
 
-  // ------------------------------------------
+  // ==========================================
   // DELETE SCHEDULE
-  // ------------------------------------------
+  // ==========================================
 
   async function deleteSchedule(id) {
     if (!window.confirm("Delete this schedule permanently?")) {
@@ -501,7 +763,7 @@ export default function BatchSchedulePage() {
 
       if (!response.ok) {
         throw new Error(
-          result.message || "Failed to delete schedule"
+          result.message || "Failed to delete schedule."
         );
       }
 
@@ -515,17 +777,15 @@ export default function BatchSchedulePage() {
 
       showSuccessMessage("Schedule deleted successfully.");
     } catch (err) {
-      setError(
-        err.message || "Unable to delete schedule."
-      );
+      setError(err.message || "Unable to delete schedule.");
     } finally {
       setDeletingId(null);
     }
   }
 
-  // ------------------------------------------
+  // ==========================================
   // UPDATE SCHEDULE STATUS
-  // ------------------------------------------
+  // ==========================================
 
   async function updateStatus(schedule, status) {
     try {
@@ -545,7 +805,7 @@ export default function BatchSchedulePage() {
 
       if (!response.ok) {
         throw new Error(
-          result.message || "Failed to update status"
+          result.message || "Failed to update status."
         );
       }
 
@@ -577,9 +837,9 @@ export default function BatchSchedulePage() {
     }
   }
 
-  // ------------------------------------------
+  // ==========================================
   // CSV EXPORT
-  // ------------------------------------------
+  // ==========================================
 
   function exportCSV() {
     if (filteredSchedules.length === 0) {
@@ -646,9 +906,9 @@ export default function BatchSchedulePage() {
     }, 1000);
   }
 
-  // ------------------------------------------
+  // ==========================================
   // RESET FILTERS
-  // ------------------------------------------
+  // ==========================================
 
   function resetFilters() {
     setSearch("");
@@ -657,9 +917,9 @@ export default function BatchSchedulePage() {
     setDateFilter("");
   }
 
-  // ------------------------------------------
+  // ==========================================
   // LOADING SCREEN
-  // ------------------------------------------
+  // ==========================================
 
   if (loading) {
     return (
@@ -676,9 +936,9 @@ export default function BatchSchedulePage() {
     );
   }
 
-  // ============================================
+  // ==========================================
   // MAIN UI
-  // ============================================
+  // ==========================================
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
@@ -698,13 +958,16 @@ export default function BatchSchedulePage() {
             </h1>
 
             <p className="mt-2 text-sm text-slate-500">
-              Schedule classes, manage sessions and track batch timings.
+              Select an existing batch and schedule its classes.
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
             <button
-              onClick={fetchSchedules}
+              onClick={() => {
+                fetchBatches();
+                fetchSchedules();
+              }}
               className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
               <RefreshCw size={17} />
@@ -741,37 +1004,63 @@ export default function BatchSchedulePage() {
 
             <button
               onClick={() => setError("")}
-              className="rounded p-1 hover:bg-red-100"
               aria-label="Dismiss error"
+              className="rounded p-1 hover:bg-red-100"
             >
               <X size={17} />
             </button>
           </div>
         )}
 
+        {/* BATCH API ERROR */}
+
+        {batchError && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            <div className="flex items-center gap-2">
+              <AlertCircle size={18} />
+              Batch API: {batchError}
+            </div>
+
+            <button
+              onClick={fetchBatches}
+              className="font-semibold underline"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
         {/* STATISTICS */}
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <StatCard
+            title="Total Batches"
+            value={activeBatchCount}
+            description="Available batches"
+            icon={GraduationCap}
+            color="bg-blue-50 text-blue-700"
+          />
+
           <StatCard
             title="Total Classes"
             value={schedules.length}
             description="All recorded sessions"
             icon={CalendarDays}
-            color="bg-blue-50 text-blue-700"
+            color="bg-indigo-50 text-indigo-700"
           />
 
           <StatCard
             title="Scheduled"
             value={scheduledCount}
-            description="Sessions awaiting completion"
+            description="Awaiting completion"
             icon={CalendarClock}
-            color="bg-indigo-50 text-indigo-700"
+            color="bg-sky-50 text-sky-700"
           />
 
           <StatCard
             title="Completed"
             value={completedCount}
-            description="Sessions marked complete"
+            description="Completed sessions"
             icon={CircleCheck}
             color="bg-emerald-50 text-emerald-700"
           />
@@ -785,7 +1074,7 @@ export default function BatchSchedulePage() {
           />
         </div>
 
-        {/* TABS */}
+        {/* VIEW TABS */}
 
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3">
           <div className="flex gap-2">
@@ -881,7 +1170,7 @@ export default function BatchSchedulePage() {
           </div>
         </div>
 
-        {/* LIST / CALENDAR HEADER */}
+        {/* SCHEDULE COUNT */}
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-slate-500">
@@ -895,38 +1184,22 @@ export default function BatchSchedulePage() {
             </span>{" "}
             schedules
           </p>
-
-          <div className="flex gap-2">
-            {["List", "Calendar"].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold ${
-                  activeTab === tab
-                    ? "bg-blue-700 text-white"
-                    : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                {tab === "List" ? "List View" : "Calendar View"}
-              </button>
-            ))}
-          </div>
         </div>
 
-        {/* LIST VIEW */}
+        {/* ======================================
+            LIST VIEW
+        ====================================== */}
 
         {activeTab === "List" && (
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-col justify-between gap-2 border-b border-slate-100 p-5 sm:flex-row sm:items-center">
-              <div>
-                <h2 className="font-bold text-slate-900">
-                  Class Schedule
-                </h2>
+            <div className="border-b border-slate-100 p-5">
+              <h2 className="font-bold text-slate-900">
+                Class Schedule
+              </h2>
 
-                <p className="mt-1 text-sm text-slate-500">
-                  {filteredSchedules.length} session(s) found
-                </p>
-              </div>
+              <p className="mt-1 text-sm text-slate-500">
+                {filteredSchedules.length} session(s) found
+              </p>
             </div>
 
             <div className="overflow-x-auto">
@@ -954,7 +1227,7 @@ export default function BatchSchedulePage() {
                           onClick={() => setViewSchedule(item)}
                           className="text-left font-semibold text-blue-800 hover:underline"
                         >
-                          {item.title}
+                          {item.title || "Untitled Class"}
                         </button>
 
                         <p className="mt-1 text-xs text-slate-500">
@@ -984,7 +1257,7 @@ export default function BatchSchedulePage() {
                       </td>
 
                       <td className="px-5 py-4 text-slate-700">
-                        {item.trainer}
+                        {item.trainer || "Not Assigned"}
                       </td>
 
                       <td className="px-5 py-4">
@@ -1028,7 +1301,10 @@ export default function BatchSchedulePage() {
                             className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
                           >
                             {deletingId === item._id ? (
-                              <RefreshCw size={17} className="animate-spin" />
+                              <RefreshCw
+                                size={17}
+                                className="animate-spin"
+                              />
                             ) : (
                               <Trash2 size={17} />
                             )}
@@ -1044,8 +1320,8 @@ export default function BatchSchedulePage() {
                         colSpan={7}
                         className="px-5 py-12 text-center text-slate-500"
                       >
-                        No classes match your filters. Try changing your
-                        search or schedule a new class.
+                        No classes match your filters.
+                        Schedule a new class to get started.
                       </td>
                     </tr>
                   )}
@@ -1055,7 +1331,9 @@ export default function BatchSchedulePage() {
           </div>
         )}
 
-        {/* CALENDAR VIEW */}
+        {/* ======================================
+            CALENDAR VIEW
+        ====================================== */}
 
         {activeTab === "Calendar" && (
           <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
@@ -1065,8 +1343,7 @@ export default function BatchSchedulePage() {
               </h2>
 
               <p className="mt-1 text-sm text-slate-500">
-                Sessions are grouped by date. Use the date filter above
-                to focus on a particular day.
+                Sessions are grouped by their scheduled date.
               </p>
             </div>
 
@@ -1167,6 +1444,8 @@ export default function BatchSchedulePage() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3 sm:p-5">
             <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
 
+              {/* MODAL HEADER */}
+
               <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4 sm:px-6">
                 <div>
                   <h2 className="text-lg font-bold text-slate-900">
@@ -1176,7 +1455,7 @@ export default function BatchSchedulePage() {
                   </h2>
 
                   <p className="mt-1 text-sm text-slate-500">
-                    Enter the session details below.
+                    Select a batch to automatically fill course and trainer.
                   </p>
                 </div>
 
@@ -1189,157 +1468,240 @@ export default function BatchSchedulePage() {
                 </button>
               </div>
 
+              {/* FORM */}
+
               <form
                 onSubmit={handleSubmit}
                 className="space-y-5 p-5 sm:p-6"
               >
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {/* BATCH SELECTION */}
 
-                  <label className="text-sm font-semibold text-slate-700">
-                    Class Title *
-                    <input
-                      required
-                      name="title"
-                      value={form.title}
-                      onChange={handleFormChange}
-                      className={inputClass}
-                      placeholder="e.g. React Hooks"
+                <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-4">
+                  <div className="mb-3 flex items-center gap-2">
+                    <GraduationCap
+                      size={20}
+                      className="text-blue-700"
                     />
-                  </label>
 
-                  <label className="text-sm font-semibold text-slate-700">
+                    <h3 className="font-bold text-slate-800">
+                      Select Existing Batch
+                    </h3>
+                  </div>
+
+                  <label className={labelClass}>
                     Batch Name *
-                    <input
-                      required
-                      name="batch"
-                      value={form.batch}
-                      onChange={handleFormChange}
-                      className={inputClass}
-                      placeholder="e.g. MERN-2026-A"
-                    />
+
+                    <div className="relative">
+                      <select
+                        required
+                        name="batchId"
+                        value={form.batchId}
+                        onChange={handleBatchSelection}
+                        disabled={batchLoading}
+                        className={`${inputClass} appearance-none pr-10`}
+                      >
+                        <option value="">
+                          {batchLoading
+                            ? "Loading batches..."
+                            : batches.length === 0
+                            ? "No batches available"
+                            : "Select a batch"}
+                        </option>
+
+                        {batches.map((batch) => (
+                          <option
+                            key={batch._id}
+                            value={batch._id}
+                          >
+                            {getBatchName(batch)}
+                            {" — "}
+                            {getCourseName(batch.course)}
+                          </option>
+                        ))}
+                      </select>
+
+                      <ChevronDown
+                        size={17}
+                        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500"
+                      />
+                    </div>
                   </label>
 
-                  <label className="text-sm font-semibold text-slate-700">
-                    Course *
-                    <input
-                      required
-                      name="course"
-                      value={form.course}
-                      onChange={handleFormChange}
-                      className={inputClass}
-                      placeholder="e.g. MERN Stack Development"
-                    />
-                  </label>
+                  {!batchLoading && batches.length === 0 && (
+                    <p className="mt-2 text-xs text-red-600">
+                      No batches found. Please create a batch first.
+                    </p>
+                  )}
 
-                  <label className="text-sm font-semibold text-slate-700">
-                    Trainer *
-                    <input
-                      required
-                      name="trainer"
-                      value={form.trainer}
-                      onChange={handleFormChange}
-                      className={inputClass}
-                      placeholder="Trainer name"
-                    />
-                  </label>
+                  {/* AUTO POPULATED DETAILS */}
 
-                  <label className="text-sm font-semibold text-slate-700">
-                    Class Date *
-                    <input
-                      required
-                      type="date"
-                      name="date"
-                      value={form.date}
-                      onChange={handleFormChange}
-                      className={inputClass}
-                    />
-                  </label>
+                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
 
-                  <label className="text-sm font-semibold text-slate-700">
-                    Class Type
-                    <select
-                      name="type"
-                      value={form.type}
-                      onChange={handleFormChange}
-                      className={inputClass}
-                    >
-                      <option>Lecture</option>
-                      <option>Practical</option>
-                      <option>Workshop</option>
-                      <option>Assessment</option>
-                      <option>Doubt Session</option>
-                    </select>
-                  </label>
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+                        <BookOpen size={15} />
+                        Course
+                      </div>
 
-                  <label className="text-sm font-semibold text-slate-700">
-                    Start Time *
-                    <input
-                      required
-                      type="time"
-                      name="startTime"
-                      value={form.startTime}
-                      onChange={handleFormChange}
-                      className={inputClass}
-                    />
-                  </label>
+                      <p className="mt-2 text-sm font-semibold text-slate-800">
+                        {form.course || "Select a batch"}
+                      </p>
+                    </div>
 
-                  <label className="text-sm font-semibold text-slate-700">
-                    End Time *
-                    <input
-                      required
-                      type="time"
-                      name="endTime"
-                      value={form.endTime}
-                      onChange={handleFormChange}
-                      className={inputClass}
-                    />
-                  </label>
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+                        <UserRound size={15} />
+                        Assigned Trainer
+                      </div>
 
-                  <label className="text-sm font-semibold text-slate-700">
-                    Class Mode
-                    <select
-                      name="mode"
-                      value={form.mode}
-                      onChange={(event) => {
-                        const mode = event.target.value;
+                      <p className="mt-2 text-sm font-semibold text-slate-800">
+                        {form.trainer || "Select a batch"}
+                      </p>
+                    </div>
+                  </div>
 
-                        setForm((previous) => ({
-                          ...previous,
-                          mode,
-                          location:
-                            mode === "Online"
-                              ? ""
-                              : previous.location,
-                          meetingLink:
-                            mode === "Offline"
-                              ? ""
-                              : previous.meetingLink,
-                        }));
-                      }}
-                      className={inputClass}
-                    >
-                      <option>Online</option>
-                      <option>Offline</option>
-                    </select>
-                  </label>
+                  <p className="mt-3 text-xs text-blue-700">
+                    Course and trainer are automatically populated
+                    from Batch Management.
+                  </p>
+                </div>
 
-                  <label className="text-sm font-semibold text-slate-700">
-                    Status
-                    <select
-                      name="status"
-                      value={form.status}
-                      onChange={handleFormChange}
-                      className={inputClass}
-                    >
-                      <option>Scheduled</option>
-                      <option>Completed</option>
-                      <option>Cancelled</option>
-                    </select>
-                  </label>
+                {/* CLASS INFORMATION */}
+
+                <div>
+                  <h3 className="mb-3 font-bold text-slate-800">
+                    Class Information
+                  </h3>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+
+                    <label className={labelClass}>
+                      Class Title *
+
+                      <input
+                        required
+                        name="title"
+                        value={form.title}
+                        onChange={handleFormChange}
+                        className={inputClass}
+                        placeholder="e.g. React Hooks"
+                      />
+                    </label>
+
+                    <label className={labelClass}>
+                      Class Type
+
+                      <select
+                        name="type"
+                        value={form.type}
+                        onChange={handleFormChange}
+                        className={inputClass}
+                      >
+                        <option>Lecture</option>
+                        <option>Practical</option>
+                        <option>Workshop</option>
+                        <option>Assessment</option>
+                        <option>Doubt Session</option>
+                      </select>
+                    </label>
+
+                    <label className={labelClass}>
+                      Class Date *
+
+                      <input
+                        required
+                        type="date"
+                        name="date"
+                        value={form.date}
+                        onChange={handleFormChange}
+                        className={inputClass}
+                      />
+                    </label>
+
+                    <label className={labelClass}>
+                      Status
+
+                      <select
+                        name="status"
+                        value={form.status}
+                        onChange={handleFormChange}
+                        className={inputClass}
+                      >
+                        <option>Scheduled</option>
+                        <option>Completed</option>
+                        <option>Cancelled</option>
+                      </select>
+                    </label>
+
+                    <label className={labelClass}>
+                      Start Time *
+
+                      <input
+                        required
+                        type="time"
+                        name="startTime"
+                        value={form.startTime}
+                        onChange={handleFormChange}
+                        className={inputClass}
+                      />
+                    </label>
+
+                    <label className={labelClass}>
+                      End Time *
+
+                      <input
+                        required
+                        type="time"
+                        name="endTime"
+                        value={form.endTime}
+                        onChange={handleFormChange}
+                        className={inputClass}
+                      />
+                    </label>
+
+                    <label className={labelClass}>
+                      Class Mode
+
+                      <select
+                        name="mode"
+                        value={form.mode}
+                        onChange={(event) => {
+                          const mode = event.target.value;
+
+                          setForm((previous) => ({
+                            ...previous,
+                            mode,
+                            location:
+                              mode === "Online"
+                                ? ""
+                                : previous.location,
+                            meetingLink:
+                              mode === "Offline"
+                                ? ""
+                                : previous.meetingLink,
+                          }));
+                        }}
+                        className={inputClass}
+                      >
+                        <option>Online</option>
+                        <option>Offline</option>
+                      </select>
+                    </label>
+
+                  </div>
+                </div>
+
+                {/* MODE DETAILS */}
+
+                <div>
+                  <h3 className="mb-3 font-bold text-slate-800">
+                    Class Location
+                  </h3>
 
                   {form.mode === "Online" ? (
-                    <label className="text-sm font-semibold text-slate-700 sm:col-span-2">
+                    <label className={labelClass}>
                       Meeting Link
+
                       <input
                         type="url"
                         name="meetingLink"
@@ -1350,8 +1712,9 @@ export default function BatchSchedulePage() {
                       />
                     </label>
                   ) : (
-                    <label className="text-sm font-semibold text-slate-700 sm:col-span-2">
+                    <label className={labelClass}>
                       Classroom / Location
+
                       <input
                         name="location"
                         value={form.location}
@@ -1361,19 +1724,22 @@ export default function BatchSchedulePage() {
                       />
                     </label>
                   )}
-
-                  <label className="text-sm font-semibold text-slate-700 sm:col-span-2">
-                    Session Notes
-                    <textarea
-                      rows={3}
-                      name="notes"
-                      value={form.notes}
-                      onChange={handleFormChange}
-                      className={inputClass}
-                      placeholder="Topics, instructions or preparation details..."
-                    />
-                  </label>
                 </div>
+
+                {/* NOTES */}
+
+                <label className={labelClass}>
+                  Session Notes
+
+                  <textarea
+                    rows={3}
+                    name="notes"
+                    value={form.notes}
+                    onChange={handleFormChange}
+                    className={inputClass}
+                    placeholder="Topics, instructions or preparation details..."
+                  />
+                </label>
 
                 {/* FORM ERROR */}
 
@@ -1383,6 +1749,8 @@ export default function BatchSchedulePage() {
                     {formError}
                   </div>
                 )}
+
+                {/* FORM BUTTONS */}
 
                 <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end">
                   <button
@@ -1396,7 +1764,7 @@ export default function BatchSchedulePage() {
 
                   <button
                     type="submit"
-                    disabled={saving}
+                    disabled={saving || batchLoading || batches.length === 0}
                     className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {saving && (
@@ -1462,8 +1830,8 @@ export default function BatchSchedulePage() {
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {[
-                    ["Batch", viewSchedule.batch],
-                    ["Trainer", viewSchedule.trainer],
+                    ["Batch", getBatchName(viewSchedule.batch)],
+                    ["Trainer", getTrainerName(viewSchedule.trainer)],
                     ["Date", formatDate(viewSchedule.date)],
                     [
                       "Time",

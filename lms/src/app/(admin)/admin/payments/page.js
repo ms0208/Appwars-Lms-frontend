@@ -1,792 +1,1418 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+
 import {
-  IndianRupee,
-  CircleCheck,
-  Clock,
-  CircleX,
-  Search,
   Plus,
-  Download,
-  Eye,
-  Pencil,
+  Search,
+  RefreshCw,
+  Edit,
   Trash2,
   X,
+  CreditCard,
+  IndianRupee,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+  Loader2,
+  Wallet,
+  Receipt,
 } from "lucide-react";
 
-const API_ROOT = (
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
-).replace(/\/+$/, "");
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
-const API_URL = API_ROOT.endsWith("/api")
-  ? API_ROOT
-  : `${API_ROOT}/api`;
+// ==========================================
+// INITIAL FORM DATA
+// ==========================================
 
-const PAYMENTS_URL = `${API_URL}/admin/reports/payments`;
-
-const inputClass =
-  "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
-
-const emptyPayment = {
+const initialFormData = {
   student: "",
-  email: "",
-  course: "",
+  batch: "",
   amount: "",
+  currency: "INR",
+  dueDate: "",
+  paidAt: "",
   method: "UPI",
-  transactionId: "",
-  date: "",
+  reference: "",
   status: "Pending",
+  notes: "",
 };
 
-function getToday() {
-  const now = new Date();
-  const offset = now.getTimezoneOffset();
-  return new Date(now.getTime() - offset * 60000)
-    .toISOString()
-    .slice(0, 10);
+// ==========================================
+// PAYMENT METHODS
+// ==========================================
+
+const paymentMethods = [
+  {
+    label: "Digital Payments",
+    options: [
+      "UPI",
+      "Wallet",
+    ],
+  },
+  {
+    label: "Card Payments",
+    options: [
+      "Credit Card",
+      "Debit Card",
+      "Credit/Debit Card",
+    ],
+  },
+  {
+    label: "Bank Payments",
+    options: [
+      "Net Banking",
+      "Bank Transfer",
+      "NEFT",
+      "RTGS",
+      "IMPS",
+    ],
+  },
+  {
+    label: "Other Payments",
+    options: [
+      "Cash",
+      "Cheque",
+      "Other",
+    ],
+  },
+];
+
+const paymentStatuses = [
+  "Pending",
+  "Paid",
+  "Failed",
+  "Refunded",
+];
+
+// ==========================================
+// HELPER FUNCTIONS
+// ==========================================
+
+function getArray(data, keys = []) {
+  if (Array.isArray(data)) return data;
+
+  for (const key of keys) {
+    if (Array.isArray(data?.[key])) {
+      return data[key];
+    }
+  }
+
+  if (Array.isArray(data?.data)) {
+    return data.data;
+  }
+
+  return [];
 }
 
-function getToken() {
-  if (typeof window === "undefined") return "";
+function formatAmount(amount) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 2,
+  }).format(Number(amount || 0));
+}
+
+function formatDate(date) {
+  if (!date) return "—";
+
+  const parsed = new Date(date);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return "—";
+  }
+
+  return parsed.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function toInputDate(date) {
+  if (!date) return "";
+
+  const parsed = new Date(date);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+// ==========================================
+// STUDENT HELPERS
+// ==========================================
+
+function getStudentName(student) {
+  if (!student) return "Unknown Student";
+
+  if (typeof student === "string") {
+    return student;
+  }
 
   return (
-    sessionStorage.getItem("appwars_token") ||
-    sessionStorage.getItem("token") ||
-    localStorage.getItem("appwars_token") ||
-    localStorage.getItem("token") ||
+    student.name ||
+    student.userId ||
+    student.email ||
+    "Unknown Student"
+  );
+}
+
+// ==========================================
+// BATCH HELPERS
+// Supports batch + batchDetails response
+// ==========================================
+
+function getBatchDetails(batch, separateBatchDetails = null) {
+  if (separateBatchDetails) {
+    return separateBatchDetails.batchDetails || separateBatchDetails;
+  }
+
+  if (!batch) return null;
+
+  if (typeof batch === "object") {
+    return batch.batchDetails || batch;
+  }
+
+  return null;
+}
+
+function getBatchName(batch, separateBatchDetails = null) {
+  const details = getBatchDetails(
+    batch,
+    separateBatchDetails
+  );
+
+  if (details?.batch) {
+    return details.batch;
+  }
+
+  if (typeof batch === "string") {
+    return batch;
+  }
+
+  return batch?.batch || batch?.name || "No Batch";
+}
+
+function getBatchId(batch, separateBatchDetails = null) {
+  const details = getBatchDetails(
+    batch,
+    separateBatchDetails
+  );
+
+  return details?._id || batch?._id || "";
+}
+
+function getBatchCourse(batch, separateBatchDetails = null) {
+  const details = getBatchDetails(
+    batch,
+    separateBatchDetails
+  );
+
+  const course = details?.course;
+
+  if (typeof course === "string") {
+    return course;
+  }
+
+  return (
+    course?.courseName ||
+    course?.title ||
+    course?.name ||
     ""
   );
 }
 
-function formatMoney(amount) {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(Number(amount) || 0);
+function getBatchTrainer(batch, separateBatchDetails = null) {
+  const details = getBatchDetails(
+    batch,
+    separateBatchDetails
+  );
+
+  const trainer = details?.trainer;
+
+  if (typeof trainer === "string") {
+    return trainer;
+  }
+
+  return trainer?.name || "";
 }
 
-function normalizePayment(payment) {
+// ==========================================
+// NORMALIZE BATCH RESPONSE
+// ==========================================
+
+function normalizeBatch(item) {
+  if (!item) return null;
+
+  const details = item.batchDetails || item;
+
   return {
-    ...payment,
-    id: String(
-      payment.paymentId || payment.id || payment._id || ""
-    ),
-    student: payment.student || payment.studentName || "",
-    email: payment.email || "",
-    course: payment.course || payment.courseName || "",
-    amount: Number(payment.amount) || 0,
-    method: payment.method || "UPI",
-    transactionId: payment.transactionId || "",
-    date: payment.date
-      ? String(payment.date).slice(0, 10)
-      : "",
-    status: payment.status || "Pending",
+    _id: details._id || item._id || "",
+    batch: details.batch || item.batch || item.name || "",
+    course: getBatchCourse(details),
+    trainer: getBatchTrainer(details),
+    original: item,
   };
 }
 
-function extractPayments(data) {
-  const result =
-    Array.isArray(data) ? data :
-    Array.isArray(data?.payments) ? data.payments :
-    Array.isArray(data?.data) ? data.data :
-    Array.isArray(data?.data?.payments) ? data.data.payments :
-    null;
-
-  if (!result) {
-    throw new Error("The payments API returned an unexpected response.");
-  }
-
-  return result.map(normalizePayment);
-}
-
-async function apiRequest(url, options = {}) {
-  const token = getToken();
-
-  if (!token) {
-    throw new Error(
-      "Login token not found. Please log in again and verify your token storage key."
-    );
-  }
-
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
-
-  const text = await response.text();
-  let data = {};
-
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { message: text };
-  }
-
-  if (!response.ok || data.success === false) {
-    if (response.status === 401) {
-      throw new Error(
-        data.message || "Session expired or token is invalid. Please log in again."
-      );
-    }
-
-    if (response.status === 403) {
-      throw new Error(
-        data.message || "Your account does not have permission to manage payments."
-      );
-    }
-
-    throw new Error(
-      data.message || data.error || `Request failed (${response.status}).`
-    );
-  }
-
-  return data;
-}
-
-function StatusBadge({ status }) {
-  const styles = {
-    Paid: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
-    Pending: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
-    Failed: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
-    Refunded: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
-  };
-
-  return (
-    <span
-      className={`rounded-full px-3 py-1 text-xs font-semibold ${
-        styles[status] || styles.Pending
-      }`}
-    >
-      {status}
-    </span>
-  );
-}
-
-function StatCard({ title, value, subtitle, icon: Icon, color }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm text-slate-500 dark:text-slate-400">{title}</p>
-          <h2 className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
-            {value}
-          </h2>
-          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-            {subtitle}
-          </p>
-        </div>
-        <div className={`rounded-xl p-3 ${color}`}>
-          <Icon size={22} />
-        </div>
-      </div>
-    </div>
-  );
-}
+// ==========================================
+// MAIN COMPONENT
+// ==========================================
 
 export default function PaymentsPage() {
   const [payments, setPayments] = useState([]);
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("All");
-  const [methodFilter, setMethodFilter] = useState("All");
-  const [modal, setModal] = useState(null);
-  const [selectedPayment, setSelectedPayment] = useState(null);
-  const [form, setForm] = useState(emptyPayment);
-  const [notice, setNotice] = useState("");
+  const [students, setStudents] = useState([]);
+  const [batches, setBatches] = useState([]);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
 
-  const loadPayments = useCallback(async () => {
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+
+  const [showModal, setShowModal] = useState(false);
+  const [editingPayment, setEditingPayment] = useState(null);
+
+  const [formData, setFormData] = useState(initialFormData);
+
+  const [report, setReport] = useState({
+    totalAmount: 0,
+    collectedAmount: 0,
+    pendingAmount: 0,
+    refundedAmount: 0,
+    paymentCount: 0,
+  });
+
+  // ==========================================
+  // API REQUEST
+  // ==========================================
+
+  const apiRequest = useCallback(async (endpoint, options = {}) => {
+    const currentToken = sessionStorage.getItem("token");
+
+    if (!currentToken) {
+      throw new Error("Authentication token not found. Please log in again.");
+    }
+
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${currentToken}`,
+        ...options.headers,
+      },
+    });
+
+    const result = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(
+        result.message ||
+          `Request failed with status ${response.status}`
+      );
+    }
+
+    return result;
+  }, []);
+
+  // ==========================================
+  // FETCH PAYMENTS
+  // ==========================================
+
+  const fetchPayments = useCallback(async () => {
+    try {
+      const result = await apiRequest("/api/admin/payments");
+
+      const list = getArray(result, ["payments"]);
+
+      setPayments(list);
+    } catch (err) {
+      setError(err.message || "Unable to fetch payments.");
+    }
+  }, [apiRequest]);
+
+  // ==========================================
+  // FETCH STUDENTS
+  // ==========================================
+
+  const fetchStudents = useCallback(async () => {
+    try {
+      const result = await apiRequest(
+        "/api/admin/users?role=Student&limit=100"
+      );
+
+      const list = getArray(result, ["users"]);
+
+      setStudents(list);
+    } catch (err) {
+      console.error("Students fetch error:", err);
+    }
+  }, [apiRequest]);
+
+  // ==========================================
+  // FETCH BATCHES
+  // ==========================================
+
+  const fetchBatches = useCallback(async () => {
+    try {
+      const result = await apiRequest("/api/admin/batches");
+
+      const list = getArray(result, ["batches"]);
+
+      const normalizedBatches = list
+        .map(normalizeBatch)
+        .filter((batch) => batch && batch._id);
+
+      setBatches(normalizedBatches);
+
+      console.log("Fetched batches:", normalizedBatches);
+    } catch (err) {
+      console.error("Batches fetch error:", err);
+    }
+  }, [apiRequest]);
+
+  // ==========================================
+  // FETCH PAYMENT REPORT
+  // ==========================================
+
+  const fetchPaymentReport = useCallback(async () => {
+    try {
+      const result = await apiRequest(
+        "/api/admin/reports/payments"
+      );
+
+      const data = result.summary || result.data || result;
+
+      setReport({
+        totalAmount: Number(data.totalAmount || 0),
+        collectedAmount: Number(data.collectedAmount || 0),
+        pendingAmount: Number(data.pendingAmount || 0),
+        refundedAmount: Number(data.refundedAmount || 0),
+        paymentCount: Number(
+          data.paymentCount || data.totalPayments || 0
+        ),
+      });
+    } catch (err) {
+      console.error("Payment report error:", err);
+    }
+  }, [apiRequest]);
+
+  // ==========================================
+  // LOAD ALL DATA
+  // ==========================================
+
+  const loadData = useCallback(async () => {
     setLoading(true);
     setError("");
 
     try {
-      const data = await apiRequest(PAYMENTS_URL);
-      setPayments(extractPayments(data));
-    } catch (err) {
-      setError(err.message || "Failed to load payment records.");
+      await Promise.all([
+        fetchPayments(),
+        fetchStudents(),
+        fetchBatches(),
+        fetchPaymentReport(),
+      ]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [
+    fetchPayments,
+    fetchStudents,
+    fetchBatches,
+    fetchPaymentReport,
+  ]);
 
   useEffect(() => {
-    loadPayments();
-  }, [loadPayments]);
+    loadData();
+  }, [loadData]);
 
-  const totals = useMemo(() => {
-    const paid = payments.filter((p) => p.status === "Paid");
-    const pending = payments.filter((p) => p.status === "Pending");
-    const failed = payments.filter((p) => p.status === "Failed");
+  // ==========================================
+  // FORM CHANGE HANDLER
+  // ==========================================
 
-    return {
-      collected: paid.reduce((sum, p) => sum + p.amount, 0),
-      pending: pending.reduce((sum, p) => sum + p.amount, 0),
-      paidCount: paid.length,
-      pendingCount: pending.length,
-      failedCount: failed.length,
-    };
-  }, [payments]);
+  const handleChange = (e) => {
+    const { name, value } = e.target;
 
-  const filteredPayments = useMemo(() => {
-    const term = search.toLowerCase().trim();
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
 
-    return payments.filter((p) => {
-      const matchesSearch = [
-        p.id,
-        p.student,
-        p.email,
-        p.course,
-        p.transactionId,
-      ].some((value) =>
-        String(value || "").toLowerCase().includes(term)
-      );
+  // ==========================================
+  // OPEN CREATE MODAL
+  // ==========================================
 
-      return (
-        matchesSearch &&
-        (statusFilter === "All" || p.status === statusFilter) &&
-        (methodFilter === "All" || p.method === methodFilter)
-      );
-    });
-  }, [payments, search, statusFilter, methodFilter]);
-
-  function openAdd() {
-    setSelectedPayment(null);
-    setForm({ ...emptyPayment, date: getToday() });
-    setNotice("");
-    setModal("add");
-  }
-
-  function openEdit(payment) {
-    setSelectedPayment(payment);
-    setForm({ ...payment, amount: String(payment.amount) });
-    setNotice("");
-    setModal("edit");
-  }
-
-  function updateForm(field, value) {
-    setForm((previous) => ({ ...previous, [field]: value }));
-  }
-
-  async function savePayment(event) {
-    event.preventDefault();
-    setNotice("");
+  const openCreateModal = () => {
+    setEditingPayment(null);
+    setFormData({ ...initialFormData });
     setError("");
+    setShowModal(true);
+  };
 
-    if (
-      !form.student.trim() ||
-      !form.course.trim() ||
-      !Number.isFinite(Number(form.amount)) ||
-      Number(form.amount) <= 0
-    ) {
-      setNotice("Enter a student, course, and valid amount.");
+  // ==========================================
+  // OPEN EDIT MODAL
+  // ==========================================
+
+  const openEditModal = (payment) => {
+    setEditingPayment(payment);
+
+    const batchId = getBatchId(
+      payment.batch,
+      payment.batchDetails
+    );
+
+    setFormData({
+      student:
+        typeof payment.student === "object"
+          ? payment.student?._id || ""
+          : payment.student || "",
+
+      batch: batchId,
+
+      amount: payment.amount ?? "",
+      currency: payment.currency || "INR",
+
+      dueDate: toInputDate(payment.dueDate),
+      paidAt: toInputDate(payment.paidAt),
+
+      method: payment.method || "UPI",
+      reference: payment.reference || "",
+      status: payment.status || "Pending",
+      notes: payment.notes || "",
+    });
+
+    setError("");
+    setShowModal(true);
+  };
+
+  // ==========================================
+  // CLOSE MODAL
+  // ==========================================
+
+  const closeModal = () => {
+    setShowModal(false);
+    setEditingPayment(null);
+    setFormData({ ...initialFormData });
+    setError("");
+  };
+
+  // ==========================================
+  // CREATE / UPDATE PAYMENT
+  // ==========================================
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    setError("");
+    setSuccess("");
+
+    if (!formData.student) {
+      setError("Please select a student.");
       return;
     }
 
-    const payload = {
-      student: form.student.trim(),
-      email: form.email.trim(),
-      course: form.course.trim(),
-      amount: Number(form.amount),
-      method: form.method,
-      transactionId: form.transactionId.trim(),
-      date: form.date,
-      status: form.status,
-    };
+    if (!formData.amount || Number(formData.amount) <= 0) {
+      setError("Please enter a valid payment amount.");
+      return;
+    }
+
+    if (!formData.dueDate) {
+      setError("Please select a due date.");
+      return;
+    }
+
+    if (!formData.method) {
+      setError("Please select a payment method.");
+      return;
+    }
 
     setSaving(true);
 
     try {
-      if (modal === "edit" && selectedPayment) {
-        await apiRequest(
-          `${PAYMENTS_URL}/${encodeURIComponent(selectedPayment.id)}`,
-          {
-            method: "PATCH",
-            body: JSON.stringify(payload),
-          }
-        );
+      const payload = {
+        student: formData.student,
 
-        setNotice("Payment record updated successfully.");
-      } else {
-        await apiRequest(PAYMENTS_URL, {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
+        // Actual MongoDB Batch ObjectId
+        batch: formData.batch || null,
 
-        setNotice("Payment record added successfully.");
+        amount: Number(formData.amount),
+        currency: formData.currency || "INR",
+
+        dueDate: formData.dueDate,
+
+        method: formData.method,
+        reference: formData.reference.trim(),
+        status: formData.status,
+        notes: formData.notes.trim(),
+      };
+
+      if (formData.status === "Paid") {
+        payload.paidAt = formData.paidAt || new Date().toISOString();
       }
 
-      setModal(null);
-      await loadPayments();
+      const endpoint = editingPayment
+        ? `/api/admin/payments/${editingPayment._id}`
+        : "/api/admin/payments";
+
+      const requestMethod = editingPayment ? "PATCH" : "POST";
+
+      await apiRequest(endpoint, {
+        method: requestMethod,
+        body: JSON.stringify(payload),
+      });
+
+      setSuccess(
+        editingPayment
+          ? "Payment updated successfully."
+          : "Payment created successfully."
+      );
+
+      closeModal();
+
+      await Promise.all([
+        fetchPayments(),
+        fetchPaymentReport(),
+      ]);
     } catch (err) {
-      setError(err.message || "Failed to save payment.");
+      setError(err.message || "Unable to save payment.");
     } finally {
       setSaving(false);
     }
-  }
+  };
 
-  async function deletePayment(payment) {
-    if (!window.confirm(`Delete payment ${payment.id}?`)) return;
+  // ==========================================
+  // DELETE PAYMENT
+  // ==========================================
 
-    setNotice("");
-    setError("");
-
-    try {
-      await apiRequest(
-        `${PAYMENTS_URL}/${encodeURIComponent(payment.id)}`,
-        { method: "DELETE" }
-      );
-
-      setPayments((previous) =>
-        previous.filter((p) => p.id !== payment.id)
-      );
-
-      setNotice("Payment record deleted successfully.");
-    } catch (err) {
-      setError(err.message || "Failed to delete payment.");
-    }
-  }
-
-  function exportCSV() {
-    const columns = [
-      "id",
-      "student",
-      "email",
-      "course",
-      "amount",
-      "method",
-      "transactionId",
-      "date",
-      "status",
-    ];
-
-    const escapeCSV = (value) => {
-      let text = String(value ?? "");
-
-      if (/^[=+\-@\t\r]/.test(text)) {
-        text = `'${text}`;
-      }
-
-      return `"${text.replace(/"/g, '""')}"`;
-    };
-
-    const csv = [
-      columns.join(","),
-      ...filteredPayments.map((payment) =>
-        columns.map((column) => escapeCSV(payment[column])).join(",")
-      ),
-    ].join("\r\n");
-
-    const url = URL.createObjectURL(
-      new Blob(["\uFEFF" + csv], {
-        type: "text/csv;charset=utf-8;",
-      })
+  const handleDelete = async (paymentId) => {
+    const confirmed = window.confirm(
+      "Are you sure you want to delete this payment?"
     );
 
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "appwars-payments.csv";
-    link.click();
-    URL.revokeObjectURL(url);
-  }
+    if (!confirmed) return;
+
+    setError("");
+    setSuccess("");
+
+    try {
+      await apiRequest(`/api/admin/payments/${paymentId}`, {
+        method: "DELETE",
+      });
+
+      setSuccess("Payment deleted successfully.");
+
+      await Promise.all([
+        fetchPayments(),
+        fetchPaymentReport(),
+      ]);
+    } catch (err) {
+      setError(err.message || "Unable to delete payment.");
+    }
+  };
+
+  // ==========================================
+  // FILTER PAYMENTS
+  // ==========================================
+
+  const filteredPayments = payments.filter((payment) => {
+    const studentName = getStudentName(payment.student);
+
+    const batchName = getBatchName(
+      payment.batch,
+      payment.batchDetails
+    );
+
+    const batchCourse = getBatchCourse(
+      payment.batch,
+      payment.batchDetails
+    );
+
+    const trainerName = getBatchTrainer(
+      payment.batch,
+      payment.batchDetails
+    );
+
+    const searchText = [
+      studentName,
+      payment.student?.userId,
+      batchName,
+      batchCourse,
+      trainerName,
+      payment.reference,
+      payment.method,
+      payment.status,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    const matchesSearch = searchText.includes(
+      search.toLowerCase()
+    );
+
+    const matchesStatus =
+      statusFilter === "All" ||
+      payment.status === statusFilter;
+
+    return matchesSearch && matchesStatus;
+  });
+
+  // ==========================================
+  // STATUS BADGE
+  // ==========================================
+
+  const StatusBadge = ({ status }) => {
+    const styles = {
+      Paid: "bg-green-100 text-green-700",
+      Pending: "bg-yellow-100 text-yellow-700",
+      Failed: "bg-red-100 text-red-700",
+      Refunded: "bg-purple-100 text-purple-700",
+    };
+
+    return (
+      <span
+        className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+          styles[status] || "bg-gray-100 text-gray-700"
+        }`}
+      >
+        {status || "Unknown"}
+      </span>
+    );
+  };
+
+  // ==========================================
+  // PAGE UI
+  // ==========================================
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 text-slate-900 dark:bg-slate-950 dark:text-slate-100 sm:p-6 lg:p-8">
-      <div className="mx-auto max-w-[1600px] space-y-6">
-        <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+    <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
+
+      {/* HEADER */}
+
+      <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">
+            Payment Management
+          </h1>
+
+          <p className="mt-1 text-sm text-gray-500">
+            Manage student fees, payment records and transactions.
+          </p>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={loadData}
+            disabled={loading}
+            className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+          >
+            <RefreshCw
+              size={17}
+              className={loading ? "animate-spin" : ""}
+            />
+            Refresh
+          </button>
+
+          <button
+            onClick={openCreateModal}
+            className="flex items-center gap-2 rounded-lg bg-[#102e60] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#183d78]"
+          >
+            <Plus size={18} />
+            Add Payment
+          </button>
+        </div>
+      </div>
+
+      {/* ALERTS */}
+
+      {error && !showModal && (
+        <div className="mb-5 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <AlertCircle size={18} />
+
+          {error}
+
+          <button
+            onClick={() => setError("")}
+            className="ml-auto"
+          >
+            <X size={17} />
+          </button>
+        </div>
+      )}
+
+      {success && (
+        <div className="mb-5 flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+          <CheckCircle2 size={18} />
+
+          {success}
+
+          <button
+            onClick={() => setSuccess("")}
+            className="ml-auto"
+          >
+            <X size={17} />
+          </button>
+        </div>
+      )}
+
+      {/* SUMMARY CARDS */}
+
+      <div className="mb-7 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">
+                Total Payments
+              </p>
+
+              <h2 className="mt-2 text-2xl font-bold text-gray-900">
+                {report.paymentCount}
+              </h2>
+            </div>
+
+            <div className="rounded-lg bg-blue-100 p-3 text-blue-700">
+              <Receipt size={23} />
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">
+                Total Amount
+              </p>
+
+              <h2 className="mt-2 text-2xl font-bold text-gray-900">
+                {formatAmount(report.totalAmount)}
+              </h2>
+            </div>
+
+            <div className="rounded-lg bg-indigo-100 p-3 text-indigo-700">
+              <IndianRupee size={23} />
+            </div>
+          </div>
+        </div>
+
+        {/* <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">
+                Collected Amount
+              </p>
+
+              <h2 className="mt-2 text-2xl font-bold text-green-700">
+                {formatAmount(report.collectedAmount)}
+              </h2>
+            </div>
+
+            <div className="rounded-lg bg-green-100 p-3 text-green-700">
+              <Wallet size={23} />
+            </div>
+          </div>
+        </div> */}
+
+        {/* <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">
+                Pending Amount
+              </p>
+
+              <h2 className="mt-2 text-2xl font-bold text-yellow-700">
+                {formatAmount(report.pendingAmount)}
+              </h2>
+            </div>
+
+            <div className="rounded-lg bg-yellow-100 p-3 text-yellow-700">
+              <Clock size={23} />
+            </div>
+          </div>
+        </div> */}
+
+      </div>
+
+      {/* PAYMENT RECORDS */}
+
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+
+        {/* FILTERS */}
+
+        <div className="flex flex-col justify-between gap-4 border-b border-gray-200 p-4 sm:flex-row sm:items-center">
+
           <div>
-            <p className="text-sm font-semibold text-blue-600">
-              APPWARS TECHNOLOGIES PVT. LTD.
+            <h2 className="font-semibold text-gray-900">
+              Payment Records
+            </h2>
+
+            <p className="mt-1 text-xs text-gray-500">
+              {filteredPayments.length} records found
             </p>
-            <h1 className="mt-1 text-2xl font-bold sm:text-3xl">Payments</h1>
-            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-              Manage student fees, transactions, and payment records.
-            </p>
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={exportCSV}
-              disabled={filteredPayments.length === 0}
-              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
-            >
-              <Download size={17} /> Export CSV
-            </button>
+          <div className="flex flex-col gap-3 sm:flex-row">
 
-            <button
-              onClick={openAdd}
-              className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
-            >
-              <Plus size={18} /> Add Payment
-            </button>
-          </div>
-        </header>
-
-        {notice && (
-          <div className="flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
-            <span>{notice}</span>
-            <button onClick={() => setNotice("")} aria-label="Dismiss message">
-              <X size={17} />
-            </button>
-          </div>
-        )}
-
-        {error && (
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-            <span>{error}</span>
-            <button onClick={() => setError("")} aria-label="Dismiss error">
-              <X size={17} />
-            </button>
-          </div>
-        )}
-
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard
-            title="Total Collected"
-            value={formatMoney(totals.collected)}
-            subtitle={`${totals.paidCount} successful payments`}
-            icon={IndianRupee}
-            color="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-          />
-          <StatCard
-            title="Pending Amount"
-            value={formatMoney(totals.pending)}
-            subtitle={`${totals.pendingCount} pending payments`}
-            icon={Clock}
-            color="bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-          />
-          <StatCard
-            title="Successful Payments"
-            value={totals.paidCount}
-            subtitle="Status: Paid"
-            icon={CircleCheck}
-            color="bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
-          />
-          <StatCard
-            title="Failed Payments"
-            value={totals.failedCount}
-            subtitle="Require review"
-            icon={CircleX}
-            color="bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
-          />
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5">
-          <div className="flex flex-col gap-3 lg:flex-row">
-            <div className="relative flex-1">
+            <div className="relative">
               <Search
-                size={18}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                size={17}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
               />
+
               <input
+                type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search student, transaction, course..."
-                className={`${inputClass} pl-10`}
+                placeholder="Search student, batch, method..."
+                className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 sm:w-72"
               />
             </div>
 
-            <div className="flex flex-wrap gap-3">
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className={`${inputClass} lg:w-40`}
-              >
-                <option>All</option>
-                <option>Paid</option>
-                <option>Pending</option>
-                <option>Failed</option>
-                <option>Refunded</option>
-              </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+            >
+              <option value="All">All Statuses</option>
 
-              <select
-                value={methodFilter}
-                onChange={(e) => setMethodFilter(e.target.value)}
-                className={`${inputClass} lg:w-44`}
-              >
-                <option>All</option>
-                <option>UPI</option>
-                <option>Credit Card</option>
-                <option>Debit Card</option>
-                <option>Net Banking</option>
-                <option>Cash</option>
-              </select>
-            </div>
+              {paymentStatuses.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+
           </div>
+        </div>
 
-          <div className="mt-5 overflow-x-auto">
-            <table className="w-full min-w-[1050px] text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-xs uppercase text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                  <th className="px-3 py-4">Payment / Student</th>
-                  <th className="px-3 py-4">Course</th>
-                  <th className="px-3 py-4">Amount</th>
-                  <th className="px-3 py-4">Method</th>
-                  <th className="px-3 py-4">Date</th>
-                  <th className="px-3 py-4">Status</th>
-                  <th className="px-3 py-4 text-right">Actions</th>
+        {/* TABLE */}
+
+        {loading ? (
+          <div className="flex min-h-64 items-center justify-center gap-3 text-gray-500">
+            <Loader2 className="animate-spin" size={22} />
+            Loading payment records...
+          </div>
+        ) : filteredPayments.length === 0 ? (
+          <div className="flex min-h-64 flex-col items-center justify-center text-center">
+            <CreditCard
+              size={40}
+              className="mb-3 text-gray-300"
+            />
+
+            <h3 className="font-semibold text-gray-700">
+              No payments found
+            </h3>
+
+            <p className="mt-1 text-sm text-gray-500">
+              Add a payment or change your search filters.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+
+            <table className="w-full min-w-[1100px] text-left">
+
+              <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                <tr>
+                  <th className="px-5 py-4">Student</th>
+                  <th className="px-5 py-4">Batch Details</th>
+                  <th className="px-5 py-4">Amount</th>
+                  <th className="px-5 py-4">Due Date</th>
+                  <th className="px-5 py-4">Method</th>
+                  <th className="px-5 py-4">Reference</th>
+                  <th className="px-5 py-4">Status</th>
+                  <th className="px-5 py-4 text-right">Actions</th>
                 </tr>
               </thead>
 
-              <tbody>
-                {loading ? (
-                  <tr>
-                    <td colSpan={7} className="px-3 py-12 text-center text-slate-500">
-                      Loading payments...
-                    </td>
-                  </tr>
-                ) : filteredPayments.map((payment) => (
-                  <tr
-                    key={payment.id}
-                    className="border-b border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50"
-                  >
-                    <td className="px-3 py-4">
-                      <p className="font-semibold">{payment.student}</p>
-                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                        {payment.id} · {payment.email}
-                      </p>
-                    </td>
-                    <td className="px-3 py-4">{payment.course}</td>
-                    <td className="px-3 py-4 font-semibold">
-                      {formatMoney(payment.amount)}
-                    </td>
-                    <td className="px-3 py-4">{payment.method}</td>
-                    <td className="px-3 py-4">{payment.date || "—"}</td>
-                    <td className="px-3 py-4">
-                      <StatusBadge status={payment.status} />
-                    </td>
-                    <td className="px-3 py-4">
-                      <div className="flex justify-end gap-1">
-                        <button
-                          onClick={() => {
-                            setSelectedPayment(payment);
-                            setModal("view");
-                          }}
-                          title="View payment"
-                          className="rounded-lg p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800"
-                        >
-                          <Eye size={17} />
-                        </button>
-                        <button
-                          onClick={() => openEdit(payment)}
-                          title="Edit payment"
-                          className="rounded-lg p-2 text-amber-600 hover:bg-amber-50 dark:hover:bg-slate-800"
-                        >
-                          <Pencil size={17} />
-                        </button>
-                        <button
-                          onClick={() => deletePayment(payment)}
-                          title="Delete payment"
-                          className="rounded-lg p-2 text-red-600 hover:bg-red-50 dark:hover:bg-slate-800"
-                        >
-                          <Trash2 size={17} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+              <tbody className="divide-y divide-gray-100">
 
-                {!loading && filteredPayments.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="px-3 py-12 text-center text-slate-500 dark:text-slate-400">
-                      No payment records found.
-                    </td>
-                  </tr>
-                )}
+                {filteredPayments.map((payment) => {
+                  const batchName = getBatchName(
+                    payment.batch,
+                    payment.batchDetails
+                  );
+
+                  const batchCourse = getBatchCourse(
+                    payment.batch,
+                    payment.batchDetails
+                  );
+
+                  const batchTrainer = getBatchTrainer(
+                    payment.batch,
+                    payment.batchDetails
+                  );
+
+                  return (
+                    <tr
+                      key={payment._id}
+                      className="hover:bg-gray-50"
+                    >
+
+                      {/* STUDENT */}
+
+                      <td className="px-5 py-4">
+                        <p className="font-semibold text-gray-800">
+                          {getStudentName(payment.student)}
+                        </p>
+
+                        <p className="mt-1 text-xs text-gray-400">
+                          {payment.student?.userId || ""}
+                        </p>
+                      </td>
+
+                      {/* BATCH */}
+
+                      <td className="px-5 py-4">
+                        <p className="font-semibold text-gray-800">
+                          {batchName}
+                        </p>
+
+                        <p className="mt-1 text-xs text-gray-500">
+                          {batchCourse || "Course not assigned"}
+                        </p>
+
+                        <p className="mt-1 text-xs text-gray-400">
+                          Trainer: {batchTrainer || "Not Assigned"}
+                        </p>
+                      </td>
+
+                      {/* AMOUNT */}
+
+                      <td className="px-5 py-4 font-semibold text-gray-900">
+                        {formatAmount(payment.amount)}
+                      </td>
+
+                      {/* DUE DATE */}
+
+                      <td className="px-5 py-4 text-sm text-gray-600">
+                        {formatDate(payment.dueDate)}
+                      </td>
+
+                      {/* METHOD */}
+
+                      <td className="px-5 py-4 text-sm text-gray-600">
+                        {payment.method || "—"}
+                      </td>
+
+                      {/* REFERENCE */}
+
+                      <td className="px-5 py-4 text-sm text-gray-600">
+                        {payment.reference || "—"}
+                      </td>
+
+                      {/* STATUS */}
+
+                      <td className="px-5 py-4">
+                        <StatusBadge status={payment.status} />
+                      </td>
+
+                      {/* ACTIONS */}
+
+                      <td className="px-5 py-4">
+                        <div className="flex justify-end gap-2">
+
+                          <button
+                            onClick={() => openEditModal(payment)}
+                            title="Edit payment"
+                            className="rounded-lg border border-blue-200 p-2 text-blue-700 hover:bg-blue-50"
+                          >
+                            <Edit size={16} />
+                          </button>
+
+                          <button
+                            onClick={() => handleDelete(payment._id)}
+                            title="Delete payment"
+                            className="rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+
+                        </div>
+                      </td>
+
+                    </tr>
+                  );
+                })}
+
               </tbody>
             </table>
-          </div>
 
-          <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
-            Showing {filteredPayments.length} of {payments.length} payment records.
-          </p>
-
-          {!loading && error && (
-            <button
-              onClick={loadPayments}
-              className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-            >
-              Retry loading
-            </button>
-          )}
-        </section>
-
-        {modal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4">
-            <div className="my-auto w-full max-w-2xl rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900 sm:p-6">
-              <div className="mb-5 flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl font-bold">
-                    {modal === "add"
-                      ? "Add Payment"
-                      : modal === "edit"
-                      ? "Edit Payment"
-                      : "Payment Details"}
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                    {modal === "view"
-                      ? selectedPayment?.id
-                      : "Enter payment record details"}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setModal(null)}
-                  className="rounded-lg p-2 hover:bg-slate-100 dark:hover:bg-slate-800"
-                  aria-label="Close modal"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-
-              {modal === "view" ? (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {[
-                    ["Student", selectedPayment?.student],
-                    ["Email", selectedPayment?.email],
-                    ["Course", selectedPayment?.course],
-                    ["Amount", formatMoney(selectedPayment?.amount)],
-                    ["Method", selectedPayment?.method],
-                    ["Transaction ID", selectedPayment?.transactionId],
-                    ["Payment Date", selectedPayment?.date],
-                    ["Status", selectedPayment?.status],
-                  ].map(([label, value]) => (
-                    <div key={label} className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800">
-                      <p className="text-xs text-slate-500 dark:text-slate-400">{label}</p>
-                      <p className="mt-1 break-words font-semibold">{value || "—"}</p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <form onSubmit={savePayment} className="space-y-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <label className="text-sm font-medium">
-                      Student Name *
-                      <input
-                        required
-                        value={form.student}
-                        onChange={(e) => updateForm("student", e.target.value)}
-                        className={`${inputClass} mt-1.5`}
-                        placeholder="Student name"
-                      />
-                    </label>
-
-                    <label className="text-sm font-medium">
-                      Email
-                      <input
-                        type="email"
-                        value={form.email}
-                        onChange={(e) => updateForm("email", e.target.value)}
-                        className={`${inputClass} mt-1.5`}
-                        placeholder="student@example.com"
-                      />
-                    </label>
-
-                    <label className="text-sm font-medium sm:col-span-2">
-                      Course *
-                      <input
-                        required
-                        value={form.course}
-                        onChange={(e) => updateForm("course", e.target.value)}
-                        className={`${inputClass} mt-1.5`}
-                        placeholder="Course name"
-                      />
-                    </label>
-
-                    <label className="text-sm font-medium">
-                      Amount (INR) *
-                      <input
-                        required
-                        type="number"
-                        min="1"
-                        step="0.01"
-                        value={form.amount}
-                        onChange={(e) => updateForm("amount", e.target.value)}
-                        className={`${inputClass} mt-1.5`}
-                        placeholder="15000"
-                      />
-                    </label>
-
-                    <label className="text-sm font-medium">
-                      Payment Method
-                      <select
-                        value={form.method}
-                        onChange={(e) => updateForm("method", e.target.value)}
-                        className={`${inputClass} mt-1.5`}
-                      >
-                        <option>UPI</option>
-                        <option>Credit Card</option>
-                        <option>Debit Card</option>
-                        <option>Net Banking</option>
-                        <option>Cash</option>
-                      </select>
-                    </label>
-
-                    <label className="text-sm font-medium">
-                      Transaction ID
-                      <input
-                        value={form.transactionId}
-                        onChange={(e) => updateForm("transactionId", e.target.value)}
-                        className={`${inputClass} mt-1.5`}
-                        placeholder="Transaction reference"
-                      />
-                    </label>
-
-                    <label className="text-sm font-medium">
-                      Payment Date
-                      <input
-                        required
-                        type="date"
-                        value={form.date}
-                        onChange={(e) => updateForm("date", e.target.value)}
-                        className={`${inputClass} mt-1.5`}
-                      />
-                    </label>
-
-                    <label className="text-sm font-medium">
-                      Status
-                      <select
-                        value={form.status}
-                        onChange={(e) => updateForm("status", e.target.value)}
-                        className={`${inputClass} mt-1.5`}
-                      >
-                        <option>Pending</option>
-                        <option>Paid</option>
-                        <option>Failed</option>
-                        <option>Refunded</option>
-                      </select>
-                    </label>
-                  </div>
-
-                  <div className="flex justify-end gap-3 border-t border-slate-200 pt-4 dark:border-slate-700">
-                    <button
-                      type="button"
-                      onClick={() => setModal(null)}
-                      disabled={saving}
-                      className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold dark:border-slate-700"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={saving}
-                      className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-                    >
-                      {saving ? "Saving..." : "Save Payment"}
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
           </div>
         )}
+
       </div>
-    </main>
+
+      {/* ==========================================
+          ADD / EDIT PAYMENT MODAL
+      ========================================== */}
+
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4">
+
+          <div className="my-auto w-full max-w-2xl rounded-2xl bg-white shadow-xl">
+
+            {/* MODAL HEADER */}
+
+            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">
+                  {editingPayment
+                    ? "Edit Payment"
+                    : "Create Payment"}
+                </h2>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  Enter student, batch and payment details.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeModal}
+                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
+              >
+                <X size={21} />
+              </button>
+
+            </div>
+
+            {/* FORM */}
+
+            <form onSubmit={handleSubmit}>
+
+              <div className="grid grid-cols-1 gap-5 p-6 sm:grid-cols-2">
+
+                {/* FORM ERROR */}
+
+                {error && (
+                  <div className="col-span-full flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                    <AlertCircle size={18} />
+                    {error}
+                  </div>
+                )}
+
+                {/* STUDENT */}
+
+                <div className="sm:col-span-2">
+
+                  <label className="mb-2 block text-sm font-semibold text-gray-700">
+                    Select Student *
+                  </label>
+
+                  <select
+                    name="student"
+                    value={formData.student}
+                    onChange={handleChange}
+                    required
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="">
+                      Choose Student
+                    </option>
+
+                    {students.map((student) => (
+                      <option
+                        key={student._id}
+                        value={student._id}
+                      >
+                        {student.name} (
+                        {student.userId || student.email}
+                        )
+                      </option>
+                    ))}
+
+                  </select>
+
+                </div>
+
+                {/* BATCH */}
+
+                <div className="sm:col-span-2">
+
+                  <label className="mb-2 block text-sm font-semibold text-gray-700">
+                    Select Batch
+                  </label>
+
+                  <select
+                    name="batch"
+                    value={formData.batch}
+                    onChange={handleChange}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="">
+                      Select Batch (Optional)
+                    </option>
+
+                    {batches.map((batch) => (
+                      <option
+                        key={batch._id}
+                        value={batch._id}
+                      >
+                        {batch.batch}
+                        {batch.course
+                          ? ` - ${batch.course}`
+                          : ""}
+                        {batch.trainer
+                          ? ` | Trainer: ${batch.trainer}`
+                          : ""}
+                      </option>
+                    ))}
+
+                  </select>
+
+                  <p className="mt-1.5 text-xs text-gray-500">
+                    {batches.length > 0
+                      ? `${batches.length} batches available. Select the student's batch.`
+                      : "No batches loaded. Check the batches API response and authentication."}
+                  </p>
+
+                </div>
+
+                {/* AMOUNT */}
+
+                <div>
+
+                  <label className="mb-2 block text-sm font-semibold text-gray-700">
+                    Amount (₹) *
+                  </label>
+
+                  <input
+                    type="number"
+                    name="amount"
+                    value={formData.amount}
+                    onChange={handleChange}
+                    min="1"
+                    step="0.01"
+                    required
+                    placeholder="Enter amount"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  />
+
+                </div>
+
+                {/* CURRENCY */}
+
+                <div>
+
+                  <label className="mb-2 block text-sm font-semibold text-gray-700">
+                    Currency
+                  </label>
+
+                  <select
+                    name="currency"
+                    value={formData.currency}
+                    onChange={handleChange}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  >
+                    <option value="INR">
+                      INR - Indian Rupee
+                    </option>
+                  </select>
+
+                </div>
+
+                {/* DUE DATE */}
+
+                <div>
+
+                  <label className="mb-2 block text-sm font-semibold text-gray-700">
+                    Due Date *
+                  </label>
+
+                  <input
+                    type="date"
+                    name="dueDate"
+                    value={formData.dueDate}
+                    onChange={handleChange}
+                    required
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  />
+
+                </div>
+
+                {/* PAYMENT METHOD */}
+
+                <div>
+
+                  <label className="mb-2 block text-sm font-semibold text-gray-700">
+                    Payment Method *
+                  </label>
+
+                  <select
+                    name="method"
+                    value={formData.method}
+                    onChange={handleChange}
+                    required
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  >
+
+                    {paymentMethods.map((group) => (
+                      <optgroup
+                        key={group.label}
+                        label={group.label}
+                      >
+                        {group.options.map((method) => (
+                          <option
+                            key={method}
+                            value={method}
+                          >
+                            {method}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+
+                  </select>
+
+                </div>
+
+                {/* PAYMENT STATUS */}
+
+                <div>
+
+                  <label className="mb-2 block text-sm font-semibold text-gray-700">
+                    Payment Status
+                  </label>
+
+                  <select
+                    name="status"
+                    value={formData.status}
+                    onChange={handleChange}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  >
+                    {paymentStatuses.map((status) => (
+                      <option
+                        key={status}
+                        value={status}
+                      >
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+
+                </div>
+
+                {/* PAYMENT DATE */}
+
+                {formData.status === "Paid" && (
+                  <div>
+
+                    <label className="mb-2 block text-sm font-semibold text-gray-700">
+                      Payment Date
+                    </label>
+
+                    <input
+                      type="date"
+                      name="paidAt"
+                      value={formData.paidAt}
+                      onChange={handleChange}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                    />
+
+                  </div>
+                )}
+
+                {/* REFERENCE */}
+
+                <div className="sm:col-span-2">
+
+                  <label className="mb-2 block text-sm font-semibold text-gray-700">
+                    Transaction Reference
+                  </label>
+
+                  <input
+                    type="text"
+                    name="reference"
+                    value={formData.reference}
+                    onChange={handleChange}
+                    placeholder="Enter transaction ID / reference number"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  />
+
+                </div>
+
+                {/* NOTES */}
+
+                <div className="sm:col-span-2">
+
+                  <label className="mb-2 block text-sm font-semibold text-gray-700">
+                    Notes
+                  </label>
+
+                  <textarea
+                    name="notes"
+                    value={formData.notes}
+                    onChange={handleChange}
+                    rows={3}
+                    placeholder="Enter additional payment details..."
+                    className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  />
+
+                </div>
+
+              </div>
+
+              {/* MODAL FOOTER */}
+
+              <div className="flex justify-end gap-3 border-t border-gray-200 px-6 py-4">
+
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  disabled={saving}
+                  className="rounded-lg border border-gray-300 px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex items-center gap-2 rounded-lg bg-[#102e60] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#183d78] disabled:opacity-50"
+                >
+
+                  {saving ? (
+                    <>
+                      <Loader2
+                        size={17}
+                        className="animate-spin"
+                      />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 size={17} />
+                      {editingPayment
+                        ? "Update Payment"
+                        : "Create Payment"}
+                    </>
+                  )}
+
+                </button>
+
+              </div>
+
+            </form>
+
+          </div>
+        </div>
+      )}
+
+    </div>
   );
 }

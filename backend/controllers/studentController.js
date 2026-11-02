@@ -11,6 +11,7 @@ import Notification from "../models/Notification.js";
 import Payment from "../models/Payment.js";
 import Resume from "../models/Resume.js";
 import MockInterview from "../models/MockInterview.js";
+import Batch from "../models/Batch.js";
 import Job from "../models/Job.js";
 import StudentProgress from "../models/StudentProgress.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -22,20 +23,90 @@ const courseAccessFilter = (user) => ({
   $or: [
     { students: user._id },
     { _id: { $in: user.enrolledCourses || [] } },
-    ...(user.batchId ? [{ batchId: user.batchId }] : [])
+    ...(user.batch ? [{ batch: user.batch }] : [])
   ]
 });
 
 /* Profile */
+
+/* Profile */
 export const getProfile = asyncHandler(async (req, res) => {
-  res.json({
+  const studentId = req.user._id || req.user.id;
+
+  if (!studentId || !mongoose.isValidObjectId(studentId)) {
+    throw new ApiError(400, "Invalid student ID.");
+  }
+
+  const student = await User.findById(studentId).lean();
+
+  if (!student) {
+    throw new ApiError(404, "Student not found.");
+  }
+
+  let batchDetails = null;
+
+  // Find batch using batchId
+  if (student.batchId && mongoose.isValidObjectId(student.batchId)) {
+    batchDetails = await Batch.findById(student.batchId)
+      .populate("trainer", "name userId email")
+      .lean();
+  }
+
+  // Fallback: find batch using batch name
+  if (!batchDetails && typeof student.batch === "string") {
+    batchDetails = await Batch.findOne({
+      batch: student.batch.trim()
+    })
+      .populate("trainer", "name userId email")
+      .lean();
+  }
+
+  const batchName =
+    batchDetails?.batch ||
+    (typeof student.batch === "string" ? student.batch : null) ||
+    req.user.batch ||
+    null;
+
+  res.status(200).json({
+    success: true,
     user: {
-      _id: req.user._id, userId: req.user.userId, name: req.user.name,
-      email: req.user.email, phone: req.user.phone, role: req.user.role,
-      batchId: req.user.batchId, batchName: req.user.batchName
+      _id: student._id,
+      userId: student.userId,
+      name: student.name,
+      email: student.email,
+      phone: student.phone || "",
+      role: student.role,
+      batch: batchName,
+
+      batchDetails: batchDetails
+        ? {
+            _id: batchDetails._id,
+            batch: batchDetails.batch,
+            course: batchDetails.course,
+
+            // Trainer now contains populated details
+            trainer: batchDetails.trainer
+              ? {
+                  _id: batchDetails.trainer._id,
+                  name: batchDetails.trainer.name,
+                  userId: batchDetails.trainer.userId,
+                  email: batchDetails.trainer.email
+                }
+              : null,
+
+            startDate: batchDetails.startDate,
+            durationMonths: batchDetails.durationMonths,
+            status: batchDetails.status,
+            description: batchDetails.description,
+            isActive: batchDetails.isActive
+          }
+        : null,
+
+      mustChangePassword: student.mustChangePassword
     }
   });
 });
+
 
 export const updateProfile = asyncHandler(async (req, res) => {
   const { name, email, phone } = req.body;
@@ -64,28 +135,67 @@ export const updateProfile = asyncHandler(async (req, res) => {
 
 /* Courses and resources */
 export const getCourses = asyncHandler(async (req, res) => {
+  const studentId = req.user._id || req.user.id;
+
   const courses = await Course.find(courseAccessFilter(req.user))
-    .select("courseName description thumbnail trainer batchId lessons isPublished createdAt")
+    .select("title courseName name description thumbnail trainer batchId lessons isPublished createdAt")
     .populate("trainer", "name")
     .lean();
 
-  const progress = await StudentProgress.find({ student: req.user._id }).lean();
-  const progressByCourse = new Map(progress.map((item) => [idOf(item.course), item]));
+  const progress = await StudentProgress.find({
+    student: studentId
+  }).lean();
+
+  const progressByCourse = new Map(
+    progress.map((item) => [idOf(item.course), item])
+  );
 
   const result = courses.map((course) => {
     const p = progressByCourse.get(idOf(course._id));
-    const totalLessons = p?.totalLessons || course.lessons?.length || 0;
-    const completedLessons = p?.completedLessonCount ?? p?.completedLessons?.length ?? 0;
-    const progressPercent = p?.progressPercent ??
-      (totalLessons ? Math.round((completedLessons / totalLessons) * 100) : 0);
+
+    const totalLessons =
+      p?.totalLessons || course.lessons?.length || 0;
+
+    const completedLessons =
+      p?.completedLessonCount ??
+      p?.completedLessons?.length ??
+      0;
+
+    const progressPercent =
+      p?.progressPercent ??
+      (totalLessons
+        ? Math.round((completedLessons / totalLessons) * 100)
+        : 0);
 
     return {
-      ...course,
-      courseName: course.courseName,
-      trainerName: course.trainer?.name || "Trainer to be announced",
+      _id: course._id,
+
+      // Course name
+      courseName:
+        course.courseName ||
+        course.title ||
+        course.name ||
+        "Untitled Course",
+
+      description: course.description || "",
+      thumbnail: course.thumbnail || null,
+
+      trainer: course.trainer || null,
+      trainerName:
+        course.trainer?.name || "Trainer to be announced",
+
+      batchId: course.batchId || null,
+
       totalLessons,
       completedLessons,
-      progress: Math.min(100, Math.max(0, progressPercent))
+
+      progress: Math.min(
+        100,
+        Math.max(0, progressPercent)
+      ),
+
+      isPublished: course.isPublished,
+      createdAt: course.createdAt
     };
   });
 
@@ -115,7 +225,7 @@ export const getLiveClasses = asyncHandler(async (req, res) => {
   const filter = {
     $or: [
       { students: req.user._id },
-      ...(req.user.batchId ? [{ batchId: req.user.batchId }] : []),
+      ...(req.user.batch ? [{ batch: req.user.batch }] : []),
       ...(req.user.enrolledCourses?.length ? [{ course: { $in: req.user.enrolledCourses } }] : [])
     ]
   };
@@ -148,7 +258,7 @@ export const setLiveClassReminder = asyncHandler(async (req, res) => {
 
   const allowed =
     (liveClass.students || []).some((studentId) => idOf(studentId) === idOf(req.user._id)) ||
-    (req.user.batchId && idOf(liveClass.batchId) === idOf(req.user.batchId)) ||
+    (req.user.batch && idOf(liveClass.batch) === idOf(req.user.batch)) ||
     (liveClass.course && (req.user.enrolledCourses || []).some((courseId) => idOf(courseId) === idOf(liveClass.course)));
 
   if (!allowed) throw new ApiError(403, "You are not assigned to this live class.");
@@ -261,12 +371,79 @@ export const getProgress = asyncHandler(async (req, res) => {
 
 /* Payments: records only. Do not create or mark payments paid from this endpoint. */
 export const getPayments = asyncHandler(async (req, res) => {
-  const payments = await Payment.find({ student: req.user._id })
-    .sort({ paymentDate: -1, createdAt: -1 }).lean();
+  // Fetch only logged-in student's payments
+  const payments = await Payment.find({
+    student: req.user._id,
+  })
+    .populate({
+      path: "student",
+      select: "name userId email phone",
+    })
+    .populate({
+      path: "batch",
+      select: "batch name code course trainer",
+      populate: {
+        path: "trainer",
+        select: "name userId email phone",
+      },
+    })
+    .populate({
+      path: "recordedBy",
+      select: "name userId",
+    })
+    .sort({
+      createdAt: -1,
+      dueDate: -1,
+    })
+    .lean();
+
+  // Calculate total paid amount
   const paidTotal = payments
     .filter((payment) => payment.status === "Paid")
-    .reduce((sum, payment) => sum + payment.amount, 0);
-  res.json({ payments, paidTotal, currency: "INR" });
+    .reduce(
+      (sum, payment) => sum + Number(payment.amount || 0),
+      0
+    );
+
+  // Calculate pending amount
+  const pendingTotal = payments
+    .filter((payment) => payment.status === "Pending")
+    .reduce(
+      (sum, payment) => sum + Number(payment.amount || 0),
+      0
+    );
+
+  // Calculate failed amount
+  const failedTotal = payments
+    .filter((payment) => payment.status === "Failed")
+    .reduce(
+      (sum, payment) => sum + Number(payment.amount || 0),
+      0
+    );
+
+  // Calculate refunded amount
+  const refundedTotal = payments
+    .filter((payment) => payment.status === "Refunded")
+    .reduce(
+      (sum, payment) => sum + Number(payment.amount || 0),
+      0
+    );
+
+  return res.status(200).json({
+    success: true,
+    message: "Student payment records fetched successfully.",
+
+    summary: {
+      totalPayments: payments.length,
+      paidTotal,
+      pendingTotal,
+      failedTotal,
+      refundedTotal,
+      currency: "INR",
+    },
+
+    payments,
+  });
 });
 
 /* Career and placements */

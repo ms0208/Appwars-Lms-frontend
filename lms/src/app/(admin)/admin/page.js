@@ -1,110 +1,273 @@
+
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import {
+  Users,
+  GraduationCap,
+  BookOpen,
+  Wallet,
+  RefreshCw,
+  AlertCircle,
+} from "lucide-react";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
-export default function AdminDashboard() {
-  const [stats, setStats] = useState([
-    { title: "Total Students", value: "—", change: "Loading..." },
-    { title: "Total Trainers", value: "—", change: "Loading..." },
-    { title: "Active Courses", value: "—", change: "Loading..." },
-    { title: "Pending Payments", value: "—", change: "Loading..." },
-  ]);
+const INITIAL_STATS = [
+  {
+    title: "Total Students",
+    value: "—",
+    change: "Loading...",
+    icon: Users,
+  },
+  {
+    title: "Total Trainers",
+    value: "—",
+    change: "Loading...",
+    icon: GraduationCap,
+  },
+  {
+    title: "Active Courses",
+    value: "—",
+    change: "Loading...",
+    icon: BookOpen,
+  },
+  {
+    title: "Pending Payments",
+    value: "—",
+    change: "Loading...",
+    icon: Wallet,
+  },
+];
 
+function formatNumber(value) {
+  return Number(value || 0).toLocaleString("en-IN");
+}
+
+function formatCurrency(value) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(Number(value) || 0);
+}
+
+function formatDate(date) {
+  if (!date) return "";
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) return "";
+
+  return parsedDate.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getToken() {
+  if (typeof window === "undefined") return "";
+
+  return (
+    sessionStorage.getItem("token") ||
+    localStorage.getItem("appwars_token") ||
+    localStorage.getItem("token") ||
+    ""
+  );
+}
+
+// --------------------------------------------------
+// MAIN DASHBOARD
+// --------------------------------------------------
+
+export default function AdminDashboard() {
+  const [stats, setStats] = useState(INITIAL_STATS);
   const [activities, setActivities] = useState([]);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    const fetchDashboard = async () => {
-      try {
-        setLoading(true);
-        setError("");
+  // --------------------------------------------------
+  // API REQUEST
+  // --------------------------------------------------
 
-        // Change "token" if your login flow uses another storage key.
-        const token =
-          localStorage.getItem("token") ||
-          sessionStorage.getItem("token");
+  const apiRequest = async (endpoint, token) => {
+    const response = await fetch(`${API_URL}${endpoint}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+    });
 
-        if (!token) {
-          throw new Error("Authentication token not found. Please sign in again.");
-        }
+    const result = await response.json().catch(() => ({}));
 
-        const response = await fetch(`${API_URL}/api/admin/dashboard`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          cache: "no-store",
-        });
+    if (!response.ok || result.success === false) {
+      throw new Error(
+        result.message || `Request failed (${response.status})`
+      );
+    }
 
-        const data = await response.json();
+    return result;
+  };
 
-        if (!response.ok || !data.success) {
-          throw new Error(data.message || "Failed to fetch dashboard data.");
-        }
+  // --------------------------------------------------
+  // FETCH DASHBOARD DATA
+  // --------------------------------------------------
 
-        const dashboardStats = data.stats || {};
+  const fetchDashboard = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
 
-        setStats([
-          {
-            title: "Total Students",
-            value: Number(dashboardStats.totalStudents || 0).toLocaleString("en-IN"),
-            change: "Currently active",
-          },
-          {
-            title: "Total Trainers",
-            value: Number(dashboardStats.totalTrainers || 0).toLocaleString("en-IN"),
-            change: "Currently active",
-          },
-          {
-            title: "Active Courses",
-            value: Number(dashboardStats.activeCourses || 0).toLocaleString("en-IN"),
-            change: "Across all courses",
-          },
-          {
-            title: "Pending Payments",
-            value: `₹${Number(
-              dashboardStats.pendingPayments || 0
-            ).toLocaleString("en-IN")}`,
-            change: "Requires attention",
-          },
-        ]);
+      const token = getToken();
 
-        setActivities(
-          (data.recentActivity || []).map((activity) => ({
-            text: activity.text || "Recent activity",
-            date: activity.date,
-          }))
+      if (!token) {
+        throw new Error(
+          "Authentication token not found. Please sign in again."
         );
-      } catch (err) {
-        setError(err.message || "Unable to load dashboard.");
-      } finally {
-        setLoading(false);
       }
-    };
 
-    fetchDashboard();
+      // Fetch dashboard and payment summary together.
+      const [dashboardResult, paymentResult] = await Promise.all([
+        apiRequest("/api/admin/dashboard", token),
+
+        apiRequest("/api/admin/payments?limit=500", token).catch(
+          (err) => {
+            console.error("Payment summary loading error:", err);
+            return null;
+          }
+        ),
+      ]);
+
+      // --------------------------------------------------
+      // DASHBOARD RESPONSE
+      // --------------------------------------------------
+
+      const dashboardData =
+        dashboardResult.data || dashboardResult;
+
+      const dashboardStats =
+        dashboardData.stats ||
+        dashboardData.metrics ||
+        {};
+
+      // --------------------------------------------------
+      // PAYMENT SUMMARY
+      // --------------------------------------------------
+
+      const paymentSummary =
+        paymentResult?.summary || {};
+
+      // Priority:
+      // 1. Payment API summary.remainingAmount
+      // 2. Dashboard stats.pendingPayments
+      // 3. Dashboard metrics.pendingFeeAccounts
+      // 4. Dashboard feeStatus.totalPending
+
+      let pendingAmount = 0;
+
+      if (
+        paymentSummary.remainingAmount !== undefined &&
+        paymentSummary.remainingAmount !== null
+      ) {
+        pendingAmount = Number(
+          paymentSummary.remainingAmount
+        ) || 0;
+      } else if (
+        dashboardStats.pendingPayments !== undefined
+      ) {
+        pendingAmount =
+          Number(dashboardStats.pendingPayments) || 0;
+      } else if (
+        dashboardStats.pendingFeeAccounts !== undefined
+      ) {
+        pendingAmount =
+          Number(dashboardStats.pendingFeeAccounts) || 0;
+      } else if (
+        dashboardData.feeStatus?.totalPending !== undefined
+      ) {
+        pendingAmount =
+          Number(dashboardData.feeStatus.totalPending) || 0;
+      }
+
+      // --------------------------------------------------
+      // UPDATE STATISTICS
+      // --------------------------------------------------
+
+      setStats([
+        {
+          title: "Total Students",
+          value: formatNumber(
+            dashboardStats.totalStudents
+          ),
+          change: "Currently active",
+          icon: Users,
+        },
+        {
+          title: "Total Trainers",
+          value: formatNumber(
+            dashboardStats.totalTrainers
+          ),
+          change: "Currently active",
+          icon: GraduationCap,
+        },
+        {
+          title: "Active Courses",
+          value: formatNumber(
+            dashboardStats.activeCourses
+          ),
+          change: "Across all courses",
+          icon: BookOpen,
+        },
+        {
+          title: "Pending Payments",
+          value: formatCurrency(pendingAmount),
+          change: "Outstanding course fee balance",
+          icon: Wallet,
+        },
+      ]);
+
+      // --------------------------------------------------
+      // RECENT ACTIVITY
+      // --------------------------------------------------
+
+      const recentActivities =
+        dashboardData.recentActivity ||
+        dashboardData.activities ||
+        [];
+
+      setActivities(
+        recentActivities.map((activity) => ({
+          text: activity.text || "Recent activity",
+          date: activity.date || activity.createdAt || null,
+        }))
+      );
+    } catch (err) {
+      console.error("Dashboard loading error:", err);
+      setError(err.message || "Unable to load dashboard.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const formatDate = (date) => {
-    if (!date) return "";
+  // --------------------------------------------------
+  // INITIAL LOAD
+  // --------------------------------------------------
 
-    const parsedDate = new Date(date);
+  useEffect(() => {
+    fetchDashboard();
+  }, [fetchDashboard]);
 
-    if (Number.isNaN(parsedDate.getTime())) return "";
-
-    return parsedDate.toLocaleString("en-IN", {
-      day: "2-digit",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
+  // --------------------------------------------------
+  // QUICK ACTIONS
+  // --------------------------------------------------
 
   const quickActions = [
     ["Manage Students", "/admin/students"],
@@ -113,30 +276,54 @@ export default function AdminDashboard() {
     ["Payment Reports", "/admin/payments"],
   ];
 
+  // --------------------------------------------------
+  // UI
+  // --------------------------------------------------
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-[#102f63]">
-          Welcome to Admin Portal
-        </h1>
+      {/* HEADER */}
 
-        <p className="mt-1 text-sm text-slate-500">
-          Manage students, trainers, courses, batches, and payments.
-        </p>
+      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-[#102f63]">
+            Welcome to Admin Portal
+          </h1>
+
+          <p className="mt-1 text-sm text-slate-500">
+            Manage students, trainers, courses, batches, and payments.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={fetchDashboard}
+          disabled={loading}
+          className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-[#102f63] transition hover:bg-blue-50 disabled:opacity-60"
+        >
+          <RefreshCw
+            size={16}
+            className={loading ? "animate-spin" : ""}
+          />
+          Refresh
+        </button>
       </div>
 
-      {/* Error message */}
+      {/* ERROR MESSAGE */}
+
       {error && (
         <div
           role="alert"
           className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
         >
-          <p>{error}</p>
+          <div className="flex items-center gap-2">
+            <AlertCircle size={18} />
+            <p>{error}</p>
+          </div>
 
           <button
             type="button"
-            onClick={() => window.location.reload()}
+            onClick={fetchDashboard}
             className="rounded-lg border border-red-300 px-3 py-2 font-semibold hover:bg-red-100"
           >
             Retry
@@ -144,31 +331,47 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* Statistics */}
+      {/* STATISTICS */}
+
       <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-        {stats.map((stat) => (
-          <div
-            key={stat.title}
-            className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-          >
-            <p className="text-sm font-medium text-slate-500">
-              {stat.title}
-            </p>
+        {stats.map((stat) => {
+          const Icon = stat.icon;
 
-            <h2 className="mt-3 break-words text-3xl font-bold text-[#102f63]">
-              {stat.value}
-            </h2>
+          return (
+            <div
+              key={stat.title}
+              className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-slate-500">
+                    {stat.title}
+                  </p>
 
-            <p className="mt-3 text-xs text-slate-500">
-              {loading ? "Fetching data..." : stat.change}
-            </p>
-          </div>
-        ))}
+                  <h2 className="mt-3 break-words text-3xl font-bold text-[#102f63]">
+                    {stat.value}
+                  </h2>
+
+                  <p className="mt-3 text-xs text-slate-500">
+                    {loading ? "Fetching data..." : stat.change}
+                  </p>
+                </div>
+
+                <div className="rounded-xl bg-blue-50 p-3 text-[#102f63]">
+                  <Icon size={23} />
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
-      {/* Quick Actions and Recent Activity */}
+      {/* QUICK ACTIONS AND RECENT ACTIVITY */}
+
       <div className="grid gap-6 xl:grid-cols-2">
-        <section className="rounded-2xl border border-slate-200 bg-white p-6">
+        {/* QUICK ACTIONS */}
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-bold text-[#102f63]">
             Quick Actions
           </h2>
@@ -186,7 +389,9 @@ export default function AdminDashboard() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-6">
+        {/* RECENT ACTIVITY */}
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-bold text-[#102f63]">
               Recent Activity
