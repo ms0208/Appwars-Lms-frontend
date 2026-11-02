@@ -151,7 +151,7 @@ export const getCourses = asyncHandler(async (req, res) => {
   );
 
   const result = courses.map((course) => {
-    const p = progressByCourse.get(idOf(course._id));
+    const p = progressByCourse.get(idOf(course.id));
 
     const totalLessons =
       p?.totalLessons || course.lessons?.length || 0;
@@ -168,7 +168,7 @@ export const getCourses = asyncHandler(async (req, res) => {
         : 0);
 
     return {
-      _id: course._id,
+      _id: course.id,
 
       // Course name
       courseName:
@@ -204,8 +204,8 @@ export const getCourses = asyncHandler(async (req, res) => {
 
 export const getResources = asyncHandler(async (req, res) => {
   const courses = await Course.find(courseAccessFilter(req.user)).select("_id courseName").lean();
-  const courseIds = courses.map((course) => course._id);
-  const courseNames = new Map(courses.map((course) => [idOf(course._id), course.courseName]));
+  const courseIds = courses.map((course) => course.id);
+  const courseNames = new Map(courses.map((course) => [idOf(course.id), course.courseName]));
 
   const resources = await LearningResource.find({
     course: { $in: courseIds }, isPublished: true
@@ -224,7 +224,7 @@ export const getResources = asyncHandler(async (req, res) => {
 export const getLiveClasses = asyncHandler(async (req, res) => {
   const filter = {
     $or: [
-      { students: req.user._id },
+      { students: req.user.id },
       ...(req.user.batch ? [{ batch: req.user.batch }] : []),
       ...(req.user.enrolledCourses?.length ? [{ course: { $in: req.user.enrolledCourses } }] : [])
     ]
@@ -235,7 +235,7 @@ export const getLiveClasses = asyncHandler(async (req, res) => {
     .populate("course", "courseName")
     .sort({ date: 1 }).lean();
 
-  const reminderDocs = await StudentReminder.find({ student: req.user._id }).lean();
+  const reminderDocs = await StudentReminder.find({ student: req.user.id }).lean();
   const reminderMap = new Map(reminderDocs.map((item) => [idOf(item.liveClass), item.enabled]));
 
   res.json({
@@ -244,7 +244,7 @@ export const getLiveClasses = asyncHandler(async (req, res) => {
       trainerName: item.trainer?.name || "Trainer to be announced",
       courseName: item.course?.courseName || "",
       meetingUrl: item.meetingUrl,
-      reminderEnabled: reminderMap.get(idOf(item._id)) || false
+      reminderEnabled: reminderMap.get(idOf(item.id)) || false
     }))
   });
 });
@@ -257,7 +257,7 @@ export const setLiveClassReminder = asyncHandler(async (req, res) => {
   if (!liveClass) throw new ApiError(404, "Live class not found.");
 
   const allowed =
-    (liveClass.students || []).some((studentId) => idOf(studentId) === idOf(req.user._id)) ||
+    (liveClass.students || []).some((studentId) => idOf(studentId) === idOf(req.user.id)) ||
     (req.user.batch && idOf(liveClass.batch) === idOf(req.user.batch)) ||
     (liveClass.course && (req.user.enrolledCourses || []).some((courseId) => idOf(courseId) === idOf(liveClass.course)));
 
@@ -265,7 +265,7 @@ export const setLiveClassReminder = asyncHandler(async (req, res) => {
 
   const enabled = Boolean(req.body.enabled);
   const reminder = await StudentReminder.findOneAndUpdate(
-    { student: req.user._id, liveClass: id },
+    { student: req.user.id, liveClass: id },
     { $set: { enabled } },
     { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
   );
@@ -275,7 +275,7 @@ export const setLiveClassReminder = asyncHandler(async (req, res) => {
 
 /* Doubts */
 export const getDoubts = asyncHandler(async (req, res) => {
-  const doubts = await Doubt.find({ student: req.user._id })
+  const doubts = await Doubt.find({ student: req.user.id })
     .populate("course", "courseName")
     .sort({ createdAt: -1 }).lean();
   res.json({ doubts });
@@ -299,7 +299,7 @@ export const createDoubt = asyncHandler(async (req, res) => {
   }
 
   const doubt = await Doubt.create({
-    student: req.user._id,
+    student: req.user.id,
     title: String(title).trim(),
     question: String(question).trim(),
     course: courseId,
@@ -311,7 +311,7 @@ export const createDoubt = asyncHandler(async (req, res) => {
 
 /* Notifications */
 export const getNotifications = asyncHandler(async (req, res) => {
-  const notifications = await Notification.find({ recipient: req.user._id })
+  const notifications = await Notification.find({ recipient: req.user.id })
     .sort({ createdAt: -1 }).limit(100).lean();
   res.json({
     notifications,
@@ -322,7 +322,7 @@ export const getNotifications = asyncHandler(async (req, res) => {
 export const markNotificationRead = asyncHandler(async (req, res) => {
   if (!validId(req.params.id)) throw new ApiError(400, "Invalid notification ID.");
   const notification = await Notification.findOneAndUpdate(
-    { _id: req.params.id, recipient: req.user._id },
+    { _id: req.params.id, recipient: req.user.id },
     { $set: { readAt: new Date() } },
     { new: true }
   );
@@ -348,7 +348,7 @@ export const getProgress = asyncHandler(async (req, res) => {
   const progressByCourse = new Map(progress.map((item) => [idOf(item.course), item]));
 
   const items = courses.map((course) => {
-    const p = progressByCourse.get(idOf(course._id));
+    const p = progressByCourse.get(idOf(course.id));
     const totalLessons = p?.totalLessons || course.lessons?.length || 0;
     const completedLessons = p?.completedLessonCount ?? p?.completedLessons?.length ?? 0;
     const progressPercent = p?.progressPercent ??
@@ -373,7 +373,7 @@ export const getProgress = asyncHandler(async (req, res) => {
 export const getPayments = asyncHandler(async (req, res) => {
   // Fetch only logged-in student's payments
   const payments = await Payment.find({
-    student: req.user._id,
+    student: req.user.id,
   })
     .populate({
       path: "student",
