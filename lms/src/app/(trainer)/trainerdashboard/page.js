@@ -27,7 +27,7 @@ const API_URL = API_ROOT.endsWith("/api")
   ? API_ROOT
   : `${API_ROOT}/api`;
 
-// Read the authentication token from browser storage.
+// Get authentication token.
 function getToken() {
   if (typeof window === "undefined") return "";
 
@@ -40,7 +40,7 @@ function getToken() {
   );
 }
 
-// Make authenticated requests to the trainer API.
+// Authenticated trainer API request.
 async function trainerRequest(endpoint, options = {}) {
   const token = getToken();
 
@@ -72,15 +72,17 @@ async function trainerRequest(endpoint, options = {}) {
   return data;
 }
 
-// Handle common API response formats.
+// Handle API response formats.
 function unwrap(data, key) {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.[key])) return data[key];
   if (Array.isArray(data?.data)) return data.data;
   if (Array.isArray(data?.data?.[key])) return data.data[key];
+
   return [];
 }
 
+// Format date.
 function formatDate(value) {
   if (!value) return "Not scheduled";
 
@@ -95,22 +97,43 @@ function formatDate(value) {
   });
 }
 
+// Get document ID.
 function getId(value) {
   if (!value) return "";
+
   if (typeof value === "string") return value;
 
   return value._id || value.id || value.batchId || "";
 }
 
+// Get the number of students in an individual batch.
+function getBatchStudentCount(batch) {
+  const count =
+    batch?.studentCount ??
+    batch?.studentsCount ??
+    batch?.totalStudents ??
+    (Array.isArray(batch?.students) ? batch.students.length : null) ??
+    0;
+
+  const parsedCount = Number(count);
+
+  return Number.isFinite(parsedCount) && parsedCount >= 0
+    ? parsedCount
+    : 0;
+}
+
+// Statistics card.
 function StatCard({ title, value, description, icon: Icon, color }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-slate-500">{title}</p>
+
           <h3 className="mt-3 text-3xl font-bold text-slate-900">
             {value ?? 0}
           </h3>
+
           <p className="mt-2 text-xs text-slate-500">{description}</p>
         </div>
 
@@ -122,6 +145,7 @@ function StatCard({ title, value, description, icon: Icon, color }) {
   );
 }
 
+// Empty state.
 function EmptyState({ message }) {
   return (
     <div className="rounded-xl border border-dashed border-slate-300 px-5 py-10 text-center">
@@ -137,6 +161,7 @@ export default function TrainerDashboard() {
   });
 
   const [trainerLoaded, setTrainerLoaded] = useState(false);
+
   const [dashboard, setDashboard] = useState({});
   const [batches, setBatches] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
@@ -152,8 +177,7 @@ export default function TrainerDashboard() {
   const [replyMessages, setReplyMessages] = useState({});
   const [busyDoubt, setBusyDoubt] = useState("");
 
-  // Read the logged-in trainer from storage only after mounting.
-  // This prevents server/client hydration mismatches.
+  // Read logged-in trainer from browser storage.
   useEffect(() => {
     try {
       const storedUser =
@@ -175,6 +199,7 @@ export default function TrainerDashboard() {
     }
   }, []);
 
+  // Load trainer dashboard data.
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -194,7 +219,7 @@ export default function TrainerDashboard() {
 
       setDashboard(dashboardData || {});
 
-      // Use the API name as a fallback if storage has no name.
+      // Get trainer details from API if storage has no name.
       const apiTrainer =
         dashboardData?.trainer ||
         dashboardData?.user ||
@@ -217,12 +242,16 @@ export default function TrainerDashboard() {
         userId: previous.userId || apiUserId,
       }));
 
+      // Load assigned batches.
       const batchList = unwrap(results[1], "batches");
 
       setBatches(batchList);
+
+      // Load announcements and doubts.
       setAnnouncements(unwrap(results[2], "announcements"));
       setDoubts(unwrap(results[3], "doubts"));
 
+      // Automatically select first batch.
       const firstBatch = batchList[0];
 
       setAnnouncementBatch((previous) =>
@@ -239,8 +268,10 @@ export default function TrainerDashboard() {
     loadDashboard();
   }, [loadDashboard]);
 
+  // Publish announcement.
   async function handleAnnouncementSubmit(event) {
     event.preventDefault();
+
     setNotice("");
     setError("");
 
@@ -267,12 +298,14 @@ export default function TrainerDashboard() {
       setNotice("Announcement published successfully.");
 
       const result = await trainerRequest("/announcements");
+
       setAnnouncements(unwrap(result, "announcements"));
     } catch (err) {
       setError(err.message || "Unable to publish announcement.");
     }
   }
 
+  // Reply to student doubt.
   async function handleDoubtReply(event, doubtId) {
     event.preventDefault();
 
@@ -301,6 +334,7 @@ export default function TrainerDashboard() {
       setNotice("Your reply has been submitted.");
 
       const result = await trainerRequest("/doubts");
+
       setDoubts(unwrap(result, "doubts"));
     } catch (err) {
       setError(err.message || "Unable to submit the reply.");
@@ -309,19 +343,32 @@ export default function TrainerDashboard() {
     }
   }
 
+  // Dashboard statistics.
   const stats = dashboard.stats || dashboard.summary || dashboard;
 
-  const totalStudents =
-    stats.totalStudents ??
-    stats.studentCount ??
-    batches.reduce(
-      (total, batch) =>
-        total + Number(batch.studentCount ?? batch.studentsCount ?? 0),
-      0
-    );
+  const batchStudentCounts = batches.map((batch) =>
+    getBatchStudentCount(batch)
+  );
+
+  // Check whether the batch API provides individual student counts.
+  const hasBatchStudentCounts = batches.some(
+    (batch) =>
+      batch.studentCount !== undefined ||
+      batch.studentsCount !== undefined ||
+      batch.totalStudents !== undefined ||
+      Array.isArray(batch.students)
+  );
+
+  // Calculate total from assigned batches.
+  // Use dashboard total only when batch-wise counts are unavailable.
+  const totalStudents = hasBatchStudentCounts
+    ? batchStudentCounts.reduce((total, count) => total + count, 0)
+    : Number(stats.totalStudents ?? stats.studentCount ?? 0);
 
   const assignedBatches =
-    stats.assignedBatches ?? stats.totalBatches ?? batches.length;
+    stats.assignedBatches ??
+    stats.totalBatches ??
+    batches.length;
 
   const pendingReviews =
     stats.pendingReviews ??
@@ -338,17 +385,18 @@ export default function TrainerDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50">
+
       {/* Dashboard header */}
       <header className="border-b border-slate-200 bg-white px-5 py-6 md:px-8">
         <div className="mx-auto flex max-w-7xl flex-col justify-between gap-4 sm:flex-row sm:items-center">
+
           <div>
             <p className="text-sm font-medium text-[#102e60]">
               APPWARS LMS / Trainer
             </p>
 
             <h1 className="mt-2 text-2xl font-bold text-slate-900 md:text-3xl">
-              Welcome
-              {trainer.name ? `, ${trainer.name}` : ""}
+              Welcome{trainer.name ? `, ${trainer.name}` : ""}
             </h1>
 
             <p className="mt-2 text-sm text-slate-500">
@@ -384,14 +432,17 @@ export default function TrainerDashboard() {
               <ArrowRight size={16} />
             </Link>
           </div>
+
         </div>
       </header>
 
       <div className="mx-auto max-w-7xl space-y-7 px-5 py-7 md:px-8">
-        {/* Errors and success messages */}
+
+        {/* Error message */}
         {error && (
           <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             <AlertCircle size={19} className="mt-0.5 shrink-0" />
+
             <div>
               <p className="font-semibold">Something went wrong</p>
               <p className="mt-1">{error}</p>
@@ -399,6 +450,7 @@ export default function TrainerDashboard() {
           </div>
         )}
 
+        {/* Success message */}
         {notice && (
           <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-700">
             <CheckCircle2 size={18} />
@@ -409,7 +461,9 @@ export default function TrainerDashboard() {
         {/* Statistics */}
         <section>
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-bold text-slate-900">Overview</h2>
+            <h2 className="text-lg font-bold text-slate-900">
+              Overview
+            </h2>
 
             {loading && (
               <span className="text-xs text-slate-500">
@@ -419,6 +473,7 @@ export default function TrainerDashboard() {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
             <StatCard
               title="Assigned Batches"
               value={assignedBatches}
@@ -428,9 +483,9 @@ export default function TrainerDashboard() {
             />
 
             <StatCard
-              title="Students"
+              title="Total Students"
               value={totalStudents}
-              description="Students in your batches"
+              description="Students across your assigned batches"
               icon={Users}
               color="bg-emerald-50 text-emerald-700"
             />
@@ -450,14 +505,19 @@ export default function TrainerDashboard() {
               icon={MessageCircle}
               color="bg-purple-50 text-purple-700"
             />
+
           </div>
         </section>
 
-        {/* My batches */}
+        {/* My Batches */}
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-lg font-bold text-slate-900">My Batches</h2>
+              <h2 className="text-lg font-bold text-slate-900">
+                My Batches
+              </h2>
+
               <p className="mt-1 text-sm text-slate-500">
                 Batches assigned to your trainer account.
               </p>
@@ -476,8 +536,10 @@ export default function TrainerDashboard() {
             />
           ) : (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+
               {batches.map((batch) => {
                 const batchId = getId(batch);
+
                 const batchName =
                   batch.batch ||
                   batch.name ||
@@ -486,24 +548,26 @@ export default function TrainerDashboard() {
 
                 const status = batch.status || "Upcoming";
 
+                const studentCount = getBatchStudentCount(batch);
+
                 return (
                   <div
                     key={batchId || batchName}
                     className="rounded-xl border border-slate-200 p-5 transition hover:border-blue-200 hover:shadow-sm"
                   >
+
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-[#102e60]">
                         <GraduationCap size={23} />
                       </div>
 
                       <span
-                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                          status === "Running"
+                        className={`rounded-full px-3 py-1 text-xs font-semibold ${status === "Running"
                             ? "bg-green-100 text-green-700"
                             : status === "Completed"
                               ? "bg-slate-100 text-slate-600"
                               : "bg-amber-100 text-amber-700"
-                        }`}
+                          }`}
                       >
                         {status}
                       </span>
@@ -517,17 +581,17 @@ export default function TrainerDashboard() {
                       {batch.course || "Course not specified"}
                     </p>
 
-                    <div className="mt-4 space-y-2 border-t border-slate-100 pt-4 text-sm text-slate-600">
+                    <div className="mt-4 space-y-3 border-t border-slate-100 pt-4 text-sm text-slate-600">
+
+                      {/* Batch-wise student count */}
                       <div className="flex items-center justify-between gap-3">
                         <span className="flex items-center gap-2">
                           <Users size={16} />
-                          Students
+                          Total Students
                         </span>
 
-                        <span className="font-semibold">
-                          {batch.studentCount ??
-                            batch.studentsCount ??
-                            "—"}
+                        <span className="font-bold text-[#102e60]">
+                          {studentCount}
                         </span>
                       </div>
 
@@ -539,26 +603,35 @@ export default function TrainerDashboard() {
 
                         <span>{formatDate(batch.startDate)}</span>
                       </div>
+
                     </div>
 
                     <Link
-                      href={`/trainer/attendance-grading?batchId=${encodeURIComponent(batchId)}`}
+                      href={{
+                        pathname: "/attendance-grading",
+                        query: batchId ? { batchId } : {},
+                      }}
                       className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#102e60] px-4 py-2.5 text-sm font-semibold text-[#102e60] hover:bg-blue-50"
                     >
                       Manage Batch
                       <ArrowRight size={16} />
                     </Link>
+
                   </div>
                 );
               })}
+
             </div>
           )}
+
         </section>
 
-        {/* Announcements and student doubts */}
+        {/* Announcements and Student Doubts */}
         <div className="grid gap-6 xl:grid-cols-2">
+
           {/* Announcements */}
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+
             <div className="mb-5 flex items-center gap-3">
               <div className="rounded-xl bg-blue-50 p-3 text-[#102e60]">
                 <Bell size={21} />
@@ -568,13 +641,18 @@ export default function TrainerDashboard() {
                 <h2 className="text-lg font-bold text-slate-900">
                   Announcements
                 </h2>
+
                 <p className="text-sm text-slate-500">
                   Share updates with your students.
                 </p>
               </div>
             </div>
 
-            <form onSubmit={handleAnnouncementSubmit} className="space-y-3">
+            <form
+              onSubmit={handleAnnouncementSubmit}
+              className="space-y-3"
+            >
+
               <div>
                 <label
                   htmlFor="announcementBatch"
@@ -595,7 +673,10 @@ export default function TrainerDashboard() {
                   <option value="">Choose a batch</option>
 
                   {batches.map((batch) => (
-                    <option key={getId(batch)} value={getId(batch)}>
+                    <option
+                      key={getId(batch)}
+                      value={getId(batch)}
+                    >
                       {batch.batch || batch.name || "Unnamed batch"}
                     </option>
                   ))}
@@ -636,6 +717,7 @@ export default function TrainerDashboard() {
                 <Send size={16} />
                 Publish Announcement
               </button>
+
             </form>
 
             <div className="mt-6 border-t border-slate-100 pt-5">
@@ -649,6 +731,7 @@ export default function TrainerDashboard() {
                 </p>
               ) : (
                 <div className="space-y-3">
+
                   {announcements.slice(0, 5).map((announcement, index) => (
                     <div
                       key={announcement._id || index}
@@ -673,13 +756,16 @@ export default function TrainerDashboard() {
                       </div>
                     </div>
                   ))}
+
                 </div>
               )}
             </div>
+
           </section>
 
-          {/* Student doubts */}
+          {/* Student Doubts */}
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+
             <div className="mb-5 flex items-center gap-3">
               <div className="rounded-xl bg-purple-50 p-3 text-purple-700">
                 <MessageCircle size={21} />
@@ -689,6 +775,7 @@ export default function TrainerDashboard() {
                 <h2 className="text-lg font-bold text-slate-900">
                   Student Doubts
                 </h2>
+
                 <p className="text-sm text-slate-500">
                   Respond to questions from your batches.
                 </p>
@@ -699,8 +786,10 @@ export default function TrainerDashboard() {
               <EmptyState message="No student doubts are currently available." />
             ) : (
               <div className="space-y-4">
+
                 {doubts.slice(0, 8).map((doubt, index) => {
                   const doubtId = getId(doubt);
+
                   const isOpen =
                     String(doubt.status || "Open").toLowerCase() === "open";
 
@@ -709,17 +798,17 @@ export default function TrainerDashboard() {
                       key={doubtId || index}
                       className="rounded-xl border border-slate-200 p-4"
                     >
+
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <h3 className="font-semibold text-slate-900">
                           {doubt.title || doubt.topic || "Student question"}
                         </h3>
 
                         <span
-                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                            isOpen
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${isOpen
                               ? "bg-amber-100 text-amber-700"
                               : "bg-green-100 text-green-700"
-                          }`}
+                            }`}
                         >
                           {doubt.status || "Open"}
                         </span>
@@ -790,26 +879,34 @@ export default function TrainerDashboard() {
                             className="inline-flex items-center gap-2 rounded-lg bg-[#102e60] px-3 py-2 text-sm font-semibold text-white hover:bg-[#173d79] disabled:opacity-50"
                           >
                             <Send size={14} />
+
                             {busyDoubt === doubtId
                               ? "Sending..."
                               : "Send Reply"}
                           </button>
                         </form>
                       )}
+
                     </div>
                   );
                 })}
+
               </div>
             )}
+
           </section>
+
         </div>
 
-        {/* Quick actions */}
+        {/* Quick Actions */}
         <section className="rounded-2xl bg-[#102e60] p-6 text-white md:p-8">
+
           <div className="flex flex-col justify-between gap-5 md:flex-row md:items-center">
+
             <div>
               <div className="flex items-center gap-2 text-blue-200">
                 <Activity size={19} />
+
                 <span className="text-sm font-medium">
                   Trainer workspace
                 </span>
@@ -832,8 +929,11 @@ export default function TrainerDashboard() {
               Open Attendance & Grading
               <ArrowRight size={17} />
             </Link>
+
           </div>
+
         </section>
+
       </div>
     </div>
   );

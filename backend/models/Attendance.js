@@ -1,3 +1,4 @@
+
 import mongoose from "mongoose";
 
 const attendanceSchema = new mongoose.Schema(
@@ -42,13 +43,26 @@ const attendanceSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    strict: true,
   }
 );
 
+// Unique attendance per student, batch, and date
 attendanceSchema.index(
   { batch: 1, student: 1, date: 1 },
   { unique: true }
 );
 
-export default mongoose.models.Attendance ||
+// Fix stale model registration if its schema is incorrect
+if (
+  mongoose.models.Attendance &&
+  !mongoose.models.Attendance.schema.path("student")
+) {
+  mongoose.deleteModel("Attendance");
+}
+
+const Attendance =
+  mongoose.models.Attendance ||
   mongoose.model("Attendance", attendanceSchema);
+
+export default Attendance;

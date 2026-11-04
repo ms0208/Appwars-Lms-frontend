@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   ClipboardCheck,
   Menu,
+  ClipboardList,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -25,6 +26,11 @@ export default function TrainerLayout({ children }) {
       href: "/attendance-grading",
       icon: ClipboardCheck,
     },
+    {
+      name:" Assignments",
+      href: "/trainerassignments",
+      icon: ClipboardList,
+    }
   ];
 
   return (
@@ -69,8 +75,8 @@ export default function TrainerLayout({ children }) {
                 href={item.href}
                 onClick={() => setMenuOpen(false)}
                 className={`flex items-center gap-3 rounded-lg px-3 py-3 text-sm transition ${active
-                    ? "bg-[#2864ed] font-semibold text-white"
-                    : "text-blue-100 hover:bg-blue-900"
+                  ? "bg-[#2864ed] font-semibold text-white"
+                  : "text-blue-100 hover:bg-blue-900"
                   }`}
               >
                 <Icon size={17} />

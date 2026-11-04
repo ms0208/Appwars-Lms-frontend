@@ -5,7 +5,92 @@ import Batch from "../models/Batch.js";
 import Attendance from "../models/Attendance.js";
 import Announcement from "../models/Announcements.js";
 import AssignmentSubmission from "../models/TrainerAssignmentSubmission.js";
+import Assignment from "../models/Assignement.js";
 import Doubt from "../models/TrainerDoubts.js";
+import fs from "fs/promises";
+import path from "path";
+
+// UPLOAD Documents 
+const ASSIGNMENT_UPLOAD_DIR = path.resolve(
+  process.cwd(),
+  "uploads",
+  "assignments"
+);
+
+// Validate the actual PDF file signature.
+const isValidPDF = async (filePath) => {
+  try {
+    const fileHandle = await fs.open(filePath, "r");
+
+    try {
+      const buffer = Buffer.alloc(5);
+      const { bytesRead } = await fileHandle.read(
+        buffer,
+        0,
+        5,
+        0
+      );
+
+      return (
+        bytesRead === 5 &&
+        buffer.toString("ascii") === "%PDF-"
+      );
+    } finally {
+      await fileHandle.close();
+    }
+  } catch {
+    return false;
+  }
+};
+
+// Delete only files inside uploads/assignments.
+const deleteAssignmentFile = async (fileUrl) => {
+  if (!fileUrl || typeof fileUrl !== "string") return;
+
+  try {
+    const filename = path.basename(fileUrl);
+
+    // Only generated PDF filenames are accepted.
+    if (!/^[a-f0-9-]{36}\.pdf$/i.test(filename)) {
+      return;
+    }
+
+    const filePath = path.resolve(
+      ASSIGNMENT_UPLOAD_DIR,
+      filename
+    );
+
+    if (!filePath.startsWith(ASSIGNMENT_UPLOAD_DIR + path.sep)) {
+      return;
+    }
+
+    await fs.unlink(filePath);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.error("Assignment file deletion error:", error);
+    }
+  }
+};
+
+// FormData sends arrays as strings.
+const parseSubmissionTypes = (value) => {
+  if (Array.isArray(value)) return value;
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return value.split(",").map((item) => item.trim());
+    }
+  }
+
+  return ["text", "url"];
+};
+
+// ==========================================
+// ERROR HANDLER
+// ==========================================
 
 function sendError(res, error, fallback = "Something went wrong.") {
   console.error("Trainer API error:", error);
@@ -30,9 +115,17 @@ function sendError(res, error, fallback = "Something went wrong.") {
   });
 }
 
+// ==========================================
+// VALIDATE OBJECT ID
+// ==========================================
+
 function isValidObjectId(id) {
   return mongoose.isValidObjectId(id);
 }
+
+// ==========================================
+// DATE RANGE
+// ==========================================
 
 function getDayRange(dateValue) {
   const date = dateValue ? new Date(dateValue) : new Date();
@@ -50,6 +143,10 @@ function getDayRange(dateValue) {
   return { start, end };
 }
 
+// ==========================================
+// GET TRAINER BATCH
+// ==========================================
+
 async function getTrainerBatch(batchId, trainerId) {
   if (!isValidObjectId(batchId)) {
     return null;
@@ -62,6 +159,10 @@ async function getTrainerBatch(batchId, trainerId) {
   });
 }
 
+// ==========================================
+// GET ALL ASSIGNED BATCHES
+// ==========================================
+
 async function getTrainerBatches(trainerId) {
   return Batch.find({
     trainer: trainerId,
@@ -69,51 +170,66 @@ async function getTrainerBatches(trainerId) {
   }).sort({ createdAt: -1 });
 }
 
-/*
-|--------------------------------------------------------------------------
-| 1. TRAINER DASHBOARD
-|--------------------------------------------------------------------------
-| GET /api/trainer/dashboard
-*/
+// ==========================================
+// GET NUMBER OF STUDENTS BY BATCH
+// IMPORTANT FUNCTION
+// ==========================================
+
+async function getBatchStudentCount(batchName) {
+  if (!batchName) {
+    return 0;
+  }
+
+  return User.countDocuments({
+    role: "Student",
+    isActive: true,
+    batch: batchName.trim(),
+  });
+}
+
+// ==========================================
+// 1. TRAINER DASHBOARD
+// GET /api/trainer/dashboard
+// ==========================================
+
 export const getDashboard = async (req, res) => {
   try {
     const trainerId = req.user.id;
 
-    const batches = await getTrainerBatches(trainerId);
-    const batchIds = batches.map((batch) => batch._id);
+    // Get logged-in trainer.
+    const trainer = await User.findById(trainerId).select(
+      "-password"
+    );
 
-    const batchNames = batches.map((batch) => batch.batch);
+    if (!trainer) {
+      return res.status(404).json({
+        success: false,
+        message: "Trainer not found",
+      });
+    }
 
-    const [students, pendingReviews, openDoubts, announcements] =
-      await Promise.all([
-        batchNames.length
-          ? User.countDocuments({
-              role: "Student",
-              isActive: true,
-              batch: { $in: batchNames },
-            })
-          : 0,
+    // Find all active batches assigned to this trainer.
+    const batches = await Batch.find({
+      trainer: trainerId,
+      isActive: true,
+    }).lean();
 
-        AssignmentSubmission.countDocuments({
-          trainer: trainerId,
-          result: { $in: ["Pending", "Needs revision"] },
-        }),
+    // Get assigned batch names.
+    const batchNames = batches
+      .map((batch) => batch.batch)
+      .filter(Boolean);
 
-        Doubt.countDocuments({
-          batch: { $in: batchIds },
-          status: "Open",
-        }),
-
-        Announcement.find({
-          trainer: trainerId,
-          batch: { $in: batchIds },
+    // Count all active students in the assigned batches.
+    const totalStudents = batchNames.length
+      ? await User.countDocuments({
+          role: "Student",
+          isActive: true,
+          batch: { $in: batchNames },
         })
-          .populate("batch", "batch course")
-          .sort({ createdAt: -1 })
-          .limit(10),
-      ]);
+      : 0;
 
-    const batchData = await Promise.all(
+    // Calculate student count for each batch.
+    const batchesWithStudentCount = await Promise.all(
       batches.map(async (batch) => {
         const studentCount = await User.countDocuments({
           role: "Student",
@@ -122,88 +238,85 @@ export const getDashboard = async (req, res) => {
         });
 
         return {
-          _id: batch._id,
-          batch: batch.batch,
-          course: batch.course,
-          students: studentCount,
-          status: batch.status,
-          assignedDate: batch.assignedDate,
-          startDate: batch.startDate,
-          durationMonths: batch.durationMonths,
-          description: batch.description,
+          ...batch,
+          studentCount,
         };
       })
     );
 
     return res.status(200).json({
       success: true,
-      dashboard: {
-        stats: {
-          assignedBatches: batches.length,
-          runningBatches: batches.filter(
-            (batch) => batch.status === "Running"
-          ).length,
-          totalStudents: students,
-          pendingReviews,
-          openDoubts,
-        },
-        batches: batchData,
-        announcements,
+
+      trainer,
+
+      stats: {
+        totalStudents,
+        assignedBatches: batches.length,
       },
+
+      batches: batchesWithStudentCount,
     });
   } catch (error) {
-    return sendError(res, error, "Unable to load trainer dashboard.");
+    console.error("Trainer Dashboard Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to load trainer dashboard",
+      error: error.message,
+    });
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| 2. ASSIGNED BATCHES
-|--------------------------------------------------------------------------
-| GET /api/trainer/batches
-*/
+// ==========================================
+// 2. ASSIGNED BATCHES
+// GET /api/trainer/batches
+// ==========================================
+
 export const getAssignedBatches = async (req, res) => {
   try {
-    const batches = await getTrainerBatches(req.user.id);
+    const trainerId = req.user.id;
 
-    const result = await Promise.all(
+    const batches = await Batch.find({
+      trainer: trainerId,
+      isActive: true,
+    }).lean();
+
+    const batchesWithStudentCount = await Promise.all(
       batches.map(async (batch) => {
-        const students = await User.countDocuments({
+        const studentCount = await User.countDocuments({
           role: "Student",
           isActive: true,
           batch: batch.batch,
         });
 
         return {
-          _id: batch._id,
-          batch: batch.batch,
-          course: batch.course,
-          students,
-          status: batch.status,
-          assignedDate: batch.assignedDate,
-          startDate: batch.startDate,
-          durationMonths: batch.durationMonths,
-          description: batch.description,
+          ...batch,
+          studentCount,
         };
       })
     );
 
     return res.status(200).json({
       success: true,
-      count: result.length,
-      batches: result,
+      count: batchesWithStudentCount.length,
+      data: batchesWithStudentCount,
     });
   } catch (error) {
-    return sendError(res, error, "Unable to load assigned batches.");
+    console.error("Assigned Batches Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch assigned batches",
+      error: error.message,
+    });
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| 3. STUDENTS IN A BATCH
-|--------------------------------------------------------------------------
-| GET /api/trainer/batches/:batchId/students
-*/
+// ==========================================
+// 3. STUDENTS IN A BATCH
+// GET /api/trainer/batches/:batchId/students
+// ==========================================
+
 export const getBatchStudents = async (req, res) => {
   try {
     const batch = await getTrainerBatch(
@@ -229,12 +342,15 @@ export const getBatchStudents = async (req, res) => {
 
     return res.status(200).json({
       success: true,
+
       batch: {
         _id: batch._id,
         batch: batch.batch,
         course: batch.course,
       },
+
       count: students.length,
+
       students: students.map((student, index) => ({
         ...student,
         roll: String(index + 1).padStart(2, "0"),
@@ -245,13 +361,11 @@ export const getBatchStudents = async (req, res) => {
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| 4. POST ANNOUNCEMENT
-|--------------------------------------------------------------------------
-| POST /api/trainer/announcements
-| Body: { batchId, message }
-*/
+// ==========================================
+// 4. POST ANNOUNCEMENT
+// POST /api/trainer/announcements
+// ==========================================
+
 export const createAnnouncement = async (req, res) => {
   try {
     const { batchId, message } = req.body;
@@ -297,12 +411,11 @@ export const createAnnouncement = async (req, res) => {
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| 5. GET ANNOUNCEMENTS
-|--------------------------------------------------------------------------
-| GET /api/trainer/announcements?batchId=<MongoDB ID>
-*/
+// ==========================================
+// 5. GET ANNOUNCEMENTS
+// GET /api/trainer/announcements
+// ==========================================
+
 export const getAnnouncements = async (req, res) => {
   try {
     const filter = {
@@ -325,7 +438,10 @@ export const getAnnouncements = async (req, res) => {
       filter.batch = batch._id;
     } else {
       const batches = await getTrainerBatches(req.user.id);
-      filter.batch = { $in: batches.map((batch) => batch._id) };
+
+      filter.batch = {
+        $in: batches.map((batch) => batch._id),
+      };
     }
 
     const announcements = await Announcement.find(filter)
@@ -342,22 +458,11 @@ export const getAnnouncements = async (req, res) => {
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| 6. SAVE ATTENDANCE
-|--------------------------------------------------------------------------
-| PUT /api/trainer/attendance
-|
-| Body:
-| {
-|   "batchId": "<MongoDB batch ID>",
-|   "date": "2026-10-29",
-|   "records": [
-|     { "studentId": "<MongoDB student ID>", "status": "Present" },
-|     { "studentId": "<MongoDB student ID>", "status": "Absent" }
-|   ]
-| }
-*/
+// ==========================================
+// 6. SAVE ATTENDANCE
+// PUT /api/trainer/attendance
+// ==========================================
+
 export const saveAttendance = async (req, res) => {
   try {
     const { batchId, date, records } = req.body;
@@ -438,17 +543,20 @@ export const saveAttendance = async (req, res) => {
             $lt: range.end,
           },
         },
+
         update: {
           $set: {
             trainer: req.user.id,
             status: record.status,
             date: range.start,
           },
+
           $setOnInsert: {
             batch: batch._id,
             student: record.studentId,
           },
         },
+
         upsert: true,
       },
     }));
@@ -457,7 +565,10 @@ export const saveAttendance = async (req, res) => {
 
     const savedRecords = await Attendance.find({
       batch: batch._id,
-      date: { $gte: range.start, $lt: range.end },
+      date: {
+        $gte: range.start,
+        $lt: range.end,
+      },
     })
       .populate("student", "userId name email")
       .sort({ createdAt: 1 });
@@ -471,14 +582,27 @@ export const saveAttendance = async (req, res) => {
   } catch (error) {
     return sendError(res, error, "Unable to save attendance.");
   }
+  console.log(
+  "Attendance model:",
+  Attendance.modelName
+);
+
+console.log(
+  "Attendance schema paths:",
+  Object.keys(Attendance.schema.paths)
+);
+
+console.log(
+  "Student field exists:",
+  Boolean(Attendance.schema.path("student"))
+);
 };
 
-/*
-|--------------------------------------------------------------------------
-| 7. GET ATTENDANCE
-|--------------------------------------------------------------------------
-| GET /api/trainer/attendance?batchId=<ID>&date=2026-10-29
-*/
+// ==========================================
+// 7. GET ATTENDANCE
+// GET /api/trainer/attendance
+// ==========================================
+
 export const getAttendance = async (req, res) => {
   try {
     const { batchId, date } = req.query;
@@ -511,7 +635,10 @@ export const getAttendance = async (req, res) => {
     const attendance = await Attendance.find({
       trainer: req.user.id,
       batch: batch._id,
-      date: { $gte: range.start, $lt: range.end },
+      date: {
+        $gte: range.start,
+        $lt: range.end,
+      },
     })
       .populate("student", "userId name email")
       .sort({ createdAt: 1 });
@@ -528,13 +655,11 @@ export const getAttendance = async (req, res) => {
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| 8. GET ASSIGNMENT SUBMISSIONS
-|--------------------------------------------------------------------------
-| GET /api/trainer/submissions
-| Optional: ?batchId=<ID>&result=Pending
-*/
+// ==========================================
+// 8. GET ASSIGNMENT SUBMISSIONS
+// GET /api/trainer/submissions
+// ==========================================
+
 export const getSubmissions = async (req, res) => {
   try {
     const filter = {
@@ -587,22 +712,15 @@ export const getSubmissions = async (req, res) => {
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| 9. GRADE ASSIGNMENT
-|--------------------------------------------------------------------------
-| PATCH /api/trainer/submissions/:submissionId/grade
-|
-| Body:
-| {
-|   "marks": 42,
-|   "result": "Graded",
-|   "feedback": "Good work."
-| }
-*/
+// ==========================================
+// 9. GRADE ASSIGNMENT
+// PATCH /api/trainer/submissions/:submissionId/grade
+// ==========================================
+
 export const gradeSubmission = async (req, res) => {
   try {
     const { submissionId } = req.params;
+
     const { marks, result, feedback = "" } = req.body;
 
     if (!isValidObjectId(submissionId)) {
@@ -612,19 +730,14 @@ export const gradeSubmission = async (req, res) => {
       });
     }
 
-    if (
-      !["Graded", "Needs revision", "Pending"].includes(result)
-    ) {
+    if (!["Graded", "Needs revision", "Pending"].includes(result)) {
       return res.status(400).json({
         success: false,
         message: "Invalid grading result.",
       });
     }
 
-    if (
-      typeof feedback !== "string" ||
-      feedback.length > 5000
-    ) {
+    if (typeof feedback !== "string" || feedback.length > 5000) {
       return res.status(400).json({
         success: false,
         message: "Feedback must be text under 5000 characters.",
@@ -691,12 +804,11 @@ export const gradeSubmission = async (req, res) => {
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| 10. GET STUDENT PERFORMANCE
-|--------------------------------------------------------------------------
-| GET /api/trainer/performance?batchId=<ID>
-*/
+// ==========================================
+// 10. GET STUDENT PERFORMANCE
+// GET /api/trainer/performance
+// ==========================================
+
 export const getStudentPerformance = async (req, res) => {
   try {
     const batches = await getTrainerBatches(req.user.id);
@@ -787,16 +899,15 @@ export const getStudentPerformance = async (req, res) => {
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| 11. GET OPEN DOUBTS
-|--------------------------------------------------------------------------
-| GET /api/trainer/doubts
-| Optional: ?batchId=<ID>
-*/
+// ==========================================
+// 11. GET OPEN DOUBTS
+// GET /api/trainer/doubts
+// ==========================================
+
 export const getOpenDoubts = async (req, res) => {
   try {
     const batches = await getTrainerBatches(req.user.id);
+
     const batchIds = batches.map((batch) => batch._id);
 
     const filter = {
@@ -835,16 +946,15 @@ export const getOpenDoubts = async (req, res) => {
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| 12. REPLY TO DOUBT
-|--------------------------------------------------------------------------
-| POST /api/trainer/doubts/:doubtId/replies
-| Body: { "message": "..." }
-*/
+// ==========================================
+// 12. REPLY TO DOUBT
+// POST /api/trainer/doubts/:doubtId/replies
+// ==========================================
+
 export const replyToDoubt = async (req, res) => {
   try {
     const { doubtId } = req.params;
+
     const { message } = req.body;
 
     if (!isValidObjectId(doubtId)) {
@@ -872,7 +982,9 @@ export const replyToDoubt = async (req, res) => {
 
     const doubt = await Doubt.findOne({
       _id: doubtId,
-      batch: { $in: assignedBatches.map((batch) => batch._id) },
+      batch: {
+        $in: assignedBatches.map((batch) => batch._id),
+      },
     });
 
     if (!doubt) {
@@ -909,12 +1021,11 @@ export const replyToDoubt = async (req, res) => {
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| 13. GET TRAINER PROFILE
-|--------------------------------------------------------------------------
-| GET /api/trainer/profile
-*/
+// ==========================================
+// 13. GET TRAINER PROFILE
+// GET /api/trainer/profile
+// ==========================================
+
 export const getTrainerProfile = async (req, res) => {
   try {
     const trainer = await User.findOne({
@@ -931,6 +1042,7 @@ export const getTrainerProfile = async (req, res) => {
 
     return res.status(200).json({
       success: true,
+
       trainer: {
         _id: trainer._id,
         userId: trainer.userId,
@@ -948,22 +1060,11 @@ export const getTrainerProfile = async (req, res) => {
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| 14. UPDATE TRAINER PROFILE
-|--------------------------------------------------------------------------
-| PUT /api/trainer/profile
-|
-| Body:
-| {
-|   "name": "Rahul Sharma",
-|   "phone": "9876543210",
-|   "expertise": "MERN Stack Development",
-|   "courses": ["MERN Stack", "React.js"],
-|   "experience": 3,
-|   "availability": "Available"
-| }
-*/
+// ==========================================
+// 14. UPDATE TRAINER PROFILE
+// PUT /api/trainer/profile
+// ==========================================
+
 export const updateTrainerProfile = async (req, res) => {
   try {
     const trainer = await User.findOne({
@@ -987,7 +1088,8 @@ export const updateTrainerProfile = async (req, res) => {
       availability,
     } = req.body;
 
-    // Validate name
+    // NAME
+
     if (name !== undefined) {
       if (typeof name !== "string" || !name.trim()) {
         return res.status(400).json({
@@ -999,7 +1101,8 @@ export const updateTrainerProfile = async (req, res) => {
       trainer.name = name.trim();
     }
 
-    // Validate phone
+    // PHONE
+
     if (phone !== undefined) {
       if (
         typeof phone !== "string" ||
@@ -1014,7 +1117,8 @@ export const updateTrainerProfile = async (req, res) => {
       trainer.trainerDetails.phone = phone.trim();
     }
 
-    // Validate expertise
+    // EXPERTISE
+
     if (expertise !== undefined) {
       if (
         typeof expertise !== "string" ||
@@ -1029,7 +1133,8 @@ export const updateTrainerProfile = async (req, res) => {
       trainer.trainerDetails.expertise = expertise.trim();
     }
 
-    // Validate courses
+    // COURSES
+
     if (courses !== undefined) {
       if (
         !Array.isArray(courses) ||
@@ -1051,7 +1156,8 @@ export const updateTrainerProfile = async (req, res) => {
       ];
     }
 
-    // Validate experience
+    // EXPERIENCE
+
     if (experience !== undefined) {
       const numericExperience = Number(experience);
 
@@ -1069,7 +1175,8 @@ export const updateTrainerProfile = async (req, res) => {
       trainer.trainerDetails.experience = numericExperience;
     }
 
-    // Validate availability
+    // AVAILABILITY
+
     if (availability !== undefined) {
       const allowedAvailability = [
         "Available",
@@ -1096,6 +1203,7 @@ export const updateTrainerProfile = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Trainer profile updated successfully.",
+
       trainer: {
         _id: updatedTrainer._id,
         userId: updatedTrainer.userId,
@@ -1113,12 +1221,11 @@ export const updateTrainerProfile = async (req, res) => {
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| 15. GET SINGLE ASSIGNED BATCH DETAILS
-|--------------------------------------------------------------------------
-| GET /api/trainer/batches/:batchId
-*/
+// ==========================================
+// 15. GET SINGLE ASSIGNED BATCH DETAILS
+// GET /api/trainer/batches/:batchId
+// ==========================================
+
 export const getBatchDetails = async (req, res) => {
   try {
     const batch = await getTrainerBatch(
@@ -1144,6 +1251,7 @@ export const getBatchDetails = async (req, res) => {
 
     return res.status(200).json({
       success: true,
+
       batch: {
         _id: batch._id,
         batch: batch.batch,
@@ -1158,7 +1266,10 @@ export const getBatchDetails = async (req, res) => {
         createdAt: batch.createdAt,
         updatedAt: batch.updatedAt,
       },
+
+      // Exact number of students in the assigned batch
       studentCount: students.length,
+
       students: students.map((student, index) => ({
         ...student,
         roll: String(index + 1).padStart(2, "0"),
@@ -1168,21 +1279,504 @@ export const getBatchDetails = async (req, res) => {
     return sendError(res, error, "Unable to load batch details.");
   }
 };
-console.log("========== MODEL CHECK ==========");
+// ==========================================
+// ASSIGNMENTS
+// Trainer creates and manages own assignments
+// ==========================================
 
-console.log("User:", User.modelName);
-console.log("Batch:", Batch.modelName);
+// ==========================================
+// 1. CREATE ASSIGNMENT
+// POST /api/trainer/assignments
+// ==========================================
 
-console.log(
-  "Batch trainer field:",
-  Batch.schema.path("trainer") ? "EXISTS" : "MISSING"
-);
+export const createAssignment = async (req, res) => {
+  let uploadedFilePath = null;
 
-console.log(
-  "Course trainer field:",
-  mongoose.model("Course").schema.path("trainer")
-    ? "EXISTS"
-    : "MISSING"
-);
+  try {
+    const {
+      title,
+      description,
+      instructions = "",
+      batchId,
+      course,
+      dueDate,
+      totalMarks,
+      status = "Published",
+      isPublished,
+    } = req.body;
 
-console.log("=================================");
+    const trainerId = req.user.id;
+
+    if (req.file) {
+      uploadedFilePath = req.file.path;
+    }
+
+    // Required fields
+    if (
+      !title?.trim() ||
+      !description?.trim() ||
+      !batchId ||
+      !dueDate ||
+      totalMarks === undefined
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Title, description, batch, due date and total marks are required.",
+      });
+    }
+
+    if (!isValidObjectId(batchId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid batch ID.",
+      });
+    }
+
+    // Verify trainer owns the batch.
+    const batch = await getTrainerBatch(batchId, trainerId);
+
+    if (!batch) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "You can only create assignments for your assigned batches.",
+      });
+    }
+
+    const parsedDueDate = new Date(dueDate);
+    const parsedMarks = Number(totalMarks);
+
+    if (Number.isNaN(parsedDueDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a valid due date.",
+      });
+    }
+
+    if (!Number.isFinite(parsedMarks) || parsedMarks < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Total marks must be at least 1.",
+      });
+    }
+
+    if (!["Draft", "Published", "Closed"].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid assignment status.",
+      });
+    }
+
+    // Course is optional.
+    if (course && !isValidObjectId(course)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid course ID.",
+      });
+    }
+
+    const allowedTypes = parseSubmissionTypes(
+      req.body.allowedSubmissionTypes
+    );
+
+    if (
+      !allowedTypes.length ||
+      allowedTypes.some(
+        (type) => !["text", "url"].includes(type)
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Allowed submission types must contain text or url.",
+      });
+    }
+
+    // Verify the actual file content.
+    if (req.file) {
+      const validPDF = await isValidPDF(req.file.path);
+
+      if (!validPDF) {
+        return res.status(400).json({
+          success: false,
+          message: "The uploaded document is not a valid PDF.",
+        });
+      }
+    }
+
+    const published =
+      typeof isPublished === "boolean"
+        ? isPublished
+        : isPublished === "true"
+          ? true
+          : isPublished === "false"
+            ? false
+            : status === "Published";
+
+    // Public URL served by Express.
+    const attachmentUrl = req.file
+      ? `/uploads/assignments/${req.file.filename}`
+      : "";
+
+    const assignment = await Assignment.create({
+      title: title.trim(),
+      description: description.trim(),
+      instructions: String(instructions || "").trim(),
+
+      batch: batch._id,
+      batchId: batch.batch,
+
+      course: course || undefined,
+
+      trainer: trainerId,
+      createdBy: trainerId,
+
+      dueDate: parsedDueDate,
+      totalMarks: parsedMarks,
+
+      attachmentUrl,
+
+      allowedSubmissionTypes: [...new Set(allowedTypes)],
+
+      status,
+      isPublished: published,
+    });
+
+    await assignment.populate([
+      { path: "batch", select: "batch course" },
+      { path: "course", select: "title courseName code" },
+      { path: "trainer", select: "name email userId" },
+    ]);
+
+    return res.status(201).json({
+      success: true,
+      message: "Assignment created successfully.",
+      assignment,
+    });
+  } catch (error) {
+    // Remove the uploaded file if assignment creation fails.
+    if (uploadedFilePath) {
+      await fs.unlink(uploadedFilePath).catch(() => {});
+    }
+
+    return sendError(
+      res,
+      error,
+      "Unable to create assignment."
+    );
+  }
+};
+
+// ==========================================
+// 2. GET TRAINER ASSIGNMENTS
+// GET /api/trainer/assignments
+// ==========================================
+
+export const getAssignments = async (req, res) => {
+  try {
+    const trainerId = req.user.id;
+
+    const assignedBatches = await getTrainerBatches(trainerId);
+    const assignedBatchIds = assignedBatches.map((batch) => batch._id);
+
+    const filter = {
+      trainer: trainerId,
+      batch: { $in: assignedBatchIds },
+    };
+
+    if (req.query.batchId) {
+      if (!isValidObjectId(req.query.batchId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid batch ID.",
+        });
+      }
+
+      const batch = await getTrainerBatch(
+        req.query.batchId,
+        trainerId
+      );
+
+      if (!batch) {
+        return res.status(403).json({
+          success: false,
+          message: "This batch is not assigned to you.",
+        });
+      }
+
+      filter.batch = batch._id;
+    }
+
+    if (req.query.status) {
+      if (!["Draft", "Published", "Closed"].includes(req.query.status)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid assignment status filter.",
+        });
+      }
+
+      filter.status = req.query.status;
+    }
+
+    const assignments = await Assignment.find(filter)
+      .populate("batch", "batch course")
+      .populate("course", "title courseName code")
+      .populate("trainer", "name email userId")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      count: assignments.length,
+      assignments,
+    });
+  } catch (error) {
+    return sendError(res, error, "Unable to fetch assignments.");
+  }
+};
+
+// ==========================================
+// 3. UPDATE ASSIGNMENT
+// PATCH /api/trainer/assignments/:assignmentId
+// ==========================================
+
+export const updateAssignment = async (req, res) => {
+  try {
+    const { assignmentId } = req.params;
+    const trainerId = req.user.id;
+
+    if (!isValidObjectId(assignmentId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid assignment ID.",
+      });
+    }
+
+    // Trainer can update only their own assignment.
+    const assignment = await Assignment.findOne({
+      _id: assignmentId,
+      trainer: trainerId,
+    });
+
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        message: "Assignment not found or you do not own this assignment.",
+      });
+    }
+
+    const {
+      title,
+      description,
+      instructions,
+      batchId,
+      course,
+      dueDate,
+      totalMarks,
+      attachmentUrl,
+      allowedSubmissionTypes,
+      status,
+      isPublished,
+    } = req.body;
+
+    if (title !== undefined) {
+      if (typeof title !== "string" || !title.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Assignment title is required.",
+        });
+      }
+
+      assignment.title = title.trim();
+    }
+
+    if (description !== undefined) {
+      if (typeof description !== "string" || !description.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Assignment description is required.",
+        });
+      }
+
+      assignment.description = description.trim();
+    }
+
+    if (instructions !== undefined) {
+      assignment.instructions = String(instructions).trim();
+    }
+
+    if (batchId !== undefined) {
+      if (!isValidObjectId(batchId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid batch ID.",
+        });
+      }
+
+      const batch = await getTrainerBatch(batchId, trainerId);
+
+      if (!batch) {
+        return res.status(403).json({
+          success: false,
+          message: "You cannot assign work to a batch not assigned to you.",
+        });
+      }
+
+      assignment.batch = batch._id;
+      assignment.batchId = batch.batch;
+    }
+
+    if (course !== undefined) {
+      if (course && !isValidObjectId(course)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid course ID.",
+        });
+      }
+
+      assignment.course = course || null;
+    }
+
+    if (dueDate !== undefined) {
+      const parsedDate = new Date(dueDate);
+
+      if (Number.isNaN(parsedDate.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: "Please provide a valid due date.",
+        });
+      }
+
+      assignment.dueDate = parsedDate;
+    }
+
+    if (totalMarks !== undefined) {
+      const parsedMarks = Number(totalMarks);
+
+      if (!Number.isFinite(parsedMarks) || parsedMarks < 1) {
+        return res.status(400).json({
+          success: false,
+          message: "Total marks must be at least 1.",
+        });
+      }
+
+      assignment.totalMarks = parsedMarks;
+    }
+
+    if (attachmentUrl !== undefined) {
+      if (typeof attachmentUrl !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "Attachment URL must be text.",
+        });
+      }
+
+      assignment.attachmentUrl = attachmentUrl.trim();
+    }
+
+    if (allowedSubmissionTypes !== undefined) {
+      if (
+        !Array.isArray(allowedSubmissionTypes) ||
+        allowedSubmissionTypes.length === 0 ||
+        allowedSubmissionTypes.some(
+          (type) => !["text", "url"].includes(type)
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid allowed submission types.",
+        });
+      }
+
+      assignment.allowedSubmissionTypes = [
+        ...new Set(allowedSubmissionTypes),
+      ];
+    }
+
+    if (status !== undefined) {
+      if (!["Draft", "Published", "Closed"].includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid assignment status.",
+        });
+      }
+
+      assignment.status = status;
+
+      if (isPublished === undefined) {
+        assignment.isPublished = status === "Published";
+      }
+    }
+
+    if (isPublished !== undefined) {
+      if (typeof isPublished !== "boolean") {
+        return res.status(400).json({
+          success: false,
+          message: "isPublished must be true or false.",
+        });
+      }
+
+      assignment.isPublished = isPublished;
+
+      if (status === undefined) {
+        assignment.status = isPublished ? "Published" : "Draft";
+      }
+    }
+
+    await assignment.save();
+
+    await assignment.populate([
+      { path: "batch", select: "batch course" },
+      { path: "course", select: "title courseName code" },
+      { path: "trainer", select: "name email userId" },
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      message: "Assignment updated successfully.",
+      assignment,
+    });
+  } catch (error) {
+    return sendError(res, error, "Unable to update assignment.");
+  }
+};
+
+// ==========================================
+// 4. DELETE ASSIGNMENT
+// DELETE /api/trainer/assignments/:assignmentId
+// ==========================================
+
+export const deleteAssignment = async (req, res) => {
+  try {
+    const { assignmentId } = req.params;
+
+    if (!isValidObjectId(assignmentId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid assignment ID.",
+      });
+    }
+
+    // Only the trainer who created the assignment can delete it.
+    const assignment = await Assignment.findOneAndDelete({
+      _id: assignmentId,
+      trainer: req.user.id,
+    });
+
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        message: "Assignment not found or you do not own this assignment.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Assignment deleted successfully.",
+      assignmentId,
+    });
+  } catch (error) {
+    return sendError(res, error, "Unable to delete assignment.");
+  }
+};

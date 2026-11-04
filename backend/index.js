@@ -6,7 +6,7 @@ import mongoose from "mongoose";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-
+import path from "path";
 import authRoutes from "./router/authRoutes.js";
 import adminRoutes from "./router/adminRoutes.js";
 import studentRoutes from "./router/studentRoutes.js";
@@ -35,6 +35,14 @@ app.use(
 
 // Parse JSON request bodies
 app.use(express.json({ limit: "10kb" }));
+app.use(express.urlencoded({ extended: true }));
+
+// Serve uploaded assignment PDFs.
+app.use(
+  "/uploads",
+  express.static(path.join(process.cwd(), "uploads"))
+);
+
 
 // Health check
 app.get("/api/health", (req, res) => {

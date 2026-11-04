@@ -40,6 +40,25 @@ import {
 } from "../controllers/admincontroller.js";
 
 import {
+  getResults,
+  createResult,
+  getResultById,
+  updateResult,
+  deleteResult,
+} from "../controllers/adminResultController.js";
+import {
+  getTrainerAttendance,
+  createTrainerAttendance,
+  updateTrainerAttendance,
+  deleteTrainerAttendance,
+
+  getCounsellorAttendance,
+  createCounsellorAttendance,
+  updateCounsellorAttendance,
+  deleteCounsellorAttendance,
+} from "../controllers/adminEmployeeAttendanceController.js";
+
+import {
   getBatchStats,
   getBatches,
   updateBatch,
@@ -48,6 +67,13 @@ import {
   createBatch,
   getBatchById,
 } from "../controllers/batchController.js";
+import {
+  getAllAttendance,
+  createAttendance,
+  updateAttendance,
+  deleteAttendance,
+} from "../controllers/admincontroller.js";
+
 
 const router = express.Router();
 
@@ -107,57 +133,11 @@ router.delete("/batches/:id", deleteBatch);
 // 5. ATTENDANCE
 // --------------------------------------------------
 
-router.route("/attendance")
-  .get((req, res, next) => {
-    req.params.resource = "attendance";
-    return listResource(req, res, next);
-  })
-  .post((req, res, next) => {
-    req.params.resource = "attendance";
-    return createResource(req, res, next);
-  });
-
-router.route("/attendance/:id")
-  .get((req, res, next) => {
-    req.params.resource = "attendance";
-    return getResource(req, res, next);
-  })
-  .patch((req, res, next) => {
-    req.params.resource = "attendance";
-    return updateResource(req, res, next);
-  })
-  .delete((req, res, next) => {
-    req.params.resource = "attendance";
-    return deleteResource(req, res, next);
-  });
-
+router.get("/attendance", getAllAttendance);
+router.post("/attendance", createAttendance);
+router.patch("/attendance/:attendanceId", updateAttendance);
+router.delete("/attendance/:attendanceId", deleteAttendance);
 // --------------------------------------------------
-// 6. RESULTS
-// --------------------------------------------------
-
-router.route("/results")
-  .get((req, res, next) => {
-    req.params.resource = "results";
-    return listResource(req, res, next);
-  })
-  .post((req, res, next) => {
-    req.params.resource = "results";
-    return createResource(req, res, next);
-  });
-
-router.route("/results/:id")
-  .get((req, res, next) => {
-    req.params.resource = "results";
-    return getResource(req, res, next);
-  })
-  .patch((req, res, next) => {
-    req.params.resource = "results";
-    return updateResource(req, res, next);
-  })
-  .delete((req, res, next) => {
-    req.params.resource = "results";
-    return deleteResource(req, res, next);
-  });
 
 // --------------------------------------------------
 // 7. ASSIGNMENTS
@@ -214,6 +194,26 @@ router.route("/live-classes/:id")
     req.params.resource = "liveClasses";
     return deleteResource(req, res, next);
   });
+
+// ==========================================
+// 6. RESULTS MANAGEMENT
+// ==========================================
+
+// GET all results
+// POST create result
+
+router.route("/results")
+  .get(getResults)
+  .post(createResult);
+
+// GET single result
+// PATCH update result
+// DELETE result
+
+router.route("/results/:id")
+  .get(getResultById)
+  .patch(updateResult)
+  .delete(deleteResult);
 
 // --------------------------------------------------
 // 9. ANNOUNCEMENTS
@@ -303,5 +303,73 @@ router.get("/reports/payments", getPaymentReport);
 router.route("/settings")
   .get(getSettings)
   .patch(updateSettings);
+
+// ==========================================
+// STUDENT CLASS ATTENDANCE
+// Keep your existing student attendance routes
+// ==========================================
+
+// GET    /api/admin/attendance
+// POST   /api/admin/attendance
+// PATCH  /api/admin/attendance/:attendanceId
+// DELETE /api/admin/attendance/:attendanceId
+
+
+// ==========================================
+// TRAINER EMPLOYEE ATTENDANCE
+// ==========================================
+
+router.get(
+  "/trainer-attendance",
+  protect,
+  getTrainerAttendance
+);
+
+router.post(
+  "/trainer-attendance",
+  protect,
+  createTrainerAttendance
+);
+
+router.patch(
+  "/trainer-attendance/:attendanceId",
+  protect,
+  updateTrainerAttendance
+);
+
+router.delete(
+  "/trainer-attendance/:attendanceId",
+  protect,
+  deleteTrainerAttendance
+);
+
+
+// ==========================================
+// COUNSELLOR EMPLOYEE ATTENDANCE
+// ==========================================
+
+router.get(
+  "/counsellor-attendance",
+  protect,
+  getCounsellorAttendance
+);
+
+router.post(
+  "/counsellor-attendance",
+  protect,
+  createCounsellorAttendance
+);
+
+router.patch(
+  "/counsellor-attendance/:attendanceId",
+  protect,
+  updateCounsellorAttendance
+);
+
+router.delete(
+  "/counsellor-attendance/:attendanceId",
+  protect,
+  deleteCounsellorAttendance
+);
 
 export default router;

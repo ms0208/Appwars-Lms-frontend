@@ -84,42 +84,42 @@ attendanceSchema.index({ user: 1, date: 1 }, { unique: true });
 
 // ==========================================
 // RESULT MODEL
-// ==========================================
-const resultSchema = new Schema(
-  {
-    student: {
-      type: Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
-    batch: {
-      type: Schema.Types.ObjectId,
-      ref: "Batch",
-      default: null,
-    },
-    title: { type: String, required: true },
-    totalMarks: { type: Number, required: true, min: 1 },
-    marksObtained: { type: Number, required: true, min: 0 },
-    examDate: { type: Date, default: Date.now },
-    remarks: { type: String, default: "" },
-    published: { type: Boolean, default: false },
-    createdBy: {
-      type: Schema.Types.ObjectId,
-      ref: "User",
-    },
-  },
-  { timestamps: true }
-);
+// // ==========================================
+// const resultSchema = new Schema(
+//   {
+//     student: {
+//       type: Schema.Types.ObjectId,
+//       ref: "User",
+//       required: true,
+//     },
+//     batch: {
+//       type: Schema.Types.ObjectId,
+//       ref: "Batch",
+//       default: null,
+//     },
+//     title: { type: String, required: true },
+//     totalMarks: { type: Number, required: true, min: 1 },
+//     marksObtained: { type: Number, required: true, min: 0 },
+//     examDate: { type: Date, default: Date.now },
+//     remarks: { type: String, default: "" },
+//     published: { type: Boolean, default: false },
+//     createdBy: {
+//       type: Schema.Types.ObjectId,
+//       ref: "User",
+//     },
+//   },
+//   { timestamps: true }
+// );
 
-resultSchema.virtual("percentage").get(function () {
-  return this.totalMarks
-    ? Math.round(
-        (this.marksObtained / this.totalMarks) * 10000
-      ) / 100
-    : 0;
-});
+// resultSchema.virtual("percentage").get(function () {
+//   return this.totalMarks
+//     ? Math.round(
+//         (this.marksObtained / this.totalMarks) * 10000
+//       ) / 100
+//     : 0;
+// });
 
-resultSchema.set("toJSON", { virtuals: true });
+// resultSchema.set("toJSON", { virtuals: true });
 
 // ==========================================
 // ASSIGNMENT MODEL
@@ -341,8 +341,8 @@ const Batch =
 const Attendance =
   models.Attendance || model("Attendance", attendanceSchema);
 
-const Result =
-  models.Result || model("Result", resultSchema);
+// const Result =
+//   models.Result || model("Result", resultSchema);
 
 const Assignment =
   models.Assignment || model("Assignment", assignmentSchema);
@@ -372,7 +372,7 @@ console.log("Course batchId:", !!Course.schema.path("batchId"));
 console.log("Course students:", !!Course.schema.path("students"));
 console.log("Batch:", Batch.modelName);
 console.log("Attendance:", Attendance.modelName);
-console.log("Result:", Result.modelName);
+// console.log("Result:", Result.modelName);
 console.log("=======================================");
 
 // ==========================================
@@ -382,7 +382,6 @@ export {
   Course,
   Batch,
   Attendance,
-  Result,
   Assignment,
   LiveClass,
   Announcement,

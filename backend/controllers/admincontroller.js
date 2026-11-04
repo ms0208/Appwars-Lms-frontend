@@ -8,12 +8,10 @@ import {
   generateUserId,
   generateTemporaryPassword,
 } from "../utils/generateCredentials.js";
-
+import Attendance from "../models/Attendance.js";
 import {
   Course,
   Batch,
-  Attendance,
-  Result,
   Assignment,
   LiveClass,
   Announcement,
@@ -81,21 +79,21 @@ const resourceConfig = {
     populate: ["user", "batch", "recordedBy"],
   },
 
-  results: {
-    model: Result,
-    fields: [
-      "student",
-      "batch",
-      "title",
-      "totalMarks",
-      "marksObtained",
-      "examDate",
-      "remarks",
-      "published",
-    ],
-    searchFields: ["title"],
-    populate: ["student", "batch"],
-  },
+  // results: {
+  //   model: Result,
+  //   fields: [
+  //     "student",
+  //     "batch",
+  //     "title",
+  //     "totalMarks",
+  //     "marksObtained",
+  //     "examDate",
+  //     "remarks",
+  //     "published",
+  //   ],
+  //   searchFields: ["title"],
+  //   populate: ["student", "batch"],
+  // },
 
   assignments: {
     model: Assignment,
@@ -1329,6 +1327,297 @@ export const deleteCourse = async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+};
+
+// ==========================================
+// GET ALL ATTENDANCE
+// GET /api/admin/attendance
+// ==========================================
+
+export const getAllAttendance = async (req, res) => {
+  try {
+    const attendance = await Attendance.find({})
+      .populate("student", "userId name email")
+      .populate("batch", "batch course")
+      .populate("trainer", "userId name email")
+      .sort({ date: -1, createdAt: -1 })
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      message: "All attendance fetched successfully.",
+      count: attendance.length,
+      data: attendance,
+    });
+  } catch (error) {
+    console.error("Admin getAllAttendance:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch attendance.",
+      error: error.message,
+    });
+  }
+};
+// ==========================================
+// CREATE ATTENDANCE
+// POST /api/admin/attendance
+// ==========================================
+
+export const createAttendance = async (req, res) => {
+  try {
+    const {
+      batchId,
+      studentId,
+      trainerId,
+      date,
+      status,
+      remarks,
+    } = req.body;
+
+    if (!batchId || !studentId || !trainerId || !date || !status) {
+      return res.status(400).json({
+        success: false,
+        message: "Batch, student, trainer, date and status are required.",
+      });
+    }
+
+    if (
+      !mongoose.Types.ObjectId.isValid(batchId) ||
+      !mongoose.Types.ObjectId.isValid(studentId) ||
+      !mongoose.Types.ObjectId.isValid(trainerId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid batch, student or trainer ID.",
+      });
+    }
+
+    if (!["Present", "Absent"].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Status must be Present or Absent.",
+      });
+    }
+
+    const attendanceDate = parseAttendanceDate(date);
+
+    if (!attendanceDate) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid date. Use YYYY-MM-DD format.",
+      });
+    }
+
+    const [batch, student, trainer] = await Promise.all([
+      Batch.findById(batchId),
+      User.findOne({ _id: studentId, role: "Student" }),
+      User.findOne({ _id: trainerId, role: "Trainer" }),
+    ]);
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: "Batch not found.",
+      });
+    }
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found.",
+      });
+    }
+
+    if (!trainer) {
+      return res.status(404).json({
+        success: false,
+        message: "Trainer not found.",
+      });
+    }
+
+    const attendance = await Attendance.create({
+      batch: batchId,
+      student: studentId,
+      trainer: trainerId,
+      date: attendanceDate,
+      status,
+      remarks: remarks ? String(remarks).trim() : "",
+    });
+
+    await attendance.populate([
+      { path: "student", select: "userId name email" },
+      { path: "batch", select: "batch course" },
+      { path: "trainer", select: "userId name email" },
+    ]);
+
+    return res.status(201).json({
+      success: true,
+      message: "Attendance created successfully.",
+      data: attendance,
+    });
+  } catch (error) {
+    console.error("Admin createAttendance:", error);
+
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "Attendance already exists for this student, batch and date.",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to create attendance.",
+      error: error.message,
+    });
+  }
+};
+// ==========================================
+// UPDATE ATTENDANCE
+// PATCH /api/admin/attendance/:attendanceId
+// ==========================================
+
+export const updateAttendance = async (req, res) => {
+  try {
+    const { attendanceId } = req.params;
+    const { status, date, remarks } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(attendanceId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid attendance ID.",
+      });
+    }
+
+    const attendance = await Attendance.findById(attendanceId);
+
+    if (!attendance) {
+      return res.status(404).json({
+        success: false,
+        message: "Attendance record not found.",
+      });
+    }
+
+    if (
+      status !== undefined &&
+      !["Present", "Absent"].includes(status)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Status must be Present or Absent.",
+      });
+    }
+
+    if (date !== undefined) {
+      const updatedDate = parseAttendanceDate(date);
+
+      if (!updatedDate) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid date. Use YYYY-MM-DD format.",
+        });
+      }
+
+      const end = new Date(updatedDate);
+      end.setDate(end.getDate() + 1);
+
+      const duplicate = await Attendance.findOne({
+        _id: { $ne: attendanceId },
+        batch: attendance.batch,
+        student: attendance.student,
+        date: {
+          $gte: updatedDate,
+          $lt: end,
+        },
+      });
+
+      if (duplicate) {
+        return res.status(409).json({
+          success: false,
+          message: "Attendance already exists for this date.",
+        });
+      }
+
+      attendance.date = updatedDate;
+    }
+
+    if (status !== undefined) {
+      attendance.status = status;
+    }
+
+    if (remarks !== undefined) {
+      attendance.remarks = String(remarks).trim();
+    }
+
+    await attendance.save();
+
+    await attendance.populate([
+      { path: "student", select: "userId name email" },
+      { path: "batch", select: "batch course" },
+      { path: "trainer", select: "userId name email" },
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      message: "Attendance updated successfully.",
+      data: attendance,
+    });
+  } catch (error) {
+    console.error("Admin updateAttendance:", error);
+
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "Attendance already exists for this date.",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update attendance.",
+      error: error.message,
+    });
+  }
+};
+// ==========================================
+// DELETE ATTENDANCE
+// DELETE /api/admin/attendance/:attendanceId
+// ==========================================
+
+export const deleteAttendance = async (req, res) => {
+  try {
+    const { attendanceId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(attendanceId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid attendance ID.",
+      });
+    }
+
+    const attendance = await Attendance.findByIdAndDelete(attendanceId);
+
+    if (!attendance) {
+      return res.status(404).json({
+        success: false,
+        message: "Attendance record not found.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Attendance deleted successfully.",
+    });
+  } catch (error) {
+    console.error("Admin deleteAttendance:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to delete attendance.",
+      error: error.message,
+    });
   }
 };
 

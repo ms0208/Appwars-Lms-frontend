@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -5,35 +6,33 @@ import {
   Award,
   Search,
   Download,
-  Plus,
-  Pencil,
-  Trash2,
   X,
   Eye,
-  Users,
   CheckCircle2,
   TrendingUp,
   ClipboardList,
   RefreshCw,
+  Users,
 } from "lucide-react";
 
-const API_URL = (
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
-).replace(/\/$/, "");
+// ==========================================
+// API CONFIGURATION
+// ==========================================
 
-const emptyResult = {
-  student: "",
-  rollNo: "",
-  course: "",
-  exam: "",
-  date: new Date().toISOString().slice(0, 10),
-  obtained: "",
-  total: "100",
-  remarks: "",
-};
+const API_BASE_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+).replace(/\/+$/, "");
+
+const API_URL = API_BASE_URL.endsWith("/api")
+  ? API_BASE_URL
+  : `${API_BASE_URL}/api`;
 
 const inputClass =
   "w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
+
+// ==========================================
+// RESULT CALCULATIONS
+// ==========================================
 
 function getPercentage(obtained, total) {
   if (!Number(total)) return 0;
@@ -53,80 +52,73 @@ function getStatus(percentage) {
   return percentage >= 40 ? "Pass" : "Fail";
 }
 
-// Supports common API response formats and field names.
-function mapResult(item) {
-  const studentValue = item.student;
-  const batchValue = item.batch;
-  const courseValue = item.course;
+// ==========================================
+// MAP BACKEND RESULT
+// Backend returns populated student/course
+// ==========================================
 
-  const studentObject =
-    studentValue && typeof studentValue === "object"
-      ? studentValue
+function mapResult(item) {
+  const student =
+    item.student && typeof item.student === "object"
+      ? item.student
       : null;
 
-  const batchObject =
-    batchValue && typeof batchValue === "object" ? batchValue : null;
-
-  const courseObject =
-    courseValue && typeof courseValue === "object" ? courseValue : null;
-
-  const obtained = Number(
-    item.obtained ?? item.marksObtained ?? item.score ?? 0
-  );
-
-  const total = Number(item.total ?? item.totalMarks ?? 100);
+  const course =
+    item.course && typeof item.course === "object"
+      ? item.course
+      : null;
 
   return {
     id: item._id || item.id,
-    studentId: studentObject?._id || studentObject?.id || "",
-    batchId: batchObject?._id || batchObject?.id || "",
-    student:
-      studentObject?.name ||
-      studentObject?.userId ||
-      (typeof studentValue === "string" ? studentValue : "") ||
-      item.studentName ||
-      item.name ||
-      "",
-    rollNo:
-      studentObject?.userId ||
-      studentObject?.rollNo ||
-      item.rollNo ||
-      "",
-    course:
-      batchObject?.name ||
-      batchObject?.title ||
-      courseObject?.name ||
-      courseObject?.title ||
-      (typeof batchValue === "string" ? batchValue : "") ||
-      (typeof courseValue === "string" ? courseValue : "") ||
-      item.courseName ||
-      "",
-    exam: item.exam || item.title || item.examName || "",
-    date: String(item.date || item.examDate || "").slice(0, 10),
-    obtained,
-    total,
+
+    studentId: student?._id || "",
+    student: student?.name || "",
+    rollNo: student?.userId || "",
+    email: student?.email || "",
+    batch: student?.batch || "",
+
+    courseId: course?._id || "",
+    course: course?.courseName || "",
+    courseCode: course?.code || "",
+
+    exam: item.exam || "",
+    date: String(item.date || "").slice(0, 10),
+
+    obtained: Number(item.obtained ?? 0),
+    total: Number(item.total ?? 100),
+
     remarks: item.remarks || "",
     published: Boolean(item.published),
   };
 }
 
+// ==========================================
+// AUTH TOKEN
+// ==========================================
+
 function getToken() {
   if (typeof window === "undefined") return "";
 
-  // Supports the common token key names used in this LMS.
   return (
-    sessionStorage.getItem("token") ||
+    localStorage.getItem("appwars_token") ||
+    localStorage.getItem("token") ||
     sessionStorage.getItem("appwars_token") ||
+    sessionStorage.getItem("token") ||
     ""
   );
 }
+
+// ==========================================
+// API REQUEST
+// ==========================================
 
 async function apiRequest(endpoint, options = {}) {
   const token = getToken();
 
   const headers = {
-    ...(options.body ? { "Content-Type": "application/json" } : {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(token
+      ? { Authorization: `Bearer ${token}` }
+      : {}),
     ...options.headers,
   };
 
@@ -148,43 +140,52 @@ async function apiRequest(endpoint, options = {}) {
   return data;
 }
 
+// ==========================================
+// EXTRACT RESULTS
+// ==========================================
+
 function extractResults(data) {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data.results)) return data.results;
   if (Array.isArray(data.items)) return data.items;
-  if (Array.isArray(data.attendance)) return data.attendance;
   if (Array.isArray(data.data)) return data.data;
+
   if (data.data && Array.isArray(data.data.results)) {
     return data.data.results;
-  }
-  if (data.data && Array.isArray(data.data.items)) {
-    return data.data.items;
   }
 
   return [];
 }
 
+// ==========================================
+// MAIN RESULTS PAGE
+// ==========================================
+
 export default function ResultsPage() {
   const [results, setResults] = useState([]);
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [courseFilter, setCourseFilter] = useState("All");
-  const [modal, setModal] = useState(null);
-  const [selected, setSelected] = useState(null);
-  const [form, setForm] = useState({ ...emptyResult });
-  const [error, setError] = useState("");
-  const [pageError, setPageError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState(null);
 
-  // GET: Fetch results from the backend.
+  const [selected, setSelected] = useState(null);
+  const [showDetails, setShowDetails] = useState(false);
+
+  const [loading, setLoading] = useState(true);
+  const [pageError, setPageError] = useState("");
+
+  // ==========================================
+  // GET ALL STUDENT RESULTS
+  // GET /api/admin/results
+  // ==========================================
+
   const fetchResults = useCallback(async () => {
     setLoading(true);
     setPageError("");
 
     try {
       const data = await apiRequest("/admin/results");
+
       const items = extractResults(data);
 
       setResults(items.map(mapResult));
@@ -195,13 +196,43 @@ export default function ResultsPage() {
     }
   }, []);
 
+  // ==========================================
+  // INITIAL LOAD
+  // ==========================================
+
   useEffect(() => {
     fetchResults();
   }, [fetchResults]);
 
+  // ==========================================
+  // COURSE OPTIONS FROM FETCHED RESULTS
+  // ==========================================
+
+  const courseOptions = useMemo(() => {
+    const uniqueCourses = new Map();
+
+    results.forEach((result) => {
+      if (result.courseId) {
+        uniqueCourses.set(result.courseId, {
+          id: result.courseId,
+          name: result.course,
+          code: result.courseCode,
+        });
+      }
+    });
+
+    return Array.from(uniqueCourses.values());
+  }, [results]);
+
+  // ==========================================
+  // STATISTICS
+  // ==========================================
+
   const passed = results.filter(
     (result) =>
-      getStatus(getPercentage(result.obtained, result.total)) === "Pass"
+      getStatus(
+        getPercentage(result.obtained, result.total)
+      ) === "Pass"
   ).length;
 
   const failed = results.length - passed;
@@ -209,167 +240,62 @@ export default function ResultsPage() {
   const average = results.length
     ? results.reduce(
         (sum, result) =>
-          sum + getPercentage(result.obtained, result.total),
+          sum +
+          getPercentage(result.obtained, result.total),
         0
       ) / results.length
     : 0;
 
-  const courses = useMemo(
-    () => [
-      ...new Set(results.map((result) => result.course).filter(Boolean)),
-    ],
-    [results]
-  );
+  // ==========================================
+  // SEARCH AND FILTER
+  // ==========================================
 
-  const filtered = results.filter((result) => {
-    const query = search.toLowerCase();
-    const percentage = getPercentage(result.obtained, result.total);
-    const status = getStatus(percentage);
+  const filtered = useMemo(() => {
+    return results.filter((result) => {
+      const query = search.toLowerCase();
 
-    return (
-      (
+      const percentage = getPercentage(
+        result.obtained,
+        result.total
+      );
+
+      const status = getStatus(percentage);
+
+      const matchesSearch =
         result.student.toLowerCase().includes(query) ||
         result.rollNo.toLowerCase().includes(query) ||
         result.course.toLowerCase().includes(query) ||
-        result.exam.toLowerCase().includes(query)
-      ) &&
-      (statusFilter === "All" || status === statusFilter) &&
-      (courseFilter === "All" || result.course === courseFilter)
-    );
-  });
+        result.exam.toLowerCase().includes(query);
 
-  function updateField(field, value) {
-    setForm((previous) => ({
-      ...previous,
-      [field]: value,
-    }));
-  }
+      const matchesCourse =
+        courseFilter === "All" ||
+        result.courseId === courseFilter;
 
-  function openAdd() {
-    setSelected(null);
-    setForm({ ...emptyResult });
-    setError("");
-    setModal("form");
-  }
+      const matchesStatus =
+        statusFilter === "All" ||
+        status === statusFilter;
 
-  function openEdit(result) {
-    setSelected(result);
-
-    setForm({
-      ...result,
-      obtained: String(result.obtained),
-      total: String(result.total),
-    });
-
-    setError("");
-    setModal("form");
-  }
-
-  // POST: Add a result. PATCH: Update an existing result.
-  async function saveResult(event) {
-    event.preventDefault();
-    setError("");
-
-    if (
-      !form.student.trim() ||
-      !form.rollNo.trim() ||
-      !form.course.trim() ||
-      !form.exam.trim() ||
-      !form.date
-    ) {
-      setError("Please complete all required fields.");
-      return;
-    }
-
-    const obtained = Number(form.obtained);
-    const total = Number(form.total);
-
-    if (
-      form.obtained === "" ||
-      !Number.isFinite(obtained) ||
-      !Number.isFinite(total) ||
-      total <= 0
-    ) {
-      setError("Enter valid marks and a total greater than zero.");
-      return;
-    }
-
-    if (obtained < 0 || obtained > total) {
-      setError("Obtained marks must be between zero and total marks.");
-      return;
-    }
-
-    const payload = {
-      student: form.student.trim(),
-      studentName: form.student.trim(),
-      rollNo: form.rollNo.trim(),
-      course: form.course.trim(),
-      courseName: form.course.trim(),
-      exam: form.exam.trim(),
-      date: form.date,
-      obtained,
-      total,
-      remarks: form.remarks.trim(),
-    };
-
-    setSaving(true);
-
-    try {
-      if (selected) {
-        await apiRequest(`/admin/results/${selected.id}`, {
-          method: "PATCH",
-          body: JSON.stringify(payload),
-        });
-      } else {
-        await apiRequest("/admin/results", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-      }
-
-      await fetchResults();
-
-      setModal(null);
-      setSelected(null);
-      setForm({ ...emptyResult });
-      setError("");
-    } catch (err) {
-      setError(err.message || "Failed to save result.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // DELETE: Remove a result from the backend.
-  async function deleteResult(id) {
-    if (!window.confirm("Are you sure you want to delete this result?")) {
-      return;
-    }
-
-    setDeletingId(id);
-    setPageError("");
-
-    try {
-      await apiRequest(`/admin/results/${id}`, {
-        method: "DELETE",
-      });
-
-      setResults((previous) =>
-        previous.filter((result) => result.id !== id)
+      return (
+        matchesSearch &&
+        matchesCourse &&
+        matchesStatus
       );
+    });
+  }, [results, search, courseFilter, statusFilter]);
 
-      if (selected?.id === id) {
-        setSelected(null);
-        setModal(null);
-      }
-    } catch (err) {
-      setPageError(err.message || "Failed to delete result.");
-    } finally {
-      setDeletingId(null);
-    }
+  // ==========================================
+  // VIEW RESULT DETAILS
+  // ==========================================
+
+  function openDetails(result) {
+    setSelected(result);
+    setShowDetails(true);
   }
 
-  // Export the currently filtered results to CSV.
+  // ==========================================
+  // EXPORT CSV
+  // ==========================================
+
   function exportCSV() {
     const headers = [
       "Student",
@@ -386,7 +312,10 @@ export default function ResultsPage() {
     ];
 
     const rows = filtered.map((result) => {
-      const percentage = getPercentage(result.obtained, result.total);
+      const percentage = getPercentage(
+        result.obtained,
+        result.total
+      );
 
       return [
         result.student,
@@ -406,7 +335,9 @@ export default function ResultsPage() {
     const csv = [headers, ...rows]
       .map((row) =>
         row
-          .map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`)
+          .map((value) =>
+            `"${String(value ?? "").replace(/"/g, '""')}"`
+          )
           .join(",")
       )
       .join("\n");
@@ -419,7 +350,8 @@ export default function ResultsPage() {
     const link = document.createElement("a");
 
     link.href = url;
-    link.download = "appwars-results.csv";
+    link.download = "appwars-student-results.csv";
+
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -427,9 +359,16 @@ export default function ResultsPage() {
     URL.revokeObjectURL(url);
   }
 
+  // ==========================================
+  // FRONTEND UI
+  // ==========================================
+
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8">
       <div className="mx-auto max-w-7xl space-y-6">
+
+        {/* HEADER */}
+
         <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div>
             <p className="text-sm font-semibold uppercase tracking-wider text-blue-600">
@@ -437,35 +376,41 @@ export default function ResultsPage() {
             </p>
 
             <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">
-              Results Management
+              Student Results
             </h1>
 
             <p className="mt-1 text-sm text-slate-500">
-              Manage exam scores, grades and student performance.
+              View student exam scores, grades and academic performance.
             </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={exportCSV}
-              disabled={loading || filtered.length === 0}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={fetchResults}
+              disabled={loading}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             >
-              <Download size={17} />
-              Export CSV
+              <RefreshCw
+                size={17}
+                className={loading ? "animate-spin" : ""}
+              />
+              Refresh
             </button>
 
             <button
               type="button"
-              onClick={openAdd}
-              className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
+              onClick={exportCSV}
+              disabled={loading || filtered.length === 0}
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Plus size={17} />
-              Add Result
+              <Download size={17} />
+              Export CSV
             </button>
           </div>
         </header>
+
+        {/* API ERROR */}
 
         {pageError && (
           <div className="flex flex-col justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 sm:flex-row sm:items-center">
@@ -483,11 +428,7 @@ export default function ResultsPage() {
           </div>
         )}
 
-        {loading && (
-          <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
-            Loading results from the server...
-          </div>
-        )}
+        {/* STATISTICS */}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
@@ -515,8 +456,11 @@ export default function ResultsPage() {
           />
         </div>
 
+        {/* SEARCH AND FILTER */}
+
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+
             <div className="relative">
               <Search
                 size={18}
@@ -525,7 +469,9 @@ export default function ResultsPage() {
 
               <input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) =>
+                  setSearch(event.target.value)
+                }
                 placeholder="Search student, roll no. or exam..."
                 className={inputClass + " pl-10"}
               />
@@ -533,29 +479,39 @@ export default function ResultsPage() {
 
             <select
               value={courseFilter}
-              onChange={(event) => setCourseFilter(event.target.value)}
+              onChange={(event) =>
+                setCourseFilter(event.target.value)
+              }
               className={inputClass}
             >
               <option value="All">All Courses</option>
 
-              {courses.map((course) => (
-                <option key={course} value={course}>
-                  {course}
+              {courseOptions.map((course) => (
+                <option
+                  key={course.id}
+                  value={course.id}
+                >
+                  {course.name} ({course.code})
                 </option>
               ))}
             </select>
 
             <select
               value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
+              onChange={(event) =>
+                setStatusFilter(event.target.value)
+              }
               className={inputClass}
             >
               <option value="All">All Results</option>
               <option value="Pass">Passed</option>
               <option value="Fail">Failed</option>
             </select>
+
           </div>
         </div>
+
+        {/* RESULTS TABLE */}
 
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
@@ -569,7 +525,7 @@ export default function ResultsPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1100px] text-left text-sm">
+            <table className="w-full min-w-[1000px] text-left text-sm">
               <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                 <tr>
                   <th className="px-5 py-4">Student</th>
@@ -579,11 +535,12 @@ export default function ResultsPage() {
                   <th className="px-5 py-4">Percentage</th>
                   <th className="px-5 py-4">Grade</th>
                   <th className="px-5 py-4">Status</th>
-                  <th className="px-5 py-4 text-right">Actions</th>
+                  <th className="px-5 py-4 text-right">Action</th>
                 </tr>
               </thead>
 
               <tbody className="divide-y divide-slate-100">
+
                 {!loading &&
                   filtered.map((result) => {
                     const percentage = getPercentage(
@@ -594,7 +551,10 @@ export default function ResultsPage() {
                     const status = getStatus(percentage);
 
                     return (
-                      <tr key={result.id} className="hover:bg-slate-50">
+                      <tr
+                        key={result.id}
+                        className="hover:bg-slate-50"
+                      >
                         <td className="px-5 py-4">
                           <p className="font-semibold text-slate-800">
                             {result.student || "—"}
@@ -652,35 +612,12 @@ export default function ResultsPage() {
                         </td>
 
                         <td className="px-5 py-4">
-                          <div className="flex justify-end gap-1">
+                          <div className="flex justify-end">
                             <ActionButton
-                              label="View"
-                              onClick={() => {
-                                setSelected(result);
-                                setModal("view");
-                              }}
+                              label="View Result"
+                              onClick={() => openDetails(result)}
                             >
                               <Eye size={16} />
-                            </ActionButton>
-
-                            <ActionButton
-                              label="Edit"
-                              onClick={() => openEdit(result)}
-                            >
-                              <Pencil size={16} />
-                            </ActionButton>
-
-                            <ActionButton
-                              label="Delete"
-                              danger
-                              disabled={deletingId === result.id}
-                              onClick={() => deleteResult(result.id)}
-                            >
-                              {deletingId === result.id ? (
-                                <RefreshCw size={16} />
-                              ) : (
-                                <Trash2 size={16} />
-                              )}
                             </ActionButton>
                           </div>
                         </td>
@@ -694,7 +631,7 @@ export default function ResultsPage() {
                       colSpan={8}
                       className="px-5 py-12 text-center text-slate-500"
                     >
-                      No results match your filters.
+                      No student results found.
                     </td>
                   </tr>
                 )}
@@ -705,203 +642,31 @@ export default function ResultsPage() {
                       colSpan={8}
                       className="px-5 py-12 text-center text-slate-500"
                     >
-                      Loading results...
+                      Loading student results...
                     </td>
                   </tr>
                 )}
+
               </tbody>
             </table>
           </div>
         </div>
       </div>
 
-      {modal === "form" && (
+      {/* ======================================
+          VIEW RESULT MODAL
+      ====================================== */}
+
+      {showDetails && selected && (
         <Modal
-          title={selected ? "Edit Result" : "Add Student Result"}
+          title="Student Result Details"
           onClose={() => {
-            if (!saving) {
-              setModal(null);
-              setError("");
-            }
-          }}
-        >
-          <form onSubmit={saveResult} className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Student Name *">
-                <input
-                  required
-                  value={form.student}
-                  onChange={(event) =>
-                    updateField("student", event.target.value)
-                  }
-                  className={inputClass}
-                />
-              </Field>
-
-              <Field label="Roll Number *">
-                <input
-                  required
-                  value={form.rollNo}
-                  onChange={(event) =>
-                    updateField("rollNo", event.target.value)
-                  }
-                  className={inputClass}
-                />
-              </Field>
-
-              <Field label="Course *">
-                <input
-                  required
-                  value={form.course}
-                  onChange={(event) =>
-                    updateField("course", event.target.value)
-                  }
-                  className={inputClass}
-                />
-              </Field>
-
-              <Field label="Exam Name *">
-                <input
-                  required
-                  value={form.exam}
-                  onChange={(event) =>
-                    updateField("exam", event.target.value)
-                  }
-                  className={inputClass}
-                />
-              </Field>
-
-              <Field label="Exam Date *">
-                <input
-                  type="date"
-                  required
-                  value={form.date}
-                  onChange={(event) =>
-                    updateField("date", event.target.value)
-                  }
-                  className={inputClass}
-                />
-              </Field>
-
-              <Field label="Total Marks *">
-                <input
-                  type="number"
-                  required
-                  min="1"
-                  value={form.total}
-                  onChange={(event) =>
-                    updateField("total", event.target.value)
-                  }
-                  className={inputClass}
-                />
-              </Field>
-
-              <Field label="Obtained Marks *">
-                <input
-                  type="number"
-                  required
-                  min="0"
-                  max={form.total || undefined}
-                  value={form.obtained}
-                  onChange={(event) =>
-                    updateField("obtained", event.target.value)
-                  }
-                  className={inputClass}
-                />
-              </Field>
-
-              <Field label="Remarks">
-                <input
-                  value={form.remarks}
-                  onChange={(event) =>
-                    updateField("remarks", event.target.value)
-                  }
-                  className={inputClass}
-                  placeholder="Optional feedback"
-                />
-              </Field>
-            </div>
-
-            {form.obtained !== "" &&
-              Number(form.total) > 0 &&
-              Number(form.obtained) >= 0 &&
-              Number(form.obtained) <= Number(form.total) && (
-                <div className="grid grid-cols-3 gap-3 rounded-lg bg-blue-50 p-4">
-                  <div>
-                    <p className="text-xs text-slate-500">Percentage</p>
-                    <p className="mt-1 font-bold text-blue-800">
-                      {getPercentage(
-                        form.obtained,
-                        form.total
-                      ).toFixed(1)}
-                      %
-                    </p>
-                  </div>
-
-                  <div>
-                    <p className="text-xs text-slate-500">Grade</p>
-                    <p className="mt-1 font-bold text-blue-800">
-                      {getGrade(
-                        getPercentage(form.obtained, form.total)
-                      )}
-                    </p>
-                  </div>
-
-                  <div>
-                    <p className="text-xs text-slate-500">Result</p>
-                    <p className="mt-1 font-bold text-blue-800">
-                      {getStatus(
-                        getPercentage(form.obtained, form.total)
-                      )}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-            {error && (
-              <p className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
-                {error}
-              </p>
-            )}
-
-            <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => {
-                  setModal(null);
-                  setError("");
-                }}
-                className="rounded-lg border border-slate-200 px-4 py-2 text-sm disabled:opacity-50"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="submit"
-                disabled={saving}
-                className="rounded-lg bg-blue-700 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {saving
-                  ? "Saving..."
-                  : selected
-                    ? "Save Changes"
-                    : "Add Result"}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
-      {modal === "view" && selected && (
-        <Modal
-          title="Result Details"
-          onClose={() => {
-            setModal(null);
+            setShowDetails(false);
             setSelected(null);
           }}
         >
           <div className="space-y-5">
+
             <div className="flex items-start gap-4">
               <div className="rounded-xl bg-blue-50 p-3 text-blue-700">
                 <Award size={28} />
@@ -930,13 +695,32 @@ export default function ResultsPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Detail label="Course" value={selected.course} />
-              <Detail label="Exam" value={selected.exam} />
-              <Detail label="Date" value={formatDate(selected.date)} />
+
+              <Detail
+                label="Course"
+                value={selected.course}
+              />
+
+              <Detail
+                label="Course Code"
+                value={selected.courseCode}
+              />
+
+              <Detail
+                label="Exam"
+                value={selected.exam}
+              />
+
+              <Detail
+                label="Date"
+                value={formatDate(selected.date)}
+              />
+
               <Detail
                 label="Marks"
                 value={`${selected.obtained} / ${selected.total}`}
               />
+
               <Detail
                 label="Percentage"
                 value={`${getPercentage(
@@ -944,6 +728,7 @@ export default function ResultsPage() {
                   selected.total
                 ).toFixed(2)}%`}
               />
+
               <Detail
                 label="Grade"
                 value={getGrade(
@@ -953,17 +738,29 @@ export default function ResultsPage() {
                   )
                 )}
               />
+
+              <Detail
+                label="Batch"
+                value={selected.batch || "—"}
+              />
+
+              <Detail
+                label="Email"
+                value={selected.email || "—"}
+              />
+
               <Detail
                 label="Remarks"
                 value={selected.remarks || "No remarks"}
               />
+
             </div>
 
             <div className="flex justify-end border-t border-slate-100 pt-4">
               <button
                 type="button"
                 onClick={() => {
-                  setModal(null);
+                  setShowDetails(false);
                   setSelected(null);
                 }}
                 className="rounded-lg bg-blue-700 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-800"
@@ -971,12 +768,17 @@ export default function ResultsPage() {
                 Close
               </button>
             </div>
+
           </div>
         </Modal>
       )}
     </div>
   );
 }
+
+// ==========================================
+// FORMAT DATE
+// ==========================================
 
 function formatDate(date) {
   if (!date) return "—";
@@ -992,20 +794,33 @@ function formatDate(date) {
   });
 }
 
+// ==========================================
+// STAT CARD
+// ==========================================
+
 function StatCard({ title, value, icon: Icon }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between">
-        <p className="text-sm font-medium text-slate-500">{title}</p>
+        <p className="text-sm font-medium text-slate-500">
+          {title}
+        </p>
+
         <span className="rounded-lg bg-blue-50 p-2 text-blue-700">
           <Icon size={20} />
         </span>
       </div>
 
-      <p className="mt-4 text-2xl font-bold text-slate-900">{value}</p>
+      <p className="mt-4 text-2xl font-bold text-slate-900">
+        {value}
+      </p>
     </div>
   );
 }
+
+// ==========================================
+// STATUS BADGE
+// ==========================================
 
 function StatusBadge({ status }) {
   const styles = {
@@ -1024,42 +839,44 @@ function StatusBadge({ status }) {
   );
 }
 
-function ActionButton({
-  children,
-  label,
-  onClick,
-  danger = false,
-  disabled = false,
-}) {
+// ==========================================
+// ACTION BUTTON
+// ==========================================
+
+function ActionButton({ children, label, onClick }) {
   return (
     <button
       type="button"
       title={label}
       aria-label={label}
-      disabled={disabled}
       onClick={onClick}
-      className={`rounded-lg p-2 disabled:cursor-not-allowed disabled:opacity-50 ${
-        danger
-          ? "text-red-500 hover:bg-red-50"
-          : "text-slate-500 hover:bg-blue-50 hover:text-blue-700"
-      }`}
+      className="rounded-lg p-2 text-slate-500 hover:bg-blue-50 hover:text-blue-700"
     >
       {children}
     </button>
   );
 }
 
+// ==========================================
+// MODAL
+// ==========================================
+
 function Modal({ title, onClose, children }) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
       }}
     >
       <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl sm:p-6">
+
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-slate-900">{title}</h2>
+          <h2 className="text-lg font-bold text-slate-900">
+            {title}
+          </h2>
 
           <button
             type="button"
@@ -1077,19 +894,17 @@ function Modal({ title, onClose, children }) {
   );
 }
 
-function Field({ label, children }) {
-  return (
-    <label className="block space-y-1.5">
-      <span className="text-sm font-medium text-slate-700">{label}</span>
-      {children}
-    </label>
-  );
-}
+// ==========================================
+// DETAIL FIELD
+// ==========================================
 
 function Detail({ label, value }) {
   return (
     <div className="rounded-lg bg-slate-50 p-3">
-      <p className="text-xs font-medium text-slate-500">{label}</p>
+      <p className="text-xs font-medium text-slate-500">
+        {label}
+      </p>
+
       <p className="mt-1 break-words text-sm font-semibold text-slate-800">
         {value || "—"}
       </p>

@@ -1,6 +1,6 @@
 import express from "express";
 
-import protect  from "../middleware/authMiddleware.js";
+import protect from "../middleware/authMiddleware.js";
 
 import {
   getDashboard,
@@ -13,43 +13,99 @@ import {
   getAnnouncements,
   saveAttendance,
   getAttendance,
+
+  // Assignments
+  createAssignment,
+  getAssignments,
+  updateAssignment,
+  deleteAssignment,
+
+  // Submissions and grading
   getSubmissions,
   gradeSubmission,
+
   getStudentPerformance,
   getOpenDoubts,
   replyToDoubt,
 } from "../controllers/trainercontroller.js";
-
+import uploadAssignment from "../middleware/assignmentUpload.js";
 const router = express.Router();
 
-// Every endpoint requires authentication and the Trainer role.
+// All Trainer routes require authentication.
 router.use(protect);
 
-// Dashboard and batch management
+// ==========================================
+// DASHBOARD
+// ==========================================
+
 router.get("/dashboard", getDashboard);
+
+// ==========================================
+// TRAINER PROFILE
+// ==========================================
+
 router.get("/profile", getTrainerProfile);
 router.put("/profile", updateTrainerProfile);
+
+// ==========================================
+// ASSIGNED BATCHES
+// ==========================================
+
 router.get("/batches", getAssignedBatches);
 router.get("/batches/:batchId", getBatchDetails);
 router.get("/batches/:batchId/students", getBatchStudents);
 
-// Announcements
+// ==========================================
+// ASSIGNMENTS
+// Trainer creates, views, updates and deletes
+// ==========================================
+
+router.get("/assignments", getAssignments);
+router.post(
+  "/assignments",
+  uploadAssignment.single("attachment"),
+  createAssignment
+);
+router.patch("/assignments/:assignmentId", updateAssignment);
+router.delete("/assignments/:assignmentId", deleteAssignment);
+
+// ==========================================
+// ANNOUNCEMENTS
+// ==========================================
+
 router.get("/announcements", getAnnouncements);
 router.post("/announcements", createAnnouncement);
 
-// Attendance
+// ==========================================
+// ATTENDANCE
+// ==========================================
+
 router.get("/attendance", getAttendance);
 router.put("/attendance", saveAttendance);
 
-// Assignment submissions and grading
-router.get("/submissions", getSubmissions);
-router.patch("/submissions/:submissionId/grade", gradeSubmission);
+// ==========================================
+// ASSIGNMENT SUBMISSIONS & GRADING
+// ==========================================
 
-// Student performance
+router.get("/submissions", getSubmissions);
+
+router.patch(
+  "/submissions/:submissionId/grade",
+  gradeSubmission
+);
+
+// ==========================================
+// STUDENT PERFORMANCE
+// ==========================================
+
 router.get("/performance", getStudentPerformance);
 
-// Student doubts
+// ==========================================
+// STUDENT DOUBTS
+// ==========================================
+
 router.get("/doubts", getOpenDoubts);
+
 router.post("/doubts/:doubtId/replies", replyToDoubt);
 
 export default router;
