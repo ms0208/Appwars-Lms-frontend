@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -15,6 +16,8 @@ import {
   CalendarDays,
   CheckCircle,
   ArrowUpRight,
+  Wallet,
+  Receipt,
 } from "lucide-react";
 
 const API_ROOT = (
@@ -64,7 +67,7 @@ function formatDate(value) {
 function getStatusClass(status) {
   const value = String(status || "").toLowerCase();
 
-  if (["paid", "active", "completed", "success"].includes(value)) {
+  if (["paid", "active", "completed", "success", "clear"].includes(value)) {
     return "bg-green-100 text-green-700";
   }
 
@@ -72,36 +75,19 @@ function getStatusClass(status) {
     return "bg-amber-100 text-amber-700";
   }
 
-  if (["failed", "inactive", "cancelled"].includes(value)) {
+  if (["failed", "inactive", "cancelled", "refunded"].includes(value)) {
     return "bg-red-100 text-red-700";
   }
 
   return "bg-gray-100 text-gray-700";
 }
 
-// Safely convert common backend response formats to arrays.
-function toArray(value) {
-  if (Array.isArray(value)) return value;
-
-  if (!value || typeof value !== "object") return [];
-
-  if (Array.isArray(value.data)) return value.data;
-  if (Array.isArray(value.results)) return value.results;
-  if (Array.isArray(value.records)) return value.records;
-  if (Array.isArray(value.payments)) return value.payments;
-  if (Array.isArray(value.admissions)) return value.admissions;
-  if (Array.isArray(value.students)) return value.students;
-  if (Array.isArray(value.docs)) return value.docs;
-
-  return [];
-}
-
 function getStoredUser() {
   if (typeof window === "undefined") return null;
 
   const storedUser =
-    sessionStorage.getItem("user") ||
-    localStorage.getItem("user");
+    sessionStorage.getItem("token") ||
+    localStorage.getItem("token") 
 
   if (!storedUser) return null;
 
@@ -110,6 +96,96 @@ function getStoredUser() {
   } catch {
     return null;
   }
+}
+
+function getObjectName(value, fields = ["name", "batch", "batchName", "courseName"]) {
+  if (!value) return "—";
+
+  if (typeof value === "string") return value;
+
+  if (typeof value === "object") {
+    for (const field of fields) {
+      if (value[field]) return value[field];
+    }
+  }
+
+  return "—";
+}
+
+function getStudentName(admission) {
+  return (
+    getObjectName(admission?.student, ["name", "fullName"]) !== "—"
+      ? getObjectName(admission?.student, ["name", "fullName"])
+      : admission?.studentName || admission?.name || "—"
+  );
+}
+
+function getStudentEmail(admission) {
+  return (
+    admission?.student?.email ||
+    admission?.email ||
+    admission?.studentEmail ||
+    "—"
+  );
+}
+
+function getStudentId(admission) {
+  return (
+    admission?.student?.userId ||
+    admission?.student?.studentId ||
+    admission?.studentId ||
+    admission?.userId ||
+    "—"
+  );
+}
+
+function getBatchName(admission) {
+  return (
+    getObjectName(admission?.batch, ["batch", "name", "batchName", "code"]) !== "—"
+      ? getObjectName(admission?.batch, ["batch", "name", "batchName", "code"])
+      : admission?.batchName || admission?.batchCode || "—"
+  );
+}
+
+function getPaidAmount(admission) {
+  return (
+    Number(
+      admission?.totalPaid ??
+        admission?.paidAmount ??
+        admission?.collectedFees ??
+        admission?.totalCollected ??
+        0
+    ) || 0
+  );
+}
+
+function getPendingAmount(admission) {
+  return (
+    Number(
+      admission?.totalPending ??
+        admission?.pendingAmount ??
+        admission?.pendingFees ??
+        0
+    ) || 0
+  );
+}
+
+function getAdmissionDate(admission) {
+  return (
+    admission?.admissionDate ||
+    admission?.createdAt ||
+    admission?.date ||
+    admission?.student?.createdAt ||
+    null
+  );
+}
+
+function getFeeStatus(admission) {
+  if (admission?.feeStatus) return admission.feeStatus;
+
+  const pending = getPendingAmount(admission);
+
+  return pending <= 0 ? "Paid" : "Pending";
 }
 
 export default function CounsellorDashboard() {
@@ -121,18 +197,30 @@ export default function CounsellorDashboard() {
   const [error, setError] = useState("");
   const [counsellorName, setCounsellorName] = useState("Counsellor");
 
-  // Support the token key used by the current sign-in page,
-  // as well as the older APPWARS token key.
   const getToken = useCallback(() => {
     if (typeof window === "undefined") return "";
 
     return (
-      sessionStorage.getItem("token") ||
-      localStorage.getItem("token") ||
       sessionStorage.getItem("appwars_token") ||
       localStorage.getItem("appwars_token") ||
+      sessionStorage.getItem("token") ||
+      localStorage.getItem("token") ||
       ""
     );
+  }, []);
+
+  const clearAuth = useCallback(() => {
+    if (typeof window === "undefined") return;
+
+    [
+      "token",
+      "appwars_token",
+      "user",
+      "appwars_user",
+    ].forEach((key) => {
+      sessionStorage.removeItem(key);
+      localStorage.removeItem(key);
+    });
   }, []);
 
   const loadDashboard = useCallback(
@@ -153,40 +241,30 @@ export default function CounsellorDashboard() {
       setError("");
 
       try {
-        const response = await fetch(
-          getApiUrl("/counsellor/dashboard"),
-          {
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              Accept: "application/json",
-            },
-            cache: "no-store",
-          }
-        );
+        const response = await fetch(getApiUrl("/counsellor/dashboard"), {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+          cache: "no-store",
+        });
 
         const result = await response.json().catch(() => ({}));
 
         if (response.status === 401) {
-          sessionStorage.removeItem("token");
-          localStorage.removeItem("token");
-          sessionStorage.removeItem("appwars_token");
-          localStorage.removeItem("appwars_token");
-          sessionStorage.removeItem("appwars_user");
-          localStorage.removeItem("appwars_user");
-
+          clearAuth();
           router.replace("/signin");
           return;
         }
 
         if (response.status === 403) {
-          setError(
+          throw new Error(
             "Access denied. Your account does not have permission to access this dashboard."
           );
-          return;
         }
 
-        if (!response.ok) {
+        if (!response.ok || result.success === false) {
           throw new Error(
             result.message ||
               result.error ||
@@ -194,36 +272,40 @@ export default function CounsellorDashboard() {
           );
         }
 
-        if (result.success === false) {
-          throw new Error(result.message || "Unable to load dashboard.");
-        }
+        // Backend response:
+        // {
+        //   success: true,
+        //   data: {
+        //     month,
+        //     metrics,
+        //     recentAdmissions,
+        //     feeStatus
+        //   }
+        // }
 
-        // Supports { data: {...} }, { dashboard: {...} }, or direct objects.
         const data = result.data ?? result.dashboard ?? result;
 
-        setDashboard(
-          data && typeof data === "object" ? data : {}
-        );
+        setDashboard({
+          ...data,
+          metrics: data?.metrics || {},
+          feeStatus: data?.feeStatus || {},
+          recentAdmissions: Array.isArray(data?.recentAdmissions)
+            ? data.recentAdmissions
+            : [],
+        });
 
         const user = getStoredUser();
 
         if (user) {
           const role = String(user.role || "").toLowerCase();
 
-          if (
-            role &&
-            role !== "counsellor" &&
-            role !== "admin"
-          ) {
+          if (role && role !== "counsellor" && role !== "admin") {
             router.replace("/signin");
             return;
           }
 
           setCounsellorName(
-            user.name ||
-              user.fullName ||
-              user.userId ||
-              "Counsellor"
+            user.name || user.fullName || user.userId || "Counsellor"
           );
         }
       } catch (err) {
@@ -236,7 +318,7 @@ export default function CounsellorDashboard() {
         setRefreshing(false);
       }
     },
-    [getToken, router]
+    [getToken, clearAuth, router]
   );
 
   useEffect(() => {
@@ -252,96 +334,56 @@ export default function CounsellorDashboard() {
   }, [loadDashboard]);
 
   const handleLogout = () => {
-    sessionStorage.removeItem("token");
-    localStorage.removeItem("token");
-    sessionStorage.removeItem("appwars_token");
-    localStorage.removeItem("appwars_token");
-    sessionStorage.removeItem("appwars_user");
-    localStorage.removeItem("appwars_user");
-
+    clearAuth();
     router.replace("/signin");
   };
 
-  // Safely handle nested dashboard response formats.
-  const metricsSource =
-    dashboard?.metrics ||
-    dashboard?.stats ||
-    dashboard?.summary ||
-    dashboard ||
-    {};
+  const metrics = dashboard?.metrics || {};
+  const feeStatus = dashboard?.feeStatus || {};
 
-  const metrics =
-    metricsSource && typeof metricsSource === "object"
-      ? metricsSource
-      : {};
+  const recentAdmissions = Array.isArray(dashboard?.recentAdmissions)
+    ? dashboard.recentAdmissions
+    : [];
 
-  const recentAdmissions = toArray(
-    dashboard?.recentAdmissions ??
-      dashboard?.admissions ??
-      dashboard?.recentStudents ??
-      dashboard?.students ??
-      []
-  );
+  const totalStudents = metrics.totalStudents ?? 0;
+  const monthlyAdmissions = metrics.monthlyAdmissions ?? 0;
+  const activeBatches = metrics.activeBatches ?? 0;
 
-  // FIX: feeStatus is always an array before rendering with .map().
-  const rawFeeStatus =
-    dashboard?.feeStatus ??
-    dashboard?.fees ??
-    dashboard?.recentPayments ??
-    dashboard?.payments ??
-    [];
-
-  const feeStatus = toArray(rawFeeStatus);
+  const pendingFees = Number(feeStatus.totalPending ?? 0);
+  const pendingFeeAccounts = metrics.pendingFeeAccounts ?? feeStatus.pending ?? 0;
+  const totalCollected = Number(feeStatus.totalCollected ?? 0);
+  const clearFeeAccounts = feeStatus.clear ?? 0;
 
   const cards = [
     {
       title: "Total Students",
-      value:
-        metrics.totalStudents ??
-        metrics.activeStudents ??
-        metrics.studentsCount ??
-        0,
+      value: totalStudents,
       icon: Users,
       color: "bg-blue-100 text-blue-700",
-      description: "Registered students",
+      description: "Students referred by you",
     },
     {
       title: "New Admissions",
-      value:
-        metrics.monthlyAdmissions ??
-        metrics.newAdmissions ??
-        metrics.admissionsThisMonth ??
-        0,
+      value: monthlyAdmissions,
       icon: UserPlus,
       color: "bg-purple-100 text-purple-700",
-      description: "Admissions this month",
+      description: dashboard?.month
+        ? `Admissions in ${dashboard.month}`
+        : "Admissions this month",
     },
     {
       title: "Active Batches",
-      value:
-        metrics.activeBatches ??
-        metrics.totalBatches ??
-        0,
+      value: activeBatches,
       icon: GraduationCap,
       color: "bg-green-100 text-green-700",
-      description: "Available batches",
+      description: "Currently active batches",
     },
     {
       title: "Pending Fees",
-      value: formatCurrency(
-        metrics.pendingFees ??
-          metrics.totalPending ??
-          metrics.pendingAmount ??
-          (dashboard?.fees &&
-          typeof dashboard.fees === "object" &&
-          !Array.isArray(dashboard.fees)
-            ? dashboard.fees.pending
-            : 0) ??
-          0
-      ),
+      value: formatCurrency(pendingFees),
       icon: IndianRupee,
       color: "bg-amber-100 text-amber-700",
-      description: "Outstanding amount",
+      description: `${pendingFeeAccounts} pending fee accounts`,
     },
   ];
 
@@ -375,6 +417,12 @@ export default function CounsellorDashboard() {
             <p className="mt-2 text-sm text-gray-600">
               Welcome back, {counsellorName}. Here is your admissions overview.
             </p>
+
+            {dashboard?.month && (
+              <p className="mt-1 text-xs font-medium text-blue-700">
+                Reporting period: {dashboard.month}
+              </p>
+            )}
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -402,7 +450,7 @@ export default function CounsellorDashboard() {
           </div>
         </header>
 
-        {/* API errors */}
+        {/* API Error */}
         {error && (
           <div
             role="alert"
@@ -411,10 +459,7 @@ export default function CounsellorDashboard() {
             <AlertCircle size={20} className="mt-0.5 shrink-0" />
 
             <div className="flex-1">
-              <p className="font-semibold">
-                Dashboard could not be loaded
-              </p>
-
+              <p className="font-semibold">Dashboard could not be loaded</p>
               <p className="mt-1 text-sm">{error}</p>
 
               <button
@@ -428,7 +473,7 @@ export default function CounsellorDashboard() {
           </div>
         )}
 
-        {/* Summary cards */}
+        {/* Main Summary Cards */}
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {cards.map((card) => {
             const Icon = card.icon;
@@ -462,7 +507,82 @@ export default function CounsellorDashboard() {
           })}
         </section>
 
-        {/* Quick links */}
+        {/* Fee Overview */}
+        <section>
+          <h2 className="mb-3 text-lg font-bold text-gray-900">
+            Fee Overview
+          </h2>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-500">
+                    Total Collected
+                  </p>
+
+                  <p className="mt-3 text-2xl font-bold text-green-700">
+                    {formatCurrency(totalCollected)}
+                  </p>
+
+                  <p className="mt-2 text-xs text-gray-500">
+                    Total fees received from your students
+                  </p>
+                </div>
+
+                <div className="rounded-xl bg-green-100 p-3 text-green-700">
+                  <Wallet size={22} />
+                </div>
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-500">
+                    Outstanding Fees
+                  </p>
+
+                  <p className="mt-3 text-2xl font-bold text-amber-700">
+                    {formatCurrency(pendingFees)}
+                  </p>
+
+                  <p className="mt-2 text-xs text-gray-500">
+                    {pendingFeeAccounts} students with pending fees
+                  </p>
+                </div>
+
+                <div className="rounded-xl bg-amber-100 p-3 text-amber-700">
+                  <Clock size={22} />
+                </div>
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-500">
+                    Fee Accounts Cleared
+                  </p>
+
+                  <p className="mt-3 text-2xl font-bold text-blue-800">
+                    {clearFeeAccounts}
+                  </p>
+
+                  <p className="mt-2 text-xs text-gray-500">
+                    Students with cleared fees
+                  </p>
+                </div>
+
+                <div className="rounded-xl bg-blue-100 p-3 text-blue-800">
+                  <Receipt size={22} />
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        {/* Quick Actions */}
         <section>
           <h2 className="mb-3 text-lg font-bold text-gray-900">
             Quick Actions
@@ -478,7 +598,7 @@ export default function CounsellorDashboard() {
               },
               {
                 title: "Student Records",
-                description: "View registered students",
+                description: "View your referred students",
                 icon: Users,
                 href: "/counsellor/students",
               },
@@ -528,16 +648,14 @@ export default function CounsellorDashboard() {
           </div>
         </section>
 
-        {/* Recent admissions */}
+        {/* Recent Admissions */}
         <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
             <div>
-              <h2 className="font-bold text-gray-900">
-                Recent Admissions
-              </h2>
+              <h2 className="font-bold text-gray-900">Recent Admissions</h2>
 
               <p className="mt-1 text-sm text-gray-500">
-                Latest students registered in the system
+                Latest students referred by you
               </p>
             </div>
 
@@ -552,92 +670,79 @@ export default function CounsellorDashboard() {
 
           {recentAdmissions.length === 0 ? (
             <div className="px-5 py-12 text-center">
-              <Users
-                className="mx-auto text-gray-400"
-                size={32}
-              />
+              <Users className="mx-auto text-gray-400" size={32} />
 
               <p className="mt-3 font-medium text-gray-700">
                 No recent admissions found
               </p>
 
               <p className="mt-1 text-sm text-gray-500">
-                New student admissions will appear here.
+                Students referred by you will appear here.
               </p>
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[650px] text-left text-sm">
+              <table className="w-full min-w-[850px] text-left text-sm">
                 <thead className="bg-gray-50 text-xs uppercase text-gray-500">
                   <tr>
                     <th className="px-5 py-3 font-semibold">Student</th>
                     <th className="px-5 py-3 font-semibold">Student ID</th>
                     <th className="px-5 py-3 font-semibold">Batch</th>
                     <th className="px-5 py-3 font-semibold">Admission Date</th>
-                    <th className="px-5 py-3 font-semibold">Status</th>
+                    <th className="px-5 py-3 font-semibold">Paid Amount</th>
+                    <th className="px-5 py-3 font-semibold">Pending Amount</th>
+                    <th className="px-5 py-3 font-semibold">Fee Status</th>
                   </tr>
                 </thead>
 
                 <tbody className="divide-y divide-gray-100">
                   {recentAdmissions.map((admission, index) => {
-                    const student =
-                      admission?.student &&
-                      typeof admission.student === "object"
-                        ? admission.student
-                        : admission;
-
-                    const batch =
-                      student?.batch &&
-                      typeof student.batch === "object"
-                        ? student.batch.batch ||
-                          student.batch.batchName ||
-                          student.batch.name ||
-                          "—"
-                        : student?.batch || "—";
-
-                    const id =
-                      student?._id ||
-                      student?.id ||
-                      student?.userId ||
-                      `admission-${index}`;
+                    const paid = getPaidAmount(admission);
+                    const pending = getPendingAmount(admission);
+                    const status = getFeeStatus(admission);
 
                     return (
-                      <tr key={id} className="hover:bg-gray-50">
+                      <tr
+                        key={admission?._id || admission?.student?._id || index}
+                        className="hover:bg-gray-50"
+                      >
                         <td className="px-5 py-4">
                           <p className="font-semibold text-gray-900">
-                            {student?.name || "—"}
+                            {getStudentName(admission)}
                           </p>
 
                           <p className="mt-1 text-xs text-gray-500">
-                            {student?.email || "—"}
+                            {getStudentEmail(admission)}
                           </p>
                         </td>
 
                         <td className="px-5 py-4 text-gray-600">
-                          {student?.userId || "—"}
+                          {getStudentId(admission)}
                         </td>
 
                         <td className="px-5 py-4 text-gray-600">
-                          {batch}
+                          {getBatchName(admission)}
                         </td>
 
                         <td className="px-5 py-4 text-gray-600">
-                          {formatDate(
-                            admission?.createdAt || student?.createdAt
-                          )}
+                          {formatDate(getAdmissionDate(admission))}
+                        </td>
+
+                        <td className="px-5 py-4 font-medium text-green-700">
+                          {formatCurrency(paid)}
+                        </td>
+
+                        <td className="px-5 py-4 font-medium text-amber-700">
+                          {formatCurrency(pending)}
                         </td>
 
                         <td className="px-5 py-4">
                           <span
                             className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusClass(
-                              student?.isActive === false
-                                ? "inactive"
-                                : admission?.status || "active"
+                              status
                             )}`}
                           >
-                            {student?.isActive === false
-                              ? "Inactive"
-                              : admission?.status || "Active"}
+                            {status}
                           </span>
                         </td>
                       </tr>
@@ -649,100 +754,67 @@ export default function CounsellorDashboard() {
           )}
         </section>
 
-        {/* Fee status */}
+        {/* Fee Status Summary */}
         <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
             <div>
-              <h2 className="font-bold text-gray-900">Fee Status</h2>
+              <h2 className="font-bold text-gray-900">
+                Fee Status Summary
+              </h2>
 
               <p className="mt-1 text-sm text-gray-500">
-                Recent payment and outstanding-fee information
+                Payment account summary for your referred students
               </p>
             </div>
 
-            <IndianRupee
-              size={22}
-              className="text-blue-800"
-            />
+            <IndianRupee size={22} className="text-blue-800" />
           </div>
 
-          {feeStatus.length === 0 ? (
-            <div className="px-5 py-10 text-center">
-              <Clock
-                className="mx-auto text-gray-400"
-                size={30}
-              />
+          <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
+            <div className="rounded-xl bg-green-50 p-4">
+              <p className="text-sm font-medium text-green-700">
+                Cleared Accounts
+              </p>
 
-              <p className="mt-3 text-sm text-gray-500">
-                No fee-status records are available.
+              <p className="mt-2 text-2xl font-bold text-green-800">
+                {feeStatus.clear ?? 0}
               </p>
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[600px] text-left text-sm">
-                <thead className="bg-gray-50 text-xs uppercase text-gray-500">
-                  <tr>
-                    <th className="px-5 py-3 font-semibold">Student</th>
-                    <th className="px-5 py-3 font-semibold">Amount</th>
-                    <th className="px-5 py-3 font-semibold">Status</th>
-                    <th className="px-5 py-3 font-semibold">Payment Date</th>
-                  </tr>
-                </thead>
 
-                <tbody className="divide-y divide-gray-100">
-                  {feeStatus.map((fee, index) => {
-                    const student =
-                      fee?.student &&
-                      typeof fee.student === "object"
-                        ? fee.student
-                        : null;
+            <div className="rounded-xl bg-amber-50 p-4">
+              <p className="text-sm font-medium text-amber-700">
+                Pending Accounts
+              </p>
 
-                    return (
-                      <tr
-                        key={fee?._id || fee?.id || `fee-${index}`}
-                        className="hover:bg-gray-50"
-                      >
-                        <td className="px-5 py-4 font-medium text-gray-900">
-                          {student?.name ||
-                            fee?.studentName ||
-                            fee?.name ||
-                            "—"}
-                        </td>
-
-                        <td className="px-5 py-4 text-gray-700">
-                          {formatCurrency(
-                            fee?.amount ??
-                              fee?.totalAmount ??
-                              0
-                          )}
-                        </td>
-
-                        <td className="px-5 py-4">
-                          <span
-                            className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusClass(
-                              fee?.status
-                            )}`}
-                          >
-                            {fee?.status || "Pending"}
-                          </span>
-                        </td>
-
-                        <td className="px-5 py-4 text-gray-600">
-                          {formatDate(
-                            fee?.paymentDate || fee?.createdAt
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <p className="mt-2 text-2xl font-bold text-amber-800">
+                {feeStatus.pending ?? pendingFeeAccounts}
+              </p>
             </div>
-          )}
+
+            <div className="rounded-xl bg-blue-50 p-4">
+              <p className="text-sm font-medium text-blue-700">
+                Total Collected
+              </p>
+
+              <p className="mt-2 text-2xl font-bold text-blue-800">
+                {formatCurrency(feeStatus.totalCollected)}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-orange-50 p-4">
+              <p className="text-sm font-medium text-orange-700">
+                Total Pending
+              </p>
+
+              <p className="mt-2 text-2xl font-bold text-orange-800">
+                {formatCurrency(feeStatus.totalPending)}
+              </p>
+            </div>
+          </div>
 
           <div className="flex items-center gap-2 border-t border-gray-100 px-5 py-3 text-xs text-gray-500">
             <CheckCircle size={15} />
-            Fee information is loaded from your authenticated backend response.
+            Fee summary is loaded directly from the counsellor dashboard API.
           </div>
         </section>
       </div>

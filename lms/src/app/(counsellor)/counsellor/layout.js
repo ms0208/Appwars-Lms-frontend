@@ -3,6 +3,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import Image from "next/image";
 import { useState } from "react";
 import {
   LayoutDashboard,
@@ -48,11 +49,6 @@ const navigation = [
     icon: GraduationCap,
   },
   {
-    label: "Batch Schedule",
-    href: "/counsellor/schedule",
-    icon: CalendarDays,
-  },
-  {
     label: "Settings",
     href: "/counsellor/settings",
     icon: Settings,
@@ -93,7 +89,14 @@ export default function CounsellorLayout({ children }) {
             className="flex items-center gap-3"
           >
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-xl font-black text-blue-900">
-              A
+              <Image
+                src="/logos/APPWARS-LOGO-PRINT.png"
+                alt="APPWARS Technologies Private Limited"
+                width={50}
+                height={50}
+                className="h-full w-full object-contain"
+                priority
+              />
             </div>
             <div>
               <h2 className="text-sm font-extrabold tracking-wider">
@@ -131,8 +134,8 @@ export default function CounsellorLayout({ children }) {
                   href={item.href}
                   onClick={() => setSidebarOpen(false)}
                   className={`flex items-center justify-between rounded-xl px-3 py-3 text-sm transition ${active
-                      ? "bg-blue-600 font-semibold text-white shadow-md shadow-blue-950/20"
-                      : "text-blue-100 hover:bg-white/10 hover:text-white"
+                    ? "bg-blue-600 font-semibold text-white shadow-md shadow-blue-950/20"
+                    : "text-blue-100 hover:bg-white/10 hover:text-white"
                     }`}
                 >
                   <span className="flex items-center gap-3">

@@ -463,17 +463,25 @@ export const getAnnouncements = async (req, res) => {
 // PUT /api/trainer/attendance
 // ==========================================
 
+
 export const saveAttendance = async (req, res) => {
   try {
     const { batchId, date, records } = req.body;
 
-    if (!batchId || !Array.isArray(records) || records.length === 0) {
+    // 1. Validate request
+    if (
+      !batchId ||
+      !isValidObjectId(batchId) ||
+      !Array.isArray(records) ||
+      records.length === 0
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Batch ID and attendance records are required.",
+        message: "Valid Batch ID and attendance records are required.",
       });
     }
 
+    // 2. Verify trainer batch assignment
     const batch = await getTrainerBatch(batchId, req.user.id);
 
     if (!batch) {
@@ -483,6 +491,7 @@ export const saveAttendance = async (req, res) => {
       });
     }
 
+    // 3. Validate date
     const range = getDayRange(date);
 
     if (!range) {
@@ -492,6 +501,10 @@ export const saveAttendance = async (req, res) => {
       });
     }
 
+    // Use one normalized date for every record
+    const attendanceDate = range.start;
+
+    // 4. Validate students and duplicate IDs
     const uniqueStudentIds = new Set();
 
     for (const record of records) {
@@ -506,16 +519,19 @@ export const saveAttendance = async (req, res) => {
         });
       }
 
-      if (uniqueStudentIds.has(String(record.studentId))) {
+      const studentId = String(record.studentId);
+
+      if (uniqueStudentIds.has(studentId)) {
         return res.status(400).json({
           success: false,
           message: "Duplicate student IDs were provided.",
         });
       }
 
-      uniqueStudentIds.add(String(record.studentId));
+      uniqueStudentIds.add(studentId);
     }
 
+    // 5. Verify students belong to this batch
     const students = await User.find({
       _id: { $in: [...uniqueStudentIds] },
       role: "Student",
@@ -533,27 +549,26 @@ export const saveAttendance = async (req, res) => {
       });
     }
 
+    // 6. Prepare bulk attendance operations
     const operations = records.map((record) => ({
       updateOne: {
         filter: {
           batch: batch._id,
-          student: record.studentId,
-          date: {
-            $gte: range.start,
-            $lt: range.end,
-          },
+          student: new mongoose.Types.ObjectId(record.studentId),
+          date: attendanceDate,
         },
 
         update: {
           $set: {
             trainer: req.user.id,
             status: record.status,
-            date: range.start,
+            remarks: record.remarks || "",
           },
 
           $setOnInsert: {
             batch: batch._id,
-            student: record.studentId,
+            student: new mongoose.Types.ObjectId(record.studentId),
+            date: attendanceDate,
           },
         },
 
@@ -561,8 +576,12 @@ export const saveAttendance = async (req, res) => {
       },
     }));
 
-    await Attendance.bulkWrite(operations, { ordered: true });
+    // 7. Save attendance
+    await Attendance.bulkWrite(operations, {
+      ordered: true,
+    });
 
+    // 8. Fetch saved attendance
     const savedRecords = await Attendance.find({
       batch: batch._id,
       date: {
@@ -571,7 +590,9 @@ export const saveAttendance = async (req, res) => {
       },
     })
       .populate("student", "userId name email")
-      .sort({ createdAt: 1 });
+      .populate("trainer", "userId name")
+      .sort({ createdAt: 1 })
+      .lean();
 
     return res.status(200).json({
       success: true,
@@ -580,22 +601,14 @@ export const saveAttendance = async (req, res) => {
       attendance: savedRecords,
     });
   } catch (error) {
-    return sendError(res, error, "Unable to save attendance.");
+    console.error("Trainer saveAttendance error:", error);
+
+    return sendError(
+      res,
+      error,
+      "Unable to save attendance."
+    );
   }
-  console.log(
-  "Attendance model:",
-  Attendance.modelName
-);
-
-console.log(
-  "Attendance schema paths:",
-  Object.keys(Attendance.schema.paths)
-);
-
-console.log(
-  "Student field exists:",
-  Boolean(Attendance.schema.path("student"))
-);
 };
 
 // ==========================================

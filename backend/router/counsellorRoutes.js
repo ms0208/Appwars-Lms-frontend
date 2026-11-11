@@ -12,6 +12,9 @@ import {
   getSchedule,
   getFees,
   recordPayment,
+  getPaymentById,
+  updatePayment,
+  deletePayment
 } from "../controllers/counsellorController.js";
 
 import {
@@ -49,8 +52,11 @@ router.get("/trainers", asyncHandler(getTrainers));
 router.get("/schedule", asyncHandler(getSchedule));
 
 // Fees and payments
-router.get("/fees", asyncHandler(getFees));
-router.post("/fees", asyncHandler(recordPayment));
+router.get("/fees", protect,  getFees);
+router.get("/fees/:id", protect,  getPaymentById);
+router.post("/fees", protect,  recordPayment);
+router.patch("/fees/:id", protect,  updatePayment);
+router.delete("/fees/:id", protect,  deletePayment);
 
 // Counsellor Settings
 router.get("/settings", asyncHandler(getCounsellorSettings));

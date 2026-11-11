@@ -1,7 +1,8 @@
+
 import mongoose from "mongoose";
 import Result from "../models/result.js";
 import User from "../models/user.js";
-import Course from "../models/course.js";
+import  Batch  from "../models/Batch.js";
 
 // ==========================================
 // POPULATE CONFIGURATION
@@ -15,8 +16,8 @@ const populateResult = (query) => {
       match: { role: "Student" },
     })
     .populate({
-      path: "course",
-      select: "courseName code duration fee status",
+      path: "batch",
+      select: "batch batchName name code course trainer startDate endDate status",
     });
 };
 
@@ -52,12 +53,11 @@ export const getResults = async (req, res) => {
 // POST /api/admin/results
 // ==========================================
 
-
 export const createResult = async (req, res) => {
   try {
     const {
       studentId,
-      courseId,
+      batchId,
       exam,
       date,
       obtained,
@@ -69,7 +69,7 @@ export const createResult = async (req, res) => {
     // Validate required fields
     if (
       !studentId ||
-      !courseId ||
+      !batchId ||
       !exam ||
       !date ||
       obtained === undefined ||
@@ -81,7 +81,18 @@ export const createResult = async (req, res) => {
       });
     }
 
-    // Validate exam name
+    // Validate IDs
+    if (
+      !mongoose.Types.ObjectId.isValid(studentId) ||
+      !mongoose.Types.ObjectId.isValid(batchId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid student ID or batch ID.",
+      });
+    }
+
+    // Validate exam
     if (typeof exam !== "string" || !exam.trim()) {
       return res.status(400).json({
         success: false,
@@ -112,17 +123,17 @@ export const createResult = async (req, res) => {
       });
     }
 
-    // Find course
-    const course = await Course.findById(courseId);
+    // Find batch
+    const batch = await Batch.findById(batchId);
 
-    if (!course) {
+    if (!batch) {
       return res.status(404).json({
         success: false,
-        message: "Course not found.",
+        message: "Batch not found.",
       });
     }
 
-    // Convert marks to numbers
+    // Convert marks
     const obtainedMarks = Number(obtained);
     const totalMarks = Number(total);
 
@@ -136,15 +147,14 @@ export const createResult = async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
-        message:
-          "Invalid marks. Obtained marks cannot exceed total marks.",
+        message: "Invalid marks. Obtained marks cannot exceed total marks.",
       });
     }
 
     // Create result
     const result = await Result.create({
       student: student._id,
-      course: course._id,
+      batch: batch._id,
       exam: exam.trim(),
       date: examDate,
       obtained: obtainedMarks,
@@ -153,10 +163,10 @@ export const createResult = async (req, res) => {
       published: published ?? false,
     });
 
-    // Populate student and course details
-    const populatedResult = await Result.findById(result._id)
-      .populate("student", "name userId email batch")
-      .populate("course", "courseName code duration");
+    // Populate result
+    const populatedResult = await populateResult(
+      Result.findById(result._id)
+    );
 
     return res.status(201).json({
       success: true,
@@ -166,15 +176,13 @@ export const createResult = async (req, res) => {
   } catch (error) {
     console.error("Create Result Error:", error);
 
-    // Handle duplicate result
     if (error.code === 11000) {
       return res.status(409).json({
         success: false,
-        message: "A result for this exam already exists for this student and course.",
+        message: "A result for this exam already exists for this student and batch.",
       });
     }
 
-    // Handle validation errors
     if (error.name === "ValidationError") {
       return res.status(400).json({
         success: false,
@@ -189,7 +197,6 @@ export const createResult = async (req, res) => {
     });
   }
 };
-
 
 // ==========================================
 // GET SINGLE RESULT
@@ -207,7 +214,9 @@ export const getResultById = async (req, res) => {
       });
     }
 
-    const result = await populateResult(Result.findById(id));
+    const result = await populateResult(
+      Result.findById(id)
+    );
 
     if (!result) {
       return res.status(404).json({
@@ -258,7 +267,7 @@ export const updateResult = async (req, res) => {
 
     const {
       studentId,
-      courseId,
+      batchId,
       exam,
       date,
       obtained,
@@ -267,7 +276,7 @@ export const updateResult = async (req, res) => {
       published,
     } = req.body;
 
-    // Validate and update student if supplied
+    // Update student
     if (studentId !== undefined) {
       if (!mongoose.Types.ObjectId.isValid(studentId)) {
         return res.status(400).json({
@@ -291,39 +300,76 @@ export const updateResult = async (req, res) => {
       result.student = student._id;
     }
 
-    // Validate and update course if supplied
-    if (courseId !== undefined) {
-      if (!mongoose.Types.ObjectId.isValid(courseId)) {
+    // Update batch
+    if (batchId !== undefined) {
+      if (!mongoose.Types.ObjectId.isValid(batchId)) {
         return res.status(400).json({
           success: false,
-          message: "Invalid course ID.",
+          message: "Invalid batch ID.",
         });
       }
 
-      const course = await Course.findById(courseId);
+      const batch = await Batch.findById(batchId);
 
-      if (!course) {
+      if (!batch) {
         return res.status(404).json({
           success: false,
-          message: "Course not found.",
+          message: "Batch not found.",
         });
       }
 
-      result.course = course._id;
+      result.batch = batch._id;
     }
 
-    if (exam !== undefined) result.exam = exam;
-    if (date !== undefined) result.date = date;
-    if (obtained !== undefined) result.obtained = Number(obtained);
-    if (total !== undefined) result.total = Number(total);
-    if (remarks !== undefined) result.remarks = remarks;
-    if (published !== undefined) result.published = published;
+    // Update exam
+    if (exam !== undefined) {
+      if (typeof exam !== "string" || !exam.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Please provide a valid exam name.",
+        });
+      }
 
+      result.exam = exam.trim();
+    }
+
+    // Update date
+    if (date !== undefined) {
+      const examDate = new Date(date);
+
+      if (Number.isNaN(examDate.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: "Please provide a valid exam date.",
+        });
+      }
+
+      result.date = examDate;
+    }
+
+    // Update marks
+    if (obtained !== undefined) {
+      result.obtained = Number(obtained);
+    }
+
+    if (total !== undefined) {
+      result.total = Number(total);
+    }
+
+    if (remarks !== undefined) {
+      result.remarks = remarks;
+    }
+
+    if (published !== undefined) {
+      result.published = published;
+    }
+
+    // Validate marks
     if (
       !Number.isFinite(result.obtained) ||
       !Number.isFinite(result.total) ||
       result.obtained < 0 ||
-      result.total < 1 ||
+      result.total <= 0 ||
       result.obtained > result.total
     ) {
       return res.status(400).json({
@@ -349,7 +395,14 @@ export const updateResult = async (req, res) => {
     if (error.code === 11000) {
       return res.status(409).json({
         success: false,
-        message: "A result for this student, course and exam already exists.",
+        message: "A result for this student, batch and exam already exists.",
+      });
+    }
+
+    if (error.name === "ValidationError") {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
       });
     }
 
@@ -400,4 +453,3 @@ export const deleteResult = async (req, res) => {
     });
   }
 };
-console.log("Loaded Result schema fields:", Object.keys(Result.schema.paths));

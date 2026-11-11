@@ -18,14 +18,8 @@ import {
 const menuItems = [
   { label: "Dashboard", href: "/studentdashboard", icon: LayoutDashboard },
   { label: "Learning Resources", href: "/resources", icon: BookOpen },
-  { label: "Live Classes", href: "/live-classes", icon: Video },
   { label: "Assignments & Tests", href: "/assignments", icon: ClipboardList },
   { label: "Progress & Payments", href: "/progress-payments", icon: Wallet },
-  {
-    label: "Doubts & Notifications",
-    href: "/doubts-notifications",
-    icon: MessageCircleQuestion,
-  },
   {
     label: "Career & Placement",
     href: "/career-placement",

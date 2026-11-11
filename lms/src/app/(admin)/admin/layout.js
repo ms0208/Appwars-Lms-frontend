@@ -34,14 +34,6 @@ const navigation = [
   { name: "Batches", href: "/admin/batches", icon: BookOpen },
   { name: "Attendance", href: "/admin/attendance", icon: CalendarCheck },
   { name: "Results", href: "/admin/results", icon: CalendarCheck },
-  // { name: "Assignments", href: "/admin/assignments", icon: ClipboardList },
-  { name: "Live Classes", href: "/admin/live-classes", icon: Video },
-  { name: "Announcements", href: "/admin/announcements", icon: Megaphone },
-  {
-    name: "Doubts & Support",
-    href: "/admin/doubts",
-    icon: MessageCircleQuestion,
-  },
   {
     name: "ID-Generation",
     href: "/admin/id_generation",

@@ -23,6 +23,8 @@ import {
   UserCheck,
   BookOpen,
   CalendarDays,
+  UserRound,
+  UserCog,
 } from "lucide-react";
 
 // ==========================================
@@ -42,17 +44,12 @@ const BATCHES_ENDPOINT = `${API_URL}/admin/batches`;
 
 const ROLES = ["Student", "Trainer", "Counsellor"];
 
-const ROLE_STYLES = {
-  Student: "bg-blue-100 text-blue-700",
-  Trainer: "bg-purple-100 text-purple-700",
-  Counsellor: "bg-emerald-100 text-emerald-700",
-};
-
 const INITIAL_FORM = {
   name: "",
   email: "",
   role: "Student",
   batch: "",
+  referredById: "",
 };
 
 // ==========================================
@@ -111,7 +108,105 @@ function getErrorMessage(error, fallback) {
 // RESPONSE NORMALIZATION
 // ==========================================
 
+function extractReferrer(user = {}) {
+  const referredBy = user.referredBy || {};
+
+  // Current backend structure:
+  // referredBy: {
+  //   role: "Counsellor",
+  //   counsellor: populated User object or ObjectId
+  // }
+
+  if (referredBy.role === "Counsellor") {
+    const counsellor = referredBy.counsellor;
+
+    if (!counsellor) {
+      return {
+        id: "",
+        name: "Counsellor",
+        role: "Counsellor",
+      };
+    }
+
+    return {
+      id:
+        typeof counsellor === "object"
+          ? counsellor.userId ||
+            counsellor._id ||
+            counsellor.id ||
+            ""
+          : String(counsellor),
+
+      name:
+        typeof counsellor === "object"
+          ? counsellor.name || "Counsellor"
+          : "Counsellor",
+
+      role: "Counsellor",
+    };
+  }
+
+  if (referredBy.role === "Admin") {
+    return {
+      id: "",
+      name: "Admin",
+      role: "Admin",
+    };
+  }
+
+  // Legacy API compatibility
+  const legacyReferrer =
+    referredBy.admin || referredBy.counsellor;
+
+  if (legacyReferrer) {
+    return {
+      id:
+        typeof legacyReferrer === "object"
+          ? legacyReferrer.userId ||
+            legacyReferrer._id ||
+            ""
+          : String(legacyReferrer),
+
+      name:
+        typeof legacyReferrer === "object"
+          ? legacyReferrer.name || "Unknown"
+          : "Unknown",
+
+      role: referredBy.admin ? "Admin" : "Counsellor",
+    };
+  }
+
+  const direct = referredBy.user || user.referrer;
+
+  if (direct) {
+    return {
+      id:
+        typeof direct === "object"
+          ? direct.userId || direct._id || direct.id || ""
+          : String(direct),
+
+      name:
+        typeof direct === "object"
+          ? direct.name || "Unknown"
+          : "Unknown",
+
+      role:
+        typeof direct === "object"
+          ? direct.role || ""
+          : "",
+    };
+  }
+
+  return {
+    id: "",
+    name: "Not assigned",
+    role: "",
+  };
+}
+
 function mapUser(user = {}) {
+  const referrer = extractReferrer(user);
+
   return {
     id: String(user.userId || user.id || user._id || ""),
     name: user.name || "",
@@ -120,18 +215,15 @@ function mapUser(user = {}) {
     batch: user.batch || "",
     status: user.isActive === false ? "Inactive" : "Active",
     createdAt: user.createdAt || "",
+    referredBy: referrer,
   };
 }
 
 function extractUsers(data) {
   if (Array.isArray(data)) return data;
-
   if (Array.isArray(data?.users)) return data.users;
-
   if (Array.isArray(data?.data?.users)) return data.data.users;
-
   if (Array.isArray(data?.data)) return data.data;
-
   if (Array.isArray(data?.results)) return data.results;
 
   return [];
@@ -139,9 +231,7 @@ function extractUsers(data) {
 
 function extractBatches(data) {
   if (Array.isArray(data?.data)) return data.data;
-
   if (Array.isArray(data?.batches)) return data.batches;
-
   if (Array.isArray(data?.data?.batches)) {
     return data.data.batches;
   }
@@ -177,26 +267,19 @@ function escapeCSV(value) {
 // ==========================================
 
 export default function IDGenerationPage() {
-  // User records
   const [records, setRecords] = useState([]);
-
-  // User creation form
   const [form, setForm] = useState(INITIAL_FORM);
 
-  // Search and filters
   const [search, setSearch] = useState("");
   const [filterRole, setFilterRole] = useState("All");
 
-  // Generated credentials
   const [generatedRecord, setGeneratedRecord] = useState(null);
   const [showPassword, setShowPassword] = useState(true);
   const [copiedValue, setCopiedValue] = useState("");
 
-  // Notifications
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("success");
 
-  // Loading states
   const [ready, setReady] = useState(false);
   const [loadingRecords, setLoadingRecords] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -214,6 +297,12 @@ export default function IDGenerationPage() {
 
   const [loadingAssignments, setLoadingAssignments] = useState(false);
   const [assigningTrainer, setAssigningTrainer] = useState(false);
+
+  // ==========================================
+  // REFERRAL STATES
+  // ==========================================
+
+  const [referrers, setReferrers] = useState([]);
 
   // ==========================================
   // COMMON HELPERS
@@ -253,7 +342,6 @@ export default function IDGenerationPage() {
 
     try {
       const data = await apiRequest(USERS_ENDPOINT);
-
       const users = extractUsers(data).map(mapUser);
 
       setRecords(users);
@@ -274,7 +362,7 @@ export default function IDGenerationPage() {
   }, [notify]);
 
   // ==========================================
-  // LOAD BATCHES AND ACTIVE TRAINERS
+  // LOAD BATCHES, TRAINERS AND REFERRERS
   // ==========================================
 
   const loadAssignmentData = useCallback(async () => {
@@ -297,10 +385,25 @@ export default function IDGenerationPage() {
           user.isActive !== false
       );
 
+      // Active Admin and Counsellor accounts
+      const activeReferrers = userList
+        .filter(
+          (user) =>
+            ["Admin", "Counsellor"].includes(user.role) &&
+            user.isActive !== false
+        )
+        .map((user) => ({
+          _id: String(user._id || user.id || ""),
+          userId: user.userId || "",
+          name: user.name || "Unnamed User",
+          role: user.role,
+        }))
+        .filter((user) => user._id);
+
       setBatches(batchList);
       setTrainers(activeTrainers);
+      setReferrers(activeReferrers);
 
-      // Preserve selection when refreshing data.
       setSelectedBatch((previous) => {
         if (
           previous &&
@@ -330,7 +433,7 @@ export default function IDGenerationPage() {
       notify(
         getErrorMessage(
           error,
-          "Unable to load batches and trainers."
+          "Unable to load batches, trainers and referrers."
         ),
         "error"
       );
@@ -376,6 +479,22 @@ export default function IDGenerationPage() {
       return;
     }
 
+    const selectedReferrer = referrers.find(
+      (item) => item._id === form.referredById
+    );
+
+    if (
+      form.role === "Student" &&
+      form.referredById &&
+      !selectedReferrer
+    ) {
+      notify(
+        "The selected referrer is no longer available. Refresh and try again.",
+        "error"
+      );
+      return;
+    }
+
     setSubmitting(true);
     setMessage("");
     setGeneratedRecord(null);
@@ -390,6 +509,24 @@ export default function IDGenerationPage() {
 
       if (form.role === "Student" && form.batch.trim()) {
         payload.batch = form.batch.trim();
+      }
+
+      // ==========================================
+      // BACKEND REFERRAL PAYLOAD
+      // ==========================================
+
+      if (form.role === "Student") {
+        if (selectedReferrer?.role === "Counsellor") {
+          payload.referredByRole = "Counsellor";
+
+          // Send MongoDB _id.
+          // Backend also supports generated userId.
+          payload.referredByCounsellorId = selectedReferrer._id;
+        } else {
+          // Admin or direct admission
+          payload.referredByRole = "Admin";
+          payload.referredByCounsellorId = null;
+        }
       }
 
       const data = await apiRequest(USERS_ENDPOINT, {
@@ -424,8 +561,10 @@ export default function IDGenerationPage() {
         );
       }
 
+      const mappedUser = mapUser(user);
+
       const newRecord = {
-        ...mapUser(user),
+        ...mappedUser,
         id: String(generatedId),
         name: user?.name || cleanName,
         email: user?.email || cleanEmail,
@@ -434,6 +573,18 @@ export default function IDGenerationPage() {
           user?.batch ||
           (form.role === "Student" ? form.batch.trim() : ""),
         status: user?.isActive === false ? "Inactive" : "Active",
+
+        // Immediately display selected referrer
+        referredBy: selectedReferrer
+          ? {
+              id:
+                selectedReferrer.userId ||
+                selectedReferrer._id,
+              name: selectedReferrer.name,
+              role: selectedReferrer.role,
+            }
+          : mappedUser.referredBy,
+
         password: temporaryPassword,
       };
 
@@ -648,6 +799,9 @@ export default function IDGenerationPage() {
       "Email",
       "Role",
       "Batch",
+      "Referred By",
+      "Referrer ID",
+      "Referrer Role",
       "Status",
       "Created At",
     ];
@@ -658,6 +812,9 @@ export default function IDGenerationPage() {
       record.email,
       record.role,
       record.batch,
+      record.referredBy?.name || "Not assigned",
+      record.referredBy?.id || "",
+      record.referredBy?.role || "",
       record.status,
       record.createdAt
         ? new Date(record.createdAt).toLocaleDateString("en-IN")
@@ -698,6 +855,8 @@ export default function IDGenerationPage() {
         record.name,
         record.email,
         record.role,
+        record.referredBy?.name,
+        record.referredBy?.id,
       ].some((value) =>
         String(value || "").toLowerCase().includes(query)
       );
@@ -768,6 +927,10 @@ export default function IDGenerationPage() {
       : trainers.find(
           (trainer) => trainer._id === currentBatch?.trainer
         );
+
+  const selectedReferrer = referrers.find(
+    (item) => item._id === form.referredById
+  );
 
   // ==========================================
   // UI
@@ -884,10 +1047,7 @@ export default function IDGenerationPage() {
           })}
         </div>
 
-        {/* ==========================================
-            ASSIGN TRAINER TO BATCH
-        ========================================== */}
-
+        {/* ASSIGN TRAINER TO BATCH */}
         <section className="mb-7 rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
           <div className="mb-6 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
             <div className="flex items-center gap-3">
@@ -930,8 +1090,6 @@ export default function IDGenerationPage() {
           ) : (
             <>
               <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-
-                {/* SELECT BATCH */}
                 <div>
                   <label
                     htmlFor="assignmentBatch"
@@ -954,15 +1112,10 @@ export default function IDGenerationPage() {
                       }
                       className="w-full rounded-lg border border-slate-200 bg-white py-3 pl-10 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                     >
-                      <option value="">
-                        Choose a batch
-                      </option>
+                      <option value="">Choose a batch</option>
 
                       {batches.map((batch) => (
-                        <option
-                          key={batch._id}
-                          value={batch._id}
-                        >
+                        <option key={batch._id} value={batch._id}>
                           {batch.batch || batch.name || "Unnamed Batch"}
                           {batch.course ? ` - ${batch.course}` : ""}
                         </option>
@@ -975,7 +1128,6 @@ export default function IDGenerationPage() {
                   </p>
                 </div>
 
-                {/* SELECT TRAINER */}
                 <div>
                   <label
                     htmlFor="assignmentTrainer"
@@ -1019,7 +1171,6 @@ export default function IDGenerationPage() {
                   </p>
                 </div>
 
-                {/* ASSIGN BUTTON */}
                 <div className="flex flex-col justify-end">
                   <button
                     type="button"
@@ -1051,7 +1202,6 @@ export default function IDGenerationPage() {
                 </div>
               </div>
 
-              {/* SELECTED BATCH DETAILS */}
               {currentBatch && (
                 <div className="mt-6 rounded-lg border border-blue-100 bg-blue-50 p-4">
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -1105,14 +1255,12 @@ export default function IDGenerationPage() {
                 </div>
               )}
 
-              {/* NO BATCHES */}
               {batches.length === 0 && (
                 <div className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-700">
                   No batches found. Please create a batch before assigning a trainer.
                 </div>
               )}
 
-              {/* NO TRAINERS */}
               {trainers.length === 0 && (
                 <div className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-700">
                   No active trainers found. Generate a Trainer account first.
@@ -1122,10 +1270,7 @@ export default function IDGenerationPage() {
           )}
         </section>
 
-        {/* ==========================================
-            USER CREATION AND REGISTERED USERS
-        ========================================== */}
-
+        {/* USER CREATION AND REGISTERED USERS */}
         <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
 
           {/* CREATE USER */}
@@ -1146,10 +1291,8 @@ export default function IDGenerationPage() {
               </div>
             </div>
 
-            <form
-              onSubmit={handleGenerate}
-              className="space-y-5"
-            >
+            <form onSubmit={handleGenerate} className="space-y-5">
+
               {/* ROLE */}
               <div>
                 <label
@@ -1163,8 +1306,14 @@ export default function IDGenerationPage() {
                   id="role"
                   value={form.role}
                   onChange={(event) => {
-                    updateForm("role", event.target.value);
-                    updateForm("batch", "");
+                    const role = event.target.value;
+
+                    setForm((previous) => ({
+                      ...previous,
+                      role,
+                      batch: "",
+                      referredById: "",
+                    }));
                   }}
                   disabled={submitting}
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -1265,6 +1414,90 @@ export default function IDGenerationPage() {
                 </div>
               )}
 
+              {/* REFERRED BY */}
+              {form.role === "Student" && (
+                <div>
+                  <label
+                    htmlFor="referredBy"
+                    className="mb-2 block text-sm font-semibold text-slate-700"
+                  >
+                    Referred By
+                  </label>
+
+                  <div className="relative">
+                    <UserRound
+                      size={17}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                    />
+
+                    <select
+                      id="referredBy"
+                      value={form.referredById}
+                      onChange={(event) =>
+                        updateForm("referredById", event.target.value)
+                      }
+                      disabled={submitting || loadingAssignments}
+                      className="w-full rounded-lg border border-slate-200 bg-white py-3 pl-10 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50"
+                    >
+                      <option value="">
+                        No referral / Direct Admission
+                      </option>
+
+                      {referrers.map((referrer) => (
+                        <option
+                          key={referrer._id}
+                          value={referrer._id}
+                        >
+                          {referrer.name} — {referrer.userId || referrer._id} ({referrer.role})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {selectedReferrer ? (
+                    <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 p-3">
+                      <div className="flex items-center gap-2">
+                        {selectedReferrer.role === "Admin" ? (
+                          <ShieldCheck
+                            size={17}
+                            className="text-blue-700"
+                          />
+                        ) : (
+                          <UserCog
+                            size={17}
+                            className="text-emerald-700"
+                          />
+                        )}
+
+                        <p className="text-sm font-semibold text-[#102e60]">
+                          {selectedReferrer.name}
+                        </p>
+                      </div>
+
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-600">
+                        <span>
+                          ID: {selectedReferrer.userId || selectedReferrer._id}
+                        </span>
+
+                        <span>
+                          Role: {selectedReferrer.role}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-slate-500">
+                      Select the Admin or Counsellor who referred this student.
+                    </p>
+                  )}
+
+                  {!loadingAssignments && referrers.length === 0 && (
+                    <p className="mt-2 text-xs text-amber-600">
+                      No active Admin or Counsellor accounts were found.
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* SUBMIT */}
               <button
                 type="submit"
@@ -1272,10 +1505,7 @@ export default function IDGenerationPage() {
                 className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-3.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {submitting ? (
-                  <LoaderCircle
-                    size={17}
-                    className="animate-spin"
-                  />
+                  <LoaderCircle size={17} className="animate-spin" />
                 ) : (
                   <UserPlus size={17} />
                 )}
@@ -1320,6 +1550,30 @@ export default function IDGenerationPage() {
                 <p className="mt-1 font-semibold text-slate-800">
                   {generatedRecord.role}
                 </p>
+
+                {generatedRecord.role === "Student" && (
+                  <>
+                    <p className="mt-4 text-xs text-slate-500">
+                      Referred By
+                    </p>
+
+                    <p className="mt-1 font-semibold text-slate-800">
+                      {generatedRecord.referredBy?.name || "Admin"}
+                    </p>
+
+                    {generatedRecord.referredBy?.id && (
+                      <p className="mt-1 text-xs text-slate-600">
+                        ID: {generatedRecord.referredBy.id}
+                      </p>
+                    )}
+
+                    {generatedRecord.referredBy?.role && (
+                      <p className="mt-1 text-xs text-slate-600">
+                        Role: {generatedRecord.referredBy.role}
+                      </p>
+                    )}
+                  </>
+                )}
 
                 <p className="mt-4 text-xs text-slate-500">
                   Generated User ID
@@ -1404,7 +1658,6 @@ export default function IDGenerationPage() {
                   </button>
                 </div>
 
-                {/* COPY ALL */}
                 <button
                   type="button"
                   onClick={() =>
@@ -1414,6 +1667,8 @@ export default function IDGenerationPage() {
                         `Name: ${generatedRecord.name}`,
                         `Email: ${generatedRecord.email}`,
                         `ID: ${generatedRecord.id}`,
+                        `Referred By: ${generatedRecord.referredBy?.name || "Not assigned"}`,
+                        `Referrer ID: ${generatedRecord.referredBy?.id || "N/A"}`,
                         `Temporary Password: ${generatedRecord.password}`,
                       ].join("\n"),
                       "Credentials"
@@ -1433,10 +1688,7 @@ export default function IDGenerationPage() {
             )}
           </section>
 
-          {/* ==========================================
-              REGISTERED USERS
-          ========================================== */}
-
+          {/* REGISTERED USERS */}
           <section className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 xl:col-span-2">
             <div className="mb-6">
               <h2 className="text-lg font-bold text-[#102e60]">
@@ -1444,7 +1696,7 @@ export default function IDGenerationPage() {
               </h2>
 
               <p className="mt-1 text-sm text-slate-500">
-                User records are loaded from your backend.
+                User records and referral details are loaded from your backend.
               </p>
             </div>
 
@@ -1462,7 +1714,7 @@ export default function IDGenerationPage() {
                   onChange={(event) =>
                     setSearch(event.target.value)
                   }
-                  placeholder="Search ID, name, or email..."
+                  placeholder="Search ID, name, email, or referrer..."
                   className="w-full rounded-lg border border-slate-200 py-3 pl-10 pr-3 text-sm outline-none focus:border-blue-500"
                 />
               </div>
@@ -1487,7 +1739,7 @@ export default function IDGenerationPage() {
 
             {/* USERS TABLE */}
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[650px] text-left">
+              <table className="w-full min-w-[850px] text-left">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50">
                     <th className="px-3 py-4 text-xs font-bold uppercase text-slate-500">
@@ -1500,6 +1752,10 @@ export default function IDGenerationPage() {
 
                     <th className="px-3 py-4 text-xs font-bold uppercase text-slate-500">
                       Role
+                    </th>
+
+                    <th className="px-3 py-4 text-xs font-bold uppercase text-slate-500">
+                      Referred By
                     </th>
 
                     <th className="px-3 py-4 text-xs font-bold uppercase text-slate-500">
@@ -1556,12 +1812,52 @@ export default function IDGenerationPage() {
                       <td className="px-3 py-4">
                         <span
                           className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                            ROLE_STYLES[record.role] ||
-                            "bg-slate-100 text-slate-700"
+                            record.role === "Student"
+                              ? "bg-blue-100 text-blue-700"
+                              : record.role === "Trainer"
+                              ? "bg-purple-100 text-purple-700"
+                              : record.role === "Counsellor"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-slate-100 text-slate-700"
                           }`}
                         >
                           {record.role || "—"}
                         </span>
+                      </td>
+
+                      {/* REFERRAL DETAILS */}
+                      <td className="px-3 py-4">
+                        {record.referredBy?.role === "Admin" ? (
+                          <div>
+                            <p className="text-sm font-semibold text-slate-800">
+                              Admin
+                            </p>
+
+                            <span className="mt-1 inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                              Admin
+                            </span>
+                          </div>
+                        ) : record.referredBy?.role === "Counsellor" ? (
+                          <div>
+                            <p className="text-sm font-semibold text-slate-800">
+                              {record.referredBy.name}
+                            </p>
+
+                            {record.referredBy.id && (
+                              <p className="mt-1 text-xs text-slate-500">
+                                ID: {record.referredBy.id}
+                              </p>
+                            )}
+
+                            <span className="mt-1 inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                              Counsellor
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400">
+                            Not assigned
+                          </span>
+                        )}
                       </td>
 
                       <td className="px-3 py-4">
@@ -1609,7 +1905,7 @@ export default function IDGenerationPage() {
                   {filteredRecords.length === 0 && (
                     <tr>
                       <td
-                        colSpan={5}
+                        colSpan={6}
                         className="px-3 py-12 text-center"
                       >
                         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">

@@ -425,7 +425,7 @@ export default function TrainerDashboard() {
             </button>
 
             <Link
-              href="/trainer/attendance-grading"
+              href="/attendance-grading"
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#102e60] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#173d79]"
             >
               Attendance & Grading

@@ -221,7 +221,23 @@ const userSchema = new mongoose.Schema(
       maxlength: 100,
       default: "",
     },
+    // ======================================
+    // STUDENT REFERRAL DETAILS
+    // ======================================
 
+    referredBy: {
+      role: {
+        type: String,
+        enum: ["Admin", "Counsellor"],
+        default: "Admin",
+      },
+
+      counsellor: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null,
+      },
+    },
     // ======================================
     // PROFILE SETTINGS
     // ======================================

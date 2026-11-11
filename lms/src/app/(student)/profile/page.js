@@ -135,7 +135,7 @@ export default function ProfilePage() {
     setError("");
 
     try {
-      const token = sessionStorage.getItem("appwars_token");
+      const token = sessionStorage.getItem("token");
 
       if (!token) {
         throw new Error(

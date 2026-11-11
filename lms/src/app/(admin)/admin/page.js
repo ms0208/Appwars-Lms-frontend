@@ -12,8 +12,9 @@ import {
   AlertCircle,
 } from "lucide-react";
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+).replace(/\/$/, "");
 
 const INITIAL_STATS = [
   {
@@ -35,7 +36,7 @@ const INITIAL_STATS = [
     icon: BookOpen,
   },
   {
-    title: "Pending Payments",
+    title: "Remaining Fees",
     value: "—",
     change: "Loading...",
     icon: Wallet,
@@ -79,6 +80,75 @@ function getToken() {
     localStorage.getItem("token") ||
     ""
   );
+}
+
+// --------------------------------------------------
+// EXTRACT PAYMENT RECORDS
+// --------------------------------------------------
+
+function getPaymentRecords(result) {
+  if (!result) return [];
+
+  if (Array.isArray(result.payments)) {
+    return result.payments;
+  }
+
+  if (Array.isArray(result.data?.payments)) {
+    return result.data.payments;
+  }
+
+  if (Array.isArray(result.data)) {
+    return result.data;
+  }
+
+  if (Array.isArray(result)) {
+    return result;
+  }
+
+  return [];
+}
+
+// --------------------------------------------------
+// CALCULATE ACTUAL REMAINING FEES
+// --------------------------------------------------
+
+function calculateRemainingFees(payments) {
+  return payments.reduce((total, payment) => {
+    const amount = Number(
+      payment.totalFees ?? payment.amount ?? 0
+    );
+
+    const collected = Number(
+      payment.collectedFees ?? (
+        payment.status === "Paid" ? amount : 0
+      )
+    );
+
+    let remaining;
+
+    if (
+      payment.pendingFees !== undefined &&
+      payment.pendingFees !== null
+    ) {
+      // New payment structure
+      remaining = Number(payment.pendingFees);
+    } else if (
+      payment.collectedFees !== undefined &&
+      payment.collectedFees !== null
+    ) {
+      // Older record with collectedFees but no pendingFees
+      remaining = amount - collected;
+    } else {
+      // Legacy records without fee breakdown
+      remaining = payment.status === "Pending" ? amount : 0;
+    }
+
+    if (!Number.isFinite(remaining)) {
+      remaining = 0;
+    }
+
+    return total + Math.max(0, remaining);
+  }, 0);
 }
 
 // --------------------------------------------------
@@ -134,13 +204,13 @@ export default function AdminDashboard() {
         );
       }
 
-      // Fetch dashboard and payment summary together.
+      // Fetch dashboard and payment records together.
       const [dashboardResult, paymentResult] = await Promise.all([
         apiRequest("/api/admin/dashboard", token),
 
-        apiRequest("/api/admin/payments?limit=500", token).catch(
+        apiRequest("/api/admin/payments?limit=500&page=1", token).catch(
           (err) => {
-            console.error("Payment summary loading error:", err);
+            console.error("Payment loading error:", err);
             return null;
           }
         ),
@@ -159,43 +229,14 @@ export default function AdminDashboard() {
         {};
 
       // --------------------------------------------------
-      // PAYMENT SUMMARY
+      // PAYMENT RECORDS
       // --------------------------------------------------
 
-      const paymentSummary =
-        paymentResult?.summary || {};
+      const paymentRecords = getPaymentRecords(paymentResult);
 
-      // Priority:
-      // 1. Payment API summary.remainingAmount
-      // 2. Dashboard stats.pendingPayments
-      // 3. Dashboard metrics.pendingFeeAccounts
-      // 4. Dashboard feeStatus.totalPending
-
-      let pendingAmount = 0;
-
-      if (
-        paymentSummary.remainingAmount !== undefined &&
-        paymentSummary.remainingAmount !== null
-      ) {
-        pendingAmount = Number(
-          paymentSummary.remainingAmount
-        ) || 0;
-      } else if (
-        dashboardStats.pendingPayments !== undefined
-      ) {
-        pendingAmount =
-          Number(dashboardStats.pendingPayments) || 0;
-      } else if (
-        dashboardStats.pendingFeeAccounts !== undefined
-      ) {
-        pendingAmount =
-          Number(dashboardStats.pendingFeeAccounts) || 0;
-      } else if (
-        dashboardData.feeStatus?.totalPending !== undefined
-      ) {
-        pendingAmount =
-          Number(dashboardData.feeStatus.totalPending) || 0;
-      }
+      // Calculate remaining fees using pendingFees
+      // instead of summary.pendingTotal.
+      const pendingAmount = calculateRemainingFees(paymentRecords);
 
       // --------------------------------------------------
       // UPDATE STATISTICS
@@ -227,9 +268,13 @@ export default function AdminDashboard() {
           icon: BookOpen,
         },
         {
-          title: "Pending Payments",
-          value: formatCurrency(pendingAmount),
-          change: "Outstanding course fee balance",
+          title: "Remaining Fees",
+          value: paymentResult
+            ? formatCurrency(pendingAmount)
+            : "Unavailable",
+          change: paymentResult
+            ? "Actual outstanding student fee balance"
+            : "Unable to load payment records",
           icon: Wallet,
         },
       ]);

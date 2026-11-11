@@ -83,45 +83,6 @@ const attendanceSchema = new Schema(
 attendanceSchema.index({ user: 1, date: 1 }, { unique: true });
 
 // ==========================================
-// RESULT MODEL
-// // ==========================================
-// const resultSchema = new Schema(
-//   {
-//     student: {
-//       type: Schema.Types.ObjectId,
-//       ref: "User",
-//       required: true,
-//     },
-//     batch: {
-//       type: Schema.Types.ObjectId,
-//       ref: "Batch",
-//       default: null,
-//     },
-//     title: { type: String, required: true },
-//     totalMarks: { type: Number, required: true, min: 1 },
-//     marksObtained: { type: Number, required: true, min: 0 },
-//     examDate: { type: Date, default: Date.now },
-//     remarks: { type: String, default: "" },
-//     published: { type: Boolean, default: false },
-//     createdBy: {
-//       type: Schema.Types.ObjectId,
-//       ref: "User",
-//     },
-//   },
-//   { timestamps: true }
-// );
-
-// resultSchema.virtual("percentage").get(function () {
-//   return this.totalMarks
-//     ? Math.round(
-//         (this.marksObtained / this.totalMarks) * 10000
-//       ) / 100
-//     : 0;
-// });
-
-// resultSchema.set("toJSON", { virtuals: true });
-
-// ==========================================
 // ASSIGNMENT MODEL
 // ==========================================
 const assignmentSchema = new Schema(
@@ -254,32 +215,86 @@ const doubtSchema = new Schema(
 // ==========================================
 const paymentSchema = new Schema(
   {
+    // --------------------------------------
+    // STUDENT DETAILS
+    // --------------------------------------
     student: {
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
+
     batch: {
       type: Schema.Types.ObjectId,
       ref: "Batch",
       default: null,
     },
-    amount: { type: Number, required: true, min: 0 },
-    currency: { type: String, default: "INR" },
+
+    // --------------------------------------
+    // COMPLETE COURSE FEE DETAILS
+    // --------------------------------------
+
+    totalFees: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    collectedFees: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    pendingFees: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // --------------------------------------
+    // INDIVIDUAL PAYMENT TRANSACTION
+    // --------------------------------------
+
+    amount: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    currency: {
+      type: String,
+      enum: ["INR"],
+      default: "INR",
+    },
+
     dueDate: Date,
+
     paidAt: Date,
+
     method: {
       type: String,
       enum: ["Cash", "UPI", "Card", "Bank Transfer", "Other"],
       default: "Other",
     },
-    reference: { type: String, default: "" },
+
+    reference: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
     status: {
       type: String,
       enum: ["Pending", "Paid", "Overdue", "Refunded", "Cancelled"],
       default: "Pending",
     },
-    notes: { type: String, default: "" },
+
+    notes: {
+      type: String,
+      default: "",
+    },
+
     recordedBy: {
       type: Schema.Types.ObjectId,
       ref: "User",
@@ -287,6 +302,34 @@ const paymentSchema = new Schema(
   },
   { timestamps: true }
 );
+
+// ==========================================
+// PAYMENT FEE VALIDATION
+// ==========================================
+
+paymentSchema.pre("validate", async function () {
+  const totalFees = Number(this.totalFees || 0);
+  const collectedFees = Number(this.collectedFees || 0);
+
+  if (
+    !Number.isFinite(totalFees) ||
+    !Number.isFinite(collectedFees)
+  ) {
+    throw new Error("Invalid fee amount.");
+  }
+
+  if (totalFees < 0 || collectedFees < 0) {
+    throw new Error("Fees cannot be negative.");
+  }
+
+  if (collectedFees > totalFees) {
+    throw new Error(
+      "Collected fees cannot exceed total fees."
+    );
+  }
+
+  this.pendingFees = totalFees - collectedFees;
+});
 
 // ==========================================
 // SETTINGS MODEL
@@ -332,17 +375,11 @@ const settingsSchema = new Schema(
 // MODEL REGISTRATION
 // ==========================================
 
-// Course is imported from Course.js.
-// Do not register another Course model here.
-
 const Batch =
   models.Batch || model("Batch", batchSchema);
 
 const Attendance =
   models.Attendance || model("Attendance", attendanceSchema);
-
-// const Result =
-//   models.Result || model("Result", resultSchema);
 
 const Assignment =
   models.Assignment || model("Assignment", assignmentSchema);
@@ -366,13 +403,26 @@ const Settings =
 // MODEL VALIDATION
 // ==========================================
 console.log("========== ADMIN MODEL CHECK ==========");
+
 console.log("Course:", Course.modelName);
 console.log("Course trainer:", !!Course.schema.path("trainer"));
 console.log("Course batchId:", !!Course.schema.path("batchId"));
 console.log("Course students:", !!Course.schema.path("students"));
+
 console.log("Batch:", Batch.modelName);
 console.log("Attendance:", Attendance.modelName);
-// console.log("Result:", Result.modelName);
+console.log("Assignment:", Assignment.modelName);
+console.log("LiveClass:", LiveClass.modelName);
+console.log("Announcement:", Announcement.modelName);
+console.log("Doubt:", Doubt.modelName);
+
+console.log("Payment:", Payment.modelName);
+console.log("Payment totalFees:", !!Payment.schema.path("totalFees"));
+console.log("Payment collectedFees:", !!Payment.schema.path("collectedFees"));
+console.log("Payment pendingFees:", !!Payment.schema.path("pendingFees"));
+
+console.log("Settings:", Settings.modelName);
+
 console.log("=======================================");
 
 // ==========================================

@@ -367,6 +367,8 @@ export const getDashboard = async (req, res, next) => {
 // POST /api/admin/users
 // --------------------------------------------------
 
+
+
 export const createUser = async (req, res, next) => {
   try {
     const {
@@ -376,7 +378,23 @@ export const createUser = async (req, res, next) => {
       batch = "",
       phone = "",
     } = req.body ?? {};
-    
+
+    // Support different frontend field names
+    const referredByRole =
+      req.body.referredByRole ||
+      req.body.referredBy?.role ||
+      "Admin";
+
+    const counsellorIdentifier =
+      req.body.referredByCounsellorId ||
+      req.body.counsellorId ||
+      req.body.referrerId ||
+      req.body.referrerUserId ||
+      req.body.referredBy?.counsellor ||
+      req.body.referredBy?.userId ||
+      null;
+
+    // BASIC VALIDATION
     if (
       typeof name !== "string" ||
       typeof email !== "string" ||
@@ -393,10 +411,7 @@ export const createUser = async (req, res, next) => {
     const normalizedEmail = email.trim().toLowerCase();
     const trimmedName = name.trim();
 
-    if (
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) ||
-      normalizedEmail.length > 254
-    ) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
       return res.status(400).json({
         success: false,
         message: "Enter a valid email address.",
@@ -413,14 +428,11 @@ export const createUser = async (req, res, next) => {
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({
         success: false,
-        message: "Role must be Student, Trainer, or Counsellor.",
+        message: "Invalid role.",
       });
     }
 
-    if (
-      typeof batch !== "string" ||
-      batch.trim().length > 100
-    ) {
+    if (typeof batch !== "string" || batch.trim().length > 100) {
       return res.status(400).json({
         success: false,
         message: "Invalid batch.",
@@ -444,6 +456,7 @@ export const createUser = async (req, res, next) => {
       });
     }
 
+    // CHECK DUPLICATE EMAIL
     if (await User.exists({ email: normalizedEmail })) {
       return res.status(409).json({
         success: false,
@@ -451,8 +464,75 @@ export const createUser = async (req, res, next) => {
       });
     }
 
+    // ==========================================
+    // REFERRAL MANAGEMENT
+    // ==========================================
+
+    let referral = {
+      role: "Admin",
+      counsellor: null,
+    };
+
+    let selectedCounsellor = null;
+
+    if (role === "Student") {
+      if (!["Admin", "Counsellor"].includes(referredByRole)) {
+        return res.status(400).json({
+          success: false,
+          message: "Referral role must be Admin or Counsellor.",
+        });
+      }
+
+      if (referredByRole === "Counsellor") {
+        if (
+          !counsellorIdentifier ||
+          typeof counsellorIdentifier !== "string"
+        ) {
+          return res.status(400).json({
+            success: false,
+            message: "Counsellor ID is required.",
+          });
+        }
+
+        const identifier = counsellorIdentifier.trim();
+
+        // Accept MongoDB _id OR generated userId
+        const conditions = [
+          { userId: identifier.toUpperCase() },
+        ];
+
+        if (mongoose.isValidObjectId(identifier)) {
+          conditions.push({ _id: identifier });
+        }
+
+        selectedCounsellor = await User.findOne({
+          role: "Counsellor",
+          isActive: true,
+          $or: conditions,
+        }).select("_id userId name email");
+
+        if (!selectedCounsellor) {
+          return res.status(404).json({
+            success: false,
+            message: `Active counsellor not found: ${identifier}`,
+          });
+        }
+
+        // IMPORTANT:
+        // Store MongoDB ObjectId, NOT generated userId
+        referral = {
+          role: "Counsellor",
+          counsellor: selectedCounsellor._id,
+        };
+      }
+    }
+
+    // ==========================================
+    // GENERATE CREDENTIALS
+    // ==========================================
+
     const temporaryPassword = generateTemporaryPassword(16);
-    const password = await bcrypt.hash(temporaryPassword, 12);
+    const hashedPassword = await bcrypt.hash(temporaryPassword, 12);
 
     let user = null;
 
@@ -462,13 +542,24 @@ export const createUser = async (req, res, next) => {
           userId: generateUserId(role),
           name: trimmedName,
           email: normalizedEmail,
-          password,
+          password: hashedPassword,
           role,
+
           batch: role === "Student" ? batch.trim() : "",
+
           phone: typeof phone === "string" ? phone.trim() : "",
+
+          referredBy:
+            role === "Student"
+              ? referral
+              : {
+                role: "Admin",
+                counsellor: null,
+              },
+
           isActive: true,
           mustChangePassword: true,
-          createdBy: req.user._id,
+          createdBy: req.user?._id || null,
         });
 
         break;
@@ -484,7 +575,7 @@ export const createUser = async (req, res, next) => {
         if (error.code === 11000) {
           return res.status(409).json({
             success: false,
-            message: "Duplicate email or ID. Please try again.",
+            message: "Duplicate email or ID.",
           });
         }
 
@@ -499,7 +590,18 @@ export const createUser = async (req, res, next) => {
       });
     }
 
-    res.status(201).json({
+    // ==========================================
+    // POPULATE REFERRAL
+    // ==========================================
+
+    await user.populate({
+      path: "referredBy.counsellor",
+      select: "name userId email role",
+    });
+
+    const populatedCounsellor = user.referredBy?.counsellor;
+
+    return res.status(201).json({
       success: true,
       message: `${role} account created successfully.`,
 
@@ -511,9 +613,21 @@ export const createUser = async (req, res, next) => {
         role: user.role,
         batch: user.batch,
         phone: user.phone,
-        status: "Active",
-        isActive: true,
-        mustChangePassword: true,
+
+        referredBy: {
+          role: user.referredBy?.role || "Admin",
+          counsellor: populatedCounsellor || null,
+        },
+
+        referredByName:
+          populatedCounsellor?.name || "Admin",
+
+        referrerId:
+          populatedCounsellor?.userId || null,
+
+        status: user.isActive ? "Active" : "Inactive",
+        isActive: user.isActive,
+        mustChangePassword: user.mustChangePassword,
         createdAt: user.createdAt,
       },
 
@@ -527,10 +641,13 @@ export const createUser = async (req, res, next) => {
   }
 };
 
+
+
 // --------------------------------------------------
 // 3. LIST USERS
 // GET /api/admin/users
 // --------------------------------------------------
+
 
 export const getAllUsers = async (req, res, next) => {
   try {
@@ -574,6 +691,7 @@ export const getAllUsers = async (req, res, next) => {
     const [users, total] = await Promise.all([
       User.find(filter)
         .select("-password")
+        .populate("referredBy.counsellor", "name userId email")
         .sort({ createdAt: -1 })
         .skip((currentPage - 1) * pageSize)
         .limit(pageSize)
@@ -600,10 +718,12 @@ export const getAllUsers = async (req, res, next) => {
   }
 };
 
+
 // --------------------------------------------------
 // 4. GET USER BY GENERATED ID
 // GET /api/admin/users/:userId
 // --------------------------------------------------
+
 
 export const getUserById = async (req, res, next) => {
   try {
@@ -611,6 +731,7 @@ export const getUserById = async (req, res, next) => {
       userId: req.params.userId.trim().toUpperCase(),
     })
       .select("-password")
+      .populate("referredBy.counsellor", "name userId email")
       .lean();
 
     if (!user) return sendNotFound(res);
@@ -627,10 +748,12 @@ export const getUserById = async (req, res, next) => {
   }
 };
 
+
 // --------------------------------------------------
 // 5. UPDATE USER
 // PATCH /api/admin/users/:userId
 // --------------------------------------------------
+
 
 export const updateUser = async (req, res, next) => {
   try {
@@ -647,6 +770,7 @@ export const updateUser = async (req, res, next) => {
       batch,
       phone,
       isActive,
+      counsellorId,
     } = req.body;
 
     if (role !== undefined && !allowedRoles.includes(role)) {
@@ -663,6 +787,7 @@ export const updateUser = async (req, res, next) => {
       });
     }
 
+    // UPDATE NAME
     if (name !== undefined) {
       if (
         typeof name !== "string" ||
@@ -678,6 +803,7 @@ export const updateUser = async (req, res, next) => {
       user.name = name.trim();
     }
 
+    // UPDATE EMAIL
     if (email !== undefined) {
       if (
         typeof email !== "string" ||
@@ -706,8 +832,12 @@ export const updateUser = async (req, res, next) => {
       user.email = normalized;
     }
 
-    if (role !== undefined) user.role = role;
+    // UPDATE ROLE
+    if (role !== undefined) {
+      user.role = role;
+    }
 
+    // UPDATE BATCH
     if (batch !== undefined) {
       if (typeof batch !== "string" || batch.trim().length > 100) {
         return res.status(400).json({
@@ -719,6 +849,7 @@ export const updateUser = async (req, res, next) => {
       user.batch = user.role === "Student" ? batch.trim() : "";
     }
 
+    // VALIDATE STUDENT BATCH
     if (user.role === "Student" && !user.batch.trim()) {
       return res.status(400).json({
         success: false,
@@ -726,6 +857,7 @@ export const updateUser = async (req, res, next) => {
       });
     }
 
+    // UPDATE PHONE
     if (phone !== undefined) {
       if (typeof phone !== "string" || phone.length > 25) {
         return res.status(400).json({
@@ -737,6 +869,7 @@ export const updateUser = async (req, res, next) => {
       user.phone = phone.trim();
     }
 
+    // UPDATE ACTIVE STATUS
     if (isActive !== undefined) {
       if (typeof isActive !== "boolean") {
         return res.status(400).json({
@@ -748,21 +881,68 @@ export const updateUser = async (req, res, next) => {
       user.isActive = isActive;
     }
 
+    // UPDATE COUNSELLOR REFERRAL
+
+    // UPDATE COUNSELLOR REFERRAL
+    if (counsellorId !== undefined) {
+      if (user.role !== "Student") {
+        return res.status(400).json({
+          success: false,
+          message: "Counsellor referral can only be assigned to students.",
+        });
+      }
+
+      if (counsellorId === null || counsellorId === "") {
+        user.referredBy = {
+          role: "Admin",
+          counsellor: null,
+        };
+      } else {
+        const identifier = String(counsellorId).trim();
+
+        const conditions = [
+          { userId: identifier.toUpperCase() },
+        ];
+
+        if (mongoose.isValidObjectId(identifier)) {
+          conditions.push({ _id: identifier });
+        }
+
+        const counsellor = await User.findOne({
+          role: "Counsellor",
+          isActive: true,
+          $or: conditions,
+        }).select("_id userId name email");
+
+        if (!counsellor) {
+          return res.status(404).json({
+            success: false,
+            message: "Active counsellor not found.",
+          });
+        }
+
+        user.referredBy = {
+          role: "Counsellor",
+          counsellor: counsellor._id,
+        };
+      }
+    }
+
+
     await user.save();
+
+    // RETURN UPDATED USER WITH COUNSELLOR DETAILS
+    const updatedUser = await User.findById(user._id)
+      .select("-password")
+      .populate("referredBy.counsellor", "name userId email")
+      .lean();
 
     res.json({
       success: true,
       message: "User updated successfully.",
-
       user: {
-        userId: user.userId,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        batch: user.batch,
-        phone: user.phone,
-        isActive: user.isActive,
-        status: user.isActive ? "Active" : "Inactive",
+        ...updatedUser,
+        status: updatedUser.isActive ? "Active" : "Inactive",
       },
     });
   } catch (error) {
@@ -770,9 +950,11 @@ export const updateUser = async (req, res, next) => {
   }
 };
 
+
 // --------------------------------------------------
 // 6. DEACTIVATE / REACTIVATE USER
 // --------------------------------------------------
+
 
 export const deactivateUser = async (req, res, next) => {
   try {
@@ -789,18 +971,35 @@ export const deactivateUser = async (req, res, next) => {
       });
     }
 
+    if (!user.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: "User is already deactivated.",
+      });
+    }
+
     user.isActive = false;
     await user.save();
 
     res.json({
       success: true,
       message: "User deactivated successfully.",
-      userId: user.userId,
+      user: {
+        userId: user.userId,
+        name: user.name,
+        role: user.role,
+        isActive: user.isActive,
+        status: "Inactive",
+      },
     });
   } catch (error) {
     next(error);
   }
 };
+
+// --------------------------------------------------
+// REACTIVATE USER
+// --------------------------------------------------
 
 export const reactivateUser = async (req, res, next) => {
   try {
@@ -810,18 +1009,39 @@ export const reactivateUser = async (req, res, next) => {
 
     if (!user) return sendNotFound(res);
 
+    if (user.role === "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Admin accounts cannot be reactivated here.",
+      });
+    }
+
+    if (user.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: "User is already active.",
+      });
+    }
+
     user.isActive = true;
     await user.save();
 
     res.json({
       success: true,
       message: "User reactivated successfully.",
-      userId: user.userId,
+      user: {
+        userId: user.userId,
+        name: user.name,
+        role: user.role,
+        isActive: user.isActive,
+        status: "Active",
+      },
     });
   } catch (error) {
     next(error);
   }
 };
+
 
 // --------------------------------------------------
 // 7. COURSE MANAGEMENT
@@ -1678,9 +1898,9 @@ export const listResource = async (req, res, next) => {
     const formattedItems =
       req.params.resource === "courses"
         ? items.map((item) => ({
-            ...item,
-            title: item.courseName,
-          }))
+          ...item,
+          title: item.courseName,
+        }))
         : items;
 
     res.json({
@@ -1973,126 +2193,440 @@ export const deleteResource = async (req, res, next) => {
 // --------------------------------------------------
 // PAYMENT MANAGEMENT
 // --------------------------------------------------
-
-// --------------------------------------------------
 // PAYMENT MANAGEMENT
 // --------------------------------------------------
 
-// Reusable population for payment details
+// ======================================================
+// PAYMENT HELPERS
+// ======================================================
+
 const paymentPopulate = [
   {
     path: "student",
-    select: "name userId email phone",
+    select: "userId name email phone batch",
   },
   {
     path: "batch",
     select: "batch name code course trainer",
     populate: {
       path: "trainer",
-      select: "name userId email phone",
+      select: "userId name email phone",
     },
   },
   {
     path: "recordedBy",
-    select: "name userId",
+    select: "userId name email",
   },
 ];
 
+const allowedPaymentStatuses = [
+  "Pending",
+  "Paid",
+  "Failed",
+  "Refunded",
+];
+
+const allowedPaymentMethods = [
+  "UPI",
+  "Credit Card",
+  "Debit Card",
+  "Net Banking",
+  "Cash",
+];
+
+const parsePaymentDate = (value) => {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime()) ? false : date;
+};
+
+// Search students, payment references and notes.
+const getPaymentSearchFilter = async (searchValue) => {
+  if (!searchValue) return null;
+
+  const pattern = escapeRegex(
+    String(searchValue).trim().slice(0, 100)
+  );
+
+  const searchRegex = new RegExp(pattern, "i");
+
+  const matchingStudents = await User.find({
+    role: "Student",
+    $or: [
+      { name: searchRegex },
+      { email: searchRegex },
+      { userId: searchRegex },
+    ],
+  })
+    .select("_id")
+    .lean();
+
+  const searchConditions = [
+    { reference: searchRegex },
+    { notes: searchRegex },
+  ];
+
+  if (matchingStudents.length > 0) {
+    searchConditions.push({
+      student: {
+        $in: matchingStudents.map(
+          (student) => student._id
+        ),
+      },
+    });
+  }
+
+  return {
+    $or: searchConditions,
+  };
+};
+
+// Validate a student and optionally check the selected batch.
+const validatePaymentStudentBatch = async (
+  studentId,
+  batchId
+) => {
+  if (!studentId || !validObjectId(studentId)) {
+    return {
+      error: {
+        status: 400,
+        message: "A valid student ID is required.",
+      },
+    };
+  }
+
+  const student = await User.findOne({
+    _id: studentId,
+    role: "Student",
+  });
+
+  if (!student) {
+    return {
+      error: {
+        status: 404,
+        message: "Student not found.",
+      },
+    };
+  }
+
+  let batch = null;
+
+  if (batchId) {
+    if (!validObjectId(batchId)) {
+      return {
+        error: {
+          status: 400,
+          message: "Invalid batch ID.",
+        },
+      };
+    }
+
+    batch = await Batch.findById(batchId);
+
+    if (!batch) {
+      return {
+        error: {
+          status: 404,
+          message: "Batch not found.",
+        },
+      };
+    }
+
+    // User model stores the batch name as a string.
+    if (
+      student.batch &&
+      String(student.batch).trim() !==
+      String(batch.batch).trim()
+    ) {
+      return {
+        error: {
+          status: 400,
+          message:
+            "The selected batch does not belong to this student.",
+        },
+      };
+    }
+  }
+
+  return {
+    student,
+    batch,
+  };
+};
+
+// ======================================================
+// 1. GET PAYMENTS
 // GET /api/admin/payments
+// ======================================================
+
 export const getPayments = async (req, res, next) => {
   try {
-    const {
-      search,
-      status,
-      method,
-      page = "1",
-      limit = "50",
-    } = req.query;
-
-    const filter = {};
-
-    // Status filter
-    if (status && status !== "All") {
-      filter.status = status;
-    }
-
-    // Payment method filter
-    if (method && method !== "All") {
-      filter.method = method;
-    }
-
-    // Search by student, reference or notes
-    if (search && String(search).trim()) {
-      const pattern = escapeRegex(
-        String(search).trim().slice(0, 100)
-      );
-
-      const matchingStudents = await User.find({
-        role: "Student",
-        $or: [
-          { name: { $regex: pattern, $options: "i" } },
-          { email: { $regex: pattern, $options: "i" } },
-          { userId: { $regex: pattern, $options: "i" } },
-        ],
-      }).distinct("_id");
-
-      filter.$or = [
-        {
-          reference: {
-            $regex: pattern,
-            $options: "i",
-          },
-        },
-        {
-          notes: {
-            $regex: pattern,
-            $options: "i",
-          },
-        },
-        {
-          student: {
-            $in: matchingStudents,
-          },
-        },
-      ];
-    }
-
-    // Pagination
-    const currentPage = Math.max(
+    const page = Math.max(
       1,
-      Number(page) || 1
+      Number.parseInt(req.query.page || "1", 10) || 1
     );
 
-    const pageSize = Math.min(
+    const limit = Math.min(
       100,
-      Math.max(1, Number(limit) || 50)
+      Math.max(
+        1,
+        Number.parseInt(req.query.limit || "50", 10) || 50
+      )
     );
 
-    const [payments, total] = await Promise.all([
+    const conditions = [];
+
+    // ------------------------------------------
+    // STATUS FILTER
+    // ------------------------------------------
+
+    const status = req.query.status;
+
+    if (status && status !== "All") {
+      if (!allowedPaymentStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid payment status.",
+        });
+      }
+
+      conditions.push({
+        status,
+      });
+    }
+
+    // ------------------------------------------
+    // PAYMENT METHOD FILTER
+    // ------------------------------------------
+
+    const method =
+      req.query.method || req.query.paymentMethod;
+
+    if (method && method !== "All") {
+      if (!allowedPaymentMethods.includes(method)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid payment method.",
+        });
+      }
+
+      conditions.push({
+        method,
+      });
+    }
+
+    // ------------------------------------------
+    // STUDENT FILTER
+    // ------------------------------------------
+
+    const studentId =
+      req.query.studentId || req.query.student;
+
+    if (studentId) {
+      if (!validObjectId(studentId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid student ID.",
+        });
+      }
+
+      conditions.push({
+        student: new mongoose.Types.ObjectId(studentId),
+      });
+    }
+
+    // ------------------------------------------
+    // DATE FILTER
+    // Filters payment creation date
+    // ------------------------------------------
+
+    if (req.query.from || req.query.to) {
+      const createdAt = {};
+
+      if (req.query.from) {
+        const from = parsePaymentDate(req.query.from);
+
+        if (from === false || !from) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid start date.",
+          });
+        }
+
+        from.setHours(0, 0, 0, 0);
+        createdAt.$gte = from;
+      }
+
+      if (req.query.to) {
+        const to = parsePaymentDate(req.query.to);
+
+        if (to === false || !to) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid end date.",
+          });
+        }
+
+        to.setHours(23, 59, 59, 999);
+        createdAt.$lte = to;
+      }
+
+      if (
+        createdAt.$gte &&
+        createdAt.$lte &&
+        createdAt.$gte > createdAt.$lte
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Start date cannot be after end date.",
+        });
+      }
+
+      conditions.push({
+        createdAt,
+      });
+    }
+
+    // ------------------------------------------
+    // SEARCH FILTER
+    // ------------------------------------------
+
+    const searchValue = String(
+      req.query.search || req.query.q || ""
+    ).trim();
+
+    if (searchValue) {
+      const searchFilter =
+        await getPaymentSearchFilter(searchValue);
+
+      if (searchFilter) {
+        conditions.push(searchFilter);
+      }
+    }
+
+    const filter = conditions.length
+      ? { $and: conditions }
+      : {};
+
+    // ------------------------------------------
+    // FETCH PAYMENTS + SUMMARY
+    // ------------------------------------------
+
+    const [
+      payments,
+      total,
+      groupedTotals,
+    ] = await Promise.all([
       Payment.find(filter)
         .populate(paymentPopulate)
-        .sort({ createdAt: -1 })
-        .skip((currentPage - 1) * pageSize)
-        .limit(pageSize)
+        .sort({
+          createdAt: -1,
+          _id: -1,
+        })
+        .skip((page - 1) * limit)
+        .limit(limit)
         .lean(),
 
       Payment.countDocuments(filter),
+
+      Payment.aggregate([
+        {
+          $match: filter,
+        },
+        {
+          $group: {
+            _id: "$status",
+
+            amount: {
+              $sum: {
+                $ifNull: ["$amount", 0],
+              },
+            },
+
+            count: {
+              $sum: 1,
+            },
+          },
+        },
+      ]),
     ]);
+
+    // ------------------------------------------
+    // BUILD SUMMARY
+    // ------------------------------------------
+
+    const byStatus = new Map(
+      groupedTotals.map((item) => [
+        item._id,
+        item,
+      ])
+    );
+
+    const summary = {
+      totalPayments: groupedTotals.reduce(
+        (sum, item) =>
+          sum + Number(item.count || 0),
+        0
+      ),
+
+      paidTotal: Number(
+        byStatus.get("Paid")?.amount || 0
+      ),
+
+      pendingTotal: Number(
+        byStatus.get("Pending")?.amount || 0
+      ),
+
+      failedTotal: Number(
+        byStatus.get("Failed")?.amount || 0
+      ),
+
+      refundedTotal: Number(
+        byStatus.get("Refunded")?.amount || 0
+      ),
+
+      currency: "INR",
+    };
+
+    const pages = Math.ceil(total / limit);
 
     return res.status(200).json({
       success: true,
+      message: "Payment records fetched successfully.",
+
+      summary,
       payments,
-      count: payments.length,
+
+      count: total,
       total,
-      page: currentPage,
-      pages: Math.ceil(total / pageSize),
+      page,
+      pages,
+
+      pagination: {
+        page,
+        limit,
+        total,
+        pages,
+      },
     });
   } catch (error) {
     next(error);
   }
 };
 
+// ======================================================
+// 2. GET SINGLE PAYMENT
 // GET /api/admin/payments/:id
+// ======================================================
+
 export const getPaymentById = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -2105,14 +2639,19 @@ export const getPaymentById = async (req, res, next) => {
     }
 
     const payment = await Payment.findById(id)
-      .populate(paymentPopulate);
+      .populate(paymentPopulate)
+      .lean();
 
     if (!payment) {
-      return sendNotFound(res);
+      return res.status(404).json({
+        success: false,
+        message: "Payment record not found.",
+      });
     }
 
     return res.status(200).json({
       success: true,
+      message: "Payment record fetched successfully.",
       payment,
     });
   } catch (error) {
@@ -2120,194 +2659,221 @@ export const getPaymentById = async (req, res, next) => {
   }
 };
 
+// ======================================================
+// 3. CREATE / RECORD PAYMENT
 // POST /api/admin/payments
+// ======================================================
+
 export const createPayment = async (req, res, next) => {
   try {
+    const body = req.body || {};
+
+    // Support both frontend payload formats.
+    const studentId =
+      body.student || body.studentId;
+
+    const batchId =
+      body.batch || body.batchId;
+
+    const amount = Number(body.amount);
+
+    const currency = body.currency || "INR";
+
+    const method =
+      body.method ||
+      body.paymentMethod ||
+      "UPI";
+
+    const status = body.status || "Pending";
+
+    const reference =
+      body.reference ||
+      body.transactionId ||
+      body.providerReference ||
+      "";
+
     const {
-      student,
-      batch = null,
-      amount,
-      currency = "INR",
       dueDate,
       paidAt,
-      method = "UPI",
-      reference = "",
-      status = "Pending",
       notes = "",
-    } = req.body || {};
+    } = body;
 
-    // Validate student
-    if (!student || !validObjectId(student)) {
-      return res.status(400).json({
+    // ------------------------------------------
+    // VALIDATE STUDENT AND BATCH
+    // ------------------------------------------
+
+    const validation =
+      await validatePaymentStudentBatch(
+        studentId,
+        batchId
+      );
+
+    if (validation.error) {
+      return res.status(validation.error.status).json({
         success: false,
-        message: "Select a valid student.",
+        message: validation.error.message,
       });
     }
 
-    const studentExists = await User.findOne({
-      _id: student,
-      role: "Student",
-      isActive: true,
-    });
+    const { student, batch } = validation;
 
-    if (!studentExists) {
-      return res.status(404).json({
-        success: false,
-        message: "Student not found or inactive.",
-      });
-    }
-
-    // Validate batch
-    if (batch && !validObjectId(batch)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid batch ID.",
-      });
-    }
-
-    if (batch) {
-      const batchExists = await Batch.findById(batch);
-
-      if (!batchExists) {
-        return res.status(404).json({
-          success: false,
-          message: "Selected batch does not exist.",
-        });
-      }
-    }
-
-    // Validate amount
-    const paymentAmount = Number(amount);
+    // ------------------------------------------
+    // VALIDATE AMOUNT
+    // ------------------------------------------
 
     if (
-      amount === undefined ||
-      amount === null ||
-      amount === "" ||
-      !Number.isFinite(paymentAmount) ||
-      paymentAmount <= 0
+      !Number.isFinite(amount) ||
+      amount <= 0
     ) {
       return res.status(400).json({
         success: false,
-        message: "Enter a valid payment amount.",
+        message:
+          "Payment amount must be greater than zero.",
       });
     }
 
-    // Allowed statuses
-    const allowedStatuses = [
-      "Pending",
-      "Paid",
-      "Failed",
-      "Refunded",
-    ];
+    // ------------------------------------------
+    // VALIDATE STATUS
+    // ------------------------------------------
 
-    // Allowed methods
-    const allowedMethods = [
-      "UPI",
-      "Credit Card",
-      "Debit Card",
-      "Net Banking",
-      "Cash",
-    ];
-
-    if (!allowedStatuses.includes(status)) {
+    if (!allowedPaymentStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
         message: "Invalid payment status.",
       });
     }
 
-    if (!allowedMethods.includes(method)) {
+    // ------------------------------------------
+    // VALIDATE PAYMENT METHOD
+    // ------------------------------------------
+
+    if (!allowedPaymentMethods.includes(method)) {
       return res.status(400).json({
         success: false,
         message: "Invalid payment method.",
       });
     }
 
-    // Validate currency
-    if (
-      typeof currency !== "string" ||
-      !/^[A-Z]{3}$/i.test(currency)
-    ) {
+    // ------------------------------------------
+    // VALIDATE CURRENCY
+    // ------------------------------------------
+
+    if (currency !== "INR") {
       return res.status(400).json({
         success: false,
-        message: "Invalid currency. Example: INR.",
+        message:
+          "Only INR currency is currently supported.",
       });
     }
 
-    // Validate reference and notes
+    // ------------------------------------------
+    // VALIDATE REFERENCE AND NOTES
+    // ------------------------------------------
+
     if (
       typeof reference !== "string" ||
-      reference.length > 150 ||
+      reference.length > 150
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid payment reference.",
+      });
+    }
+
+    if (
       typeof notes !== "string" ||
       notes.length > 2000
     ) {
       return res.status(400).json({
         success: false,
-        message: "Invalid reference or notes.",
+        message: "Invalid payment notes.",
       });
     }
 
-    // Validate dates
-    const validDate = (value) => {
-      if (!value) return null;
+    // ------------------------------------------
+    // VALIDATE DATES
+    // ------------------------------------------
 
-      const date = new Date(value);
+    const parsedDueDate = parsePaymentDate(dueDate);
+    const parsedPaidAt = parsePaymentDate(paidAt);
 
-      return Number.isNaN(date.getTime())
-        ? false
-        : date;
-    };
-
-    const normalizedDueDate = validDate(dueDate);
-    const normalizedPaidAt = validDate(paidAt);
-
-    if (
-      normalizedDueDate === false ||
-      normalizedPaidAt === false
-    ) {
+    if (parsedDueDate === false) {
       return res.status(400).json({
         success: false,
-        message: "Invalid payment date.",
+        message: "Invalid due date.",
       });
     }
 
-    // Create payment
+    if (parsedPaidAt === false) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid paid date.",
+      });
+    }
+
+    // ------------------------------------------
+    // CREATE PAYMENT
+    // ------------------------------------------
+
     const payment = await Payment.create({
-      student,
-      batch: batch || null,
-      amount: paymentAmount,
-      currency: currency.toUpperCase(),
-      dueDate: normalizedDueDate,
+      student: student._id,
+      batch: batch ? batch._id : null,
+
+      amount,
+      currency,
+
+      dueDate: parsedDueDate,
 
       paidAt:
         status === "Paid"
-          ? normalizedPaidAt || new Date()
-          : normalizedPaidAt,
+          ? parsedPaidAt || new Date()
+          : null,
 
       method,
+
       reference: reference.trim(),
+
       status,
+
       notes: notes.trim(),
-      recordedBy: req.user._id,
+
+      recordedBy: req.user?._id,
     });
 
-    // Populate student, batch and assigned trainer
-    await payment.populate(paymentPopulate);
+    // ------------------------------------------
+    // FETCH POPULATED PAYMENT
+    // ------------------------------------------
+
+    const populatedPayment = await Payment.findById(
+      payment._id
+    )
+      .populate(paymentPopulate)
+      .lean();
 
     return res.status(201).json({
       success: true,
-      message: "Payment created successfully.",
-      payment,
+      message: "Payment record created successfully.",
+      payment: populatedPayment,
     });
   } catch (error) {
     next(error);
   }
 };
 
+// ======================================================
+// 4. UPDATE PAYMENT
 // PATCH /api/admin/payments/:id
+// ======================================================
+
+
 export const updatePayment = async (req, res, next) => {
   try {
     const { id } = req.params;
+    const body = req.body || {};
+
+    // ------------------------------------------
+    // VALIDATE PAYMENT ID
+    // ------------------------------------------
 
     if (!validObjectId(id)) {
       return res.status(400).json({
@@ -2319,183 +2885,317 @@ export const updatePayment = async (req, res, next) => {
     const payment = await Payment.findById(id);
 
     if (!payment) {
-      return sendNotFound(res);
-    }
-
-    const allowedFields = [
-      "student",
-      "batch",
-      "amount",
-      "currency",
-      "dueDate",
-      "paidAt",
-      "method",
-      "reference",
-      "status",
-      "notes",
-    ];
-
-    const data = pickFields(
-      req.body,
-      allowedFields
-    );
-
-    if (!Object.keys(data).length) {
-      return res.status(400).json({
+      return res.status(404).json({
         success: false,
-        message: "No valid payment fields provided.",
+        message: "Payment record not found.",
       });
     }
 
-    // Validate student
-    if (data.student !== undefined) {
-      if (!validObjectId(data.student)) {
+    const updates = {};
+
+    // ------------------------------------------
+    // UPDATE STUDENT
+    // ------------------------------------------
+
+    const studentId = body.student ?? body.studentId;
+
+    if (studentId !== undefined) {
+      if (!validObjectId(studentId)) {
         return res.status(400).json({
           success: false,
           message: "Invalid student ID.",
         });
       }
 
-      const studentExists = await User.findOne({
-        _id: data.student,
+      const student = await User.findOne({
+        _id: studentId,
         role: "Student",
-        isActive: true,
       });
 
-      if (!studentExists) {
+      if (!student) {
         return res.status(404).json({
           success: false,
-          message: "Student not found or inactive.",
+          message: "Student not found.",
         });
+      }
+
+      updates.student = student._id;
+
+      const existingBatchId =
+        body.batch !== undefined
+          ? body.batch
+          : payment.batch;
+
+      if (existingBatchId) {
+        const batch = await Batch.findById(existingBatchId);
+
+        if (!batch) {
+          return res.status(404).json({
+            success: false,
+            message: "Batch not found.",
+          });
+        }
+
+        if (
+          student.batch &&
+          String(student.batch).trim() !==
+          String(batch.batch).trim()
+        ) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "The selected batch does not belong to this student.",
+          });
+        }
       }
     }
 
-    // Validate batch
-    if (data.batch !== undefined) {
-      if (
-        data.batch === "" ||
-        data.batch === null
-      ) {
-        data.batch = null;
+    // ------------------------------------------
+    // UPDATE BATCH
+    // ------------------------------------------
+
+    const batchId =
+      body.batch !== undefined
+        ? body.batch
+        : body.batchId;
+
+    if (batchId !== undefined) {
+      if (batchId === "" || batchId === null) {
+        updates.batch = null;
       } else {
-        if (!validObjectId(data.batch)) {
+        if (!validObjectId(batchId)) {
           return res.status(400).json({
             success: false,
             message: "Invalid batch ID.",
           });
         }
 
-        if (!(await Batch.exists({ _id: data.batch }))) {
+        const batch = await Batch.findById(batchId);
+
+        if (!batch) {
           return res.status(404).json({
             success: false,
             message: "Batch not found.",
           });
         }
+
+        const finalStudentId =
+          updates.student || payment.student;
+
+        const student = await User.findOne({
+          _id: finalStudentId,
+          role: "Student",
+        });
+
+        if (
+          student?.batch &&
+          String(student.batch).trim() !==
+          String(batch.batch).trim()
+        ) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "The selected batch does not belong to this student.",
+          });
+        }
+
+        updates.batch = batch._id;
       }
     }
 
-    // Validate amount
-    if (data.amount !== undefined) {
-      data.amount = Number(data.amount);
+    // ------------------------------------------
+    // UPDATE TOTAL FEES
+    // UPDATE COLLECTED FEES
+    // AUTO CALCULATE PENDING FEES
+    // ------------------------------------------
+
+    if (
+      body.totalFees !== undefined ||
+      body.collectedFees !== undefined
+    ) {
+      const totalFees =
+        body.totalFees !== undefined
+          ? Number(body.totalFees)
+          : Number(payment.totalFees ?? payment.amount ?? 0);
+
+      const collectedFees =
+        body.collectedFees !== undefined
+          ? Number(body.collectedFees)
+          : Number(payment.collectedFees ?? 0);
 
       if (
-        !Number.isFinite(data.amount) ||
-        data.amount <= 0
+        !Number.isFinite(totalFees) ||
+        totalFees < 0
       ) {
         return res.status(400).json({
           success: false,
-          message: "Enter a valid payment amount.",
+          message: "Total fees must be a valid non-negative amount.",
         });
       }
+
+      if (
+        !Number.isFinite(collectedFees) ||
+        collectedFees < 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Collected fees must be a valid non-negative amount.",
+        });
+      }
+
+      if (collectedFees > totalFees) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Collected fees cannot exceed total fees.",
+        });
+      }
+
+      const pendingFees = totalFees - collectedFees;
+
+      updates.totalFees = totalFees;
+      updates.collectedFees = collectedFees;
+      updates.pendingFees = pendingFees;
     }
 
-    // Validate status
-    if (data.status !== undefined) {
+    // ------------------------------------------
+    // UPDATE INDIVIDUAL PAYMENT AMOUNT
+    // ------------------------------------------
+
+    if (body.amount !== undefined) {
+      const amount = Number(body.amount);
+
       if (
-        ![
-          "Pending",
-          "Paid",
-          "Failed",
-          "Refunded",
-        ].includes(data.status)
+        !Number.isFinite(amount) ||
+        amount <= 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Payment amount must be greater than zero.",
+        });
+      }
+
+      updates.amount = amount;
+    }
+
+    // ------------------------------------------
+    // UPDATE DUE DATE
+    // ------------------------------------------
+
+    if (body.dueDate !== undefined) {
+      const dueDate = parsePaymentDate(body.dueDate);
+
+      if (dueDate === false) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid due date.",
+        });
+      }
+
+      updates.dueDate = dueDate;
+    }
+
+    // ------------------------------------------
+    // UPDATE STATUS
+    // ------------------------------------------
+
+    if (body.status !== undefined) {
+      if (
+        !allowedPaymentStatuses.includes(body.status)
       ) {
         return res.status(400).json({
           success: false,
           message: "Invalid payment status.",
         });
       }
+
+      updates.status = body.status;
     }
 
-    // Validate method
-    if (data.method !== undefined) {
+    // ------------------------------------------
+    // UPDATE PAID DATE
+    // ------------------------------------------
+
+    if (body.paidAt !== undefined) {
+      const paidAt = parsePaymentDate(body.paidAt);
+
+      if (paidAt === false) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid paid date.",
+        });
+      }
+
+      updates.paidAt = paidAt;
+    }
+
+    const finalStatus =
+      updates.status || payment.status;
+
+    if (finalStatus === "Paid") {
       if (
-        ![
-          "UPI",
-          "Credit Card",
-          "Debit Card",
-          "Net Banking",
-          "Cash",
-        ].includes(data.method)
+        updates.paidAt === undefined &&
+        !payment.paidAt
       ) {
+        updates.paidAt = new Date();
+      }
+    } else if (
+      updates.status &&
+      updates.status !== "Paid"
+    ) {
+      updates.paidAt = null;
+    }
+
+    // ------------------------------------------
+    // UPDATE PAYMENT METHOD
+    // ------------------------------------------
+
+    const method =
+      body.method !== undefined
+        ? body.method
+        : body.paymentMethod;
+
+    if (method !== undefined) {
+      if (!allowedPaymentMethods.includes(method)) {
         return res.status(400).json({
           success: false,
           message: "Invalid payment method.",
         });
       }
+
+      updates.method = method;
     }
 
-    // Validate currency
-    if (data.currency !== undefined) {
-      if (
-        typeof data.currency !== "string" ||
-        !/^[A-Z]{3}$/i.test(data.currency)
-      ) {
+    // ------------------------------------------
+    // UPDATE CURRENCY
+    // ------------------------------------------
+
+    if (body.currency !== undefined) {
+      if (body.currency !== "INR") {
         return res.status(400).json({
           success: false,
-          message: "Invalid currency.",
+          message:
+            "Only INR currency is currently supported.",
         });
       }
 
-      data.currency = data.currency.toUpperCase();
+      updates.currency = body.currency;
     }
 
-    // Validate dates
-    for (const field of ["dueDate", "paidAt"]) {
-      if (data[field] !== undefined) {
-        if (
-          data[field] === null ||
-          data[field] === ""
-        ) {
-          data[field] = null;
-        } else {
-          const date = new Date(data[field]);
+    // ------------------------------------------
+    // UPDATE REFERENCE
+    // ------------------------------------------
 
-          if (Number.isNaN(date.getTime())) {
-            return res.status(400).json({
-              success: false,
-              message: `Invalid ${field}.`,
-            });
-          }
+    const reference =
+      body.reference ??
+      body.transactionId ??
+      body.providerReference;
 
-          data[field] = date;
-        }
-      }
-    }
-
-    // Automatically set paid date
-    if (
-      data.status === "Paid" &&
-      data.paidAt === undefined &&
-      !payment.paidAt
-    ) {
-      data.paidAt = new Date();
-    }
-
-    // Validate reference
-    if (data.reference !== undefined) {
+    if (reference !== undefined) {
       if (
-        typeof data.reference !== "string" ||
-        data.reference.length > 150
+        typeof reference !== "string" ||
+        reference.length > 150
       ) {
         return res.status(400).json({
           success: false,
@@ -2503,14 +3203,17 @@ export const updatePayment = async (req, res, next) => {
         });
       }
 
-      data.reference = data.reference.trim();
+      updates.reference = reference.trim();
     }
 
-    // Validate notes
-    if (data.notes !== undefined) {
+    // ------------------------------------------
+    // UPDATE NOTES
+    // ------------------------------------------
+
+    if (body.notes !== undefined) {
       if (
-        typeof data.notes !== "string" ||
-        data.notes.length > 2000
+        typeof body.notes !== "string" ||
+        body.notes.length > 2000
       ) {
         return res.status(400).json({
           success: false,
@@ -2518,28 +3221,55 @@ export const updatePayment = async (req, res, next) => {
         });
       }
 
-      data.notes = data.notes.trim();
+      updates.notes = body.notes.trim();
     }
 
-    // Update payment
-    Object.assign(payment, data);
+    // ------------------------------------------
+    // CHECK EMPTY UPDATE
+    // ------------------------------------------
+
+    if (!Object.keys(updates).length) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "No valid fields were provided for update.",
+      });
+    }
+
+    // ------------------------------------------
+    // SAVE PAYMENT
+    // ------------------------------------------
+
+    Object.assign(payment, updates);
 
     await payment.save();
 
-    // Populate updated payment with trainer details
-    await payment.populate(paymentPopulate);
+    // ------------------------------------------
+    // FETCH UPDATED PAYMENT
+    // ------------------------------------------
+
+    const updatedPayment = await Payment.findById(
+      payment._id
+    )
+      .populate(paymentPopulate)
+      .lean();
 
     return res.status(200).json({
       success: true,
-      message: "Payment updated successfully.",
-      payment,
+      message: "Payment record updated successfully.",
+      payment: updatedPayment,
     });
   } catch (error) {
     next(error);
   }
 };
 
+
+// ======================================================
+// 5. DELETE PAYMENT
 // DELETE /api/admin/payments/:id
+// ======================================================
+
 export const deletePayment = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -2554,13 +3284,16 @@ export const deletePayment = async (req, res, next) => {
     const payment = await Payment.findByIdAndDelete(id);
 
     if (!payment) {
-      return sendNotFound(res);
+      return res.status(404).json({
+        success: false,
+        message: "Payment record not found.",
+      });
     }
 
     return res.status(200).json({
       success: true,
-      message: "Payment deleted successfully.",
-      id: payment._id,
+      message: "Payment record deleted successfully.",
+      paymentId: id,
     });
   } catch (error) {
     next(error);
@@ -2572,10 +3305,15 @@ export const deletePayment = async (req, res, next) => {
 // GET /api/admin/reports/payments
 // --------------------------------------------------
 
+
 export const getPaymentReport = async (req, res, next) => {
   try {
     const { from, to } = req.query;
     const filter = {};
+
+    // --------------------------------------------------
+    // DATE FILTER VALIDATION
+    // --------------------------------------------------
 
     if (from || to) {
       filter.createdAt = {};
@@ -2637,7 +3375,7 @@ export const getPaymentReport = async (req, res, next) => {
         from &&
         to &&
         new Date(`${from}T00:00:00.000Z`) >
-          new Date(`${to}T23:59:59.999Z`)
+        new Date(`${to}T23:59:59.999Z`)
       ) {
         return res.status(400).json({
           success: false,
@@ -2646,73 +3384,193 @@ export const getPaymentReport = async (req, res, next) => {
       }
     }
 
-    const [report, totals, paymentCount] = await Promise.all([
-      Payment.aggregate([
-        { $match: filter },
-        {
-          $group: {
-            _id: "$status",
-            count: { $sum: 1 },
-            totalAmount: { $sum: "$amount" },
+    // --------------------------------------------------
+    // COMMON FEE CALCULATION
+    // Supports both new and old payment records.
+    // --------------------------------------------------
+
+    const feeCalculation = [
+      {
+        $addFields: {
+          reportTotalFees: {
+            $ifNull: ["$totalFees", { $ifNull: ["$amount", 0] }],
           },
-        },
-        { $sort: { _id: 1 } },
-      ]),
 
-      Payment.aggregate([
-        { $match: filter },
-        {
-          $group: {
-            _id: null,
-            totalPayments: { $sum: 1 },
-            totalAmount: { $sum: "$amount" },
-
-            collectedAmount: {
-              $sum: {
+          reportCollectedFees: {
+            $ifNull: [
+              "$collectedFees",
+              {
                 $cond: [
                   { $eq: ["$status", "Paid"] },
-                  "$amount",
+                  { $ifNull: ["$amount", 0] },
                   0,
                 ],
               },
-            },
+            ],
+          },
+        },
+      },
+      {
+        $addFields: {
+          reportPendingFees: {
+            $ifNull: [
+              "$pendingFees",
+              {
+                $max: [
+                  0,
+                  {
+                    $subtract: [
+                      "$reportTotalFees",
+                      "$reportCollectedFees",
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    ];
 
-            pendingAmount: {
-              $sum: {
-                $cond: [
-                  { $eq: ["$status", "Pending"] },
-                  "$amount",
-                  0,
-                ],
-              },
-            },
+    // --------------------------------------------------
+    // REPORT GROUPED BY STATUS
+    // --------------------------------------------------
 
-            refundedAmount: {
-              $sum: {
-                $cond: [
-                  { $eq: ["$status", "Refunded"] },
-                  "$amount",
-                  0,
-                ],
-              },
+    const reportPipeline = [
+      { $match: filter },
+      ...feeCalculation,
+      {
+        $group: {
+          _id: "$status",
+
+          count: {
+            $sum: 1,
+          },
+
+          totalFees: {
+            $sum: "$reportTotalFees",
+          },
+
+          collectedFees: {
+            $sum: "$reportCollectedFees",
+          },
+
+          pendingFees: {
+            $sum: "$reportPendingFees",
+          },
+        },
+      },
+      {
+        $sort: {
+          _id: 1,
+        },
+      },
+    ];
+
+    // --------------------------------------------------
+    // OVERALL PAYMENT SUMMARY
+    // --------------------------------------------------
+
+    const summaryPipeline = [
+      { $match: filter },
+      ...feeCalculation,
+      {
+        $group: {
+          _id: null,
+
+          totalPayments: {
+            $sum: 1,
+          },
+
+          totalFees: {
+            $sum: "$reportTotalFees",
+          },
+
+          collectedFees: {
+            $sum: "$reportCollectedFees",
+          },
+
+          pendingFees: {
+            $sum: "$reportPendingFees",
+          },
+
+          paidCount: {
+            $sum: {
+              $cond: [{ $eq: ["$status", "Paid"] }, 1, 0],
+            },
+          },
+
+          pendingCount: {
+            $sum: {
+              $cond: [{ $eq: ["$status", "Pending"] }, 1, 0],
+            },
+          },
+
+          failedCount: {
+            $sum: {
+              $cond: [{ $eq: ["$status", "Failed"] }, 1, 0],
+            },
+          },
+
+          refundedCount: {
+            $sum: {
+              $cond: [{ $eq: ["$status", "Refunded"] }, 1, 0],
+            },
+          },
+
+          failedTotal: {
+            $sum: {
+              $cond: [
+                { $eq: ["$status", "Failed"] },
+                "$reportTotalFees",
+                0,
+              ],
+            },
+          },
+
+          refundedTotal: {
+            $sum: {
+              $cond: [
+                { $eq: ["$status", "Refunded"] },
+                "$reportTotalFees",
+                0,
+              ],
             },
           },
         },
-      ]),
+      },
+    ];
 
+    // --------------------------------------------------
+    // EXECUTE AGGREGATIONS
+    // --------------------------------------------------
+
+    const [report, totals, paymentCount] = await Promise.all([
+      Payment.aggregate(reportPipeline),
+      Payment.aggregate(summaryPipeline),
       Payment.countDocuments(filter),
     ]);
 
     const summary = totals[0] || {
       totalPayments: 0,
-      totalAmount: 0,
-      collectedAmount: 0,
-      pendingAmount: 0,
-      refundedAmount: 0,
+      totalFees: 0,
+      collectedFees: 0,
+      pendingFees: 0,
+      paidCount: 0,
+      pendingCount: 0,
+      failedCount: 0,
+      refundedCount: 0,
+      failedTotal: 0,
+      refundedTotal: 0,
     };
+
+    // --------------------------------------------------
+    // RESPONSE
+    // --------------------------------------------------
 
     return res.status(200).json({
       success: true,
+      message: "Payment report fetched successfully.",
 
       period: {
         from: from || null,
@@ -2721,10 +3579,31 @@ export const getPaymentReport = async (req, res, next) => {
 
       summary: {
         totalPayments: summary.totalPayments,
-        totalAmount: summary.totalAmount,
-        collectedAmount: summary.collectedAmount,
-        pendingAmount: summary.pendingAmount,
-        refundedAmount: summary.refundedAmount,
+
+        totalFees: summary.totalFees,
+
+        collectedFees: summary.collectedFees,
+
+        pendingFees: summary.pendingFees,
+
+        // Backward-compatible aliases:
+        totalAmount: summary.totalFees,
+        collectedAmount: summary.collectedFees,
+        pendingAmount: summary.pendingFees,
+
+        // Status-wise record counts:
+        paidCount: summary.paidCount,
+        pendingCount: summary.pendingCount,
+        failedCount: summary.failedCount,
+        refundedCount: summary.refundedCount,
+
+        // Backward-compatible status totals:
+        paidTotal: summary.collectedFees,
+        pendingTotal: summary.pendingFees,
+        failedTotal: summary.failedTotal,
+        refundedTotal: summary.refundedTotal,
+
+        currency: "INR",
         paymentCount,
       },
 

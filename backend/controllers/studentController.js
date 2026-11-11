@@ -8,9 +8,10 @@ import LiveClass from "../models/LiveClass.js";
 import StudentReminder from "../models/StudentReminder.js";
 import Doubt from "../models/Doubt.js";
 import Notification from "../models/Notification.js";
-import Payment from "../models/Payment.js";
+import {Payment}from "../models/Adminmodels.js";
 import Resume from "../models/Resume.js";
 import MockInterview from "../models/MockInterview.js";
+import Result from "../models/result.js";
 import Batch from "../models/Batch.js";
 import Job from "../models/Job.js";
 import StudentProgress from "../models/StudentProgress.js";
@@ -120,17 +121,18 @@ export const updateProfile = asyncHandler(async (req, res) => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
       throw new ApiError(400, "Please provide a valid email address.");
     }
-    const duplicate = await User.findOne({ email: normalizedEmail, _id: { $ne: req.user._id } });
+    const duplicate = await User.findOne({ email: normalizedEmail, _id: { $ne: req.user.id } });
     if (duplicate) throw new ApiError(409, "Email is already in use.");
     updates.email = normalizedEmail;
   }
   if (phone !== undefined) updates.phone = String(phone).trim();
 
-  const user = await User.findByIdAndUpdate(req.user._id, { $set: updates }, {
+  const user = await User.findByIdAndUpdate(req.user.id, { $set: updates }, {
     new: true, runValidators: true
   }).select("-password");
 
   res.json({ message: "Profile updated successfully.", user });
+  console.log("Authenticated User ID:", req.user.id);
 });
 
 /* Courses and resources */
@@ -342,36 +344,53 @@ export const getRank = asyncHandler(async (req, res) => {
   res.json({ rank: null, totalStudents, completedCourses, message: "Student rank requires a defined scoring policy." });
 });
 
+// ==========================================
+// GET STUDENT RESULTS
+// GET /api/student/progress
+// ==========================================
+
 export const getProgress = asyncHandler(async (req, res) => {
-  const courses = await Course.find(courseAccessFilter(req.user)).select("courseName lessons").lean();
-  const progress = await StudentProgress.find({ student: req.user._id }).lean();
-  const progressByCourse = new Map(progress.map((item) => [idOf(item.course), item]));
+  const results = await Result.find({
+    student: req.user.id,
+    published: true,
+  })
+    .populate("course", "courseName code duration")
+    .select("course exam date obtained total remarks published createdAt")
+    .sort({ date: -1 })
+    .lean();
 
-  const items = courses.map((course) => {
-    const p = progressByCourse.get(idOf(course.id));
-    const totalLessons = p?.totalLessons || course.lessons?.length || 0;
-    const completedLessons = p?.completedLessonCount ?? p?.completedLessons?.length ?? 0;
-    const progressPercent = p?.progressPercent ??
-      (totalLessons ? Math.round(completedLessons / totalLessons * 100) : 0);
-    return {
-      courseId: course._id,
-      courseName: course.courseName,
-      totalLessons,
-      completedLessons,
-      progress: Math.min(100, Math.max(0, progressPercent))
-    };
+  const items = results.map((result) => ({
+    resultId: result._id,
+    course: result.course
+      ? {
+          courseName:
+            result.course.courseName || result.course.code || "Course",
+          code: result.course.code || "",
+          duration: result.course.duration || "",
+        }
+      : null,
+    exam: result.exam,
+    date: result.date,
+    obtained: result.obtained,
+    total: result.total,
+    percentage:
+      result.total > 0
+        ? Math.round((result.obtained / result.total) * 100)
+        : 0,
+    remarks: result.remarks || "",
+  }));
+
+  return res.status(200).json({
+    success: true,
+    count: items.length,
+    results: items,
   });
-
-  const averageProgress = items.length
-    ? Math.round(items.reduce((sum, item) => sum + item.progress, 0) / items.length)
-    : 0;
-
-  res.json({ averageProgress, courses: items });
 });
 
 /* Payments: records only. Do not create or mark payments paid from this endpoint. */
+
 export const getPayments = asyncHandler(async (req, res) => {
-  // Fetch only logged-in student's payments
+  // Fetch only the logged-in student's payment records
   const payments = await Payment.find({
     student: req.user.id,
   })
@@ -397,54 +416,102 @@ export const getPayments = asyncHandler(async (req, res) => {
     })
     .lean();
 
-  // Calculate total paid amount
-  const paidTotal = payments
-    .filter((payment) => payment.status === "Paid")
-    .reduce(
-      (sum, payment) => sum + Number(payment.amount || 0),
-      0
+  // -----------------------------------------------
+  // NORMALIZE PAYMENT FEE VALUES
+  // -----------------------------------------------
+
+  const normalizedPayments = payments.map((payment) => {
+    // Backward compatibility for older payment records
+    const totalFees = Number(
+      payment.totalFees ?? payment.amount ?? 0
     );
 
-  // Calculate pending amount
-  const pendingTotal = payments
-    .filter((payment) => payment.status === "Pending")
-    .reduce(
-      (sum, payment) => sum + Number(payment.amount || 0),
-      0
+    const collectedFees = Number(
+      payment.collectedFees ??
+        (payment.status === "Paid" ? totalFees : 0)
     );
 
-  // Calculate failed amount
-  const failedTotal = payments
+    const pendingFees = Number(
+      payment.pendingFees ??
+        Math.max(0, totalFees - collectedFees)
+    );
+
+    return {
+      ...payment,
+
+      // Keep amount synchronized with totalFees
+      amount: totalFees,
+
+      totalFees,
+      collectedFees,
+      pendingFees,
+    };
+  });
+
+  // -----------------------------------------------
+  // CALCULATE SUMMARY USING ACTUAL FEE AMOUNTS
+  // -----------------------------------------------
+
+  const totalFees = normalizedPayments.reduce(
+    (sum, payment) => sum + payment.totalFees,
+    0
+  );
+
+  const collectedFees = normalizedPayments.reduce(
+    (sum, payment) => sum + payment.collectedFees,
+    0
+  );
+
+  const pendingFees = normalizedPayments.reduce(
+    (sum, payment) => sum + payment.pendingFees,
+    0
+  );
+
+  // Status-based totals for Failed and Refunded
+  const failedTotal = normalizedPayments
     .filter((payment) => payment.status === "Failed")
     .reduce(
-      (sum, payment) => sum + Number(payment.amount || 0),
+      (sum, payment) => sum + payment.totalFees,
       0
     );
 
-  // Calculate refunded amount
-  const refundedTotal = payments
+  const refundedTotal = normalizedPayments
     .filter((payment) => payment.status === "Refunded")
     .reduce(
-      (sum, payment) => sum + Number(payment.amount || 0),
+      (sum, payment) => sum + payment.totalFees,
       0
     );
+
+  // -----------------------------------------------
+  // RESPONSE
+  // -----------------------------------------------
 
   return res.status(200).json({
     success: true,
     message: "Student payment records fetched successfully.",
 
     summary: {
-      totalPayments: payments.length,
-      paidTotal,
-      pendingTotal,
+      totalPayments: normalizedPayments.length,
+
+      // Overall fee totals
+      totalFees,
+      collectedFees,
+      pendingFees,
+
+      // Compatibility aliases
+      paidTotal: collectedFees,
+      pendingTotal: pendingFees,
+
       failedTotal,
       refundedTotal,
+
       currency: "INR",
     },
 
-    payments,
+    payments: normalizedPayments,
   });
 });
+
 
 /* Career and placements */
 export const getCareer = asyncHandler(async (req, res) => {

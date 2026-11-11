@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -15,13 +16,11 @@ import {
 
 import StatCard from "@/src/components/student/StatCard";
 import RankCard from "@/src/components/student/RankCard";
-import CourseProgress from "@/src/components/student/CourseProgress";
 import LiveClassSchedule from "@/src/components/student/LiveClassSchedule";
 import Announcements from "@/src/components/student/Announcements";
-import BatchDetailsModal from "@/src/components/student/BatchDetailsModal";
 
 const API_URL = (
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+  process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000"
 ).replace(/\/$/, "");
 
 // ==========================================
@@ -56,7 +55,10 @@ function isObject(value) {
   );
 }
 
-// Extract batch details from different possible API response structures.
+// ==========================================
+// EXTRACT BATCH DETAILS
+// ==========================================
+
 function getBatchDetails(...responses) {
   for (const response of responses) {
     if (!isObject(response)) continue;
@@ -92,7 +94,6 @@ function getBatchDetails(...responses) {
 
     for (const candidate of candidates) {
       if (isObject(candidate)) {
-        // Some APIs return batch inside another batch property.
         if (isObject(candidate.batch)) {
           return {
             ...candidate,
@@ -174,6 +175,11 @@ function BatchInfoCard({
 }) {
   return (
     <div className="flex min-w-0 items-start gap-4 rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
+      <div
+        className={`shrink-0 rounded-lg ${iconBackground} ${iconColor} p-3`}
+      >
+        {Icon && <Icon size={25} />}
+      </div>
 
       <div className="min-w-0">
         <p className="text-sm font-semibold text-slate-700 sm:text-base">
@@ -190,10 +196,23 @@ function BatchInfoCard({
           </p>
         )}
       </div>
-
     </div>
   );
 }
+
+// ==========================================
+// ATTENDANCE DEFAULT DATA
+// ==========================================
+
+const defaultAttendance = {
+  statistics: {
+    totalClasses: 0,
+    present: 0,
+    absent: 0,
+    attendancePercentage: 0,
+  },
+  attendance: [],
+};
 
 // ==========================================
 // MAIN STUDENT DASHBOARD
@@ -201,18 +220,31 @@ function BatchInfoCard({
 
 export default function DashboardPage() {
   const [student, setStudent] = useState(null);
+
   const [dashboard, setDashboard] = useState(null);
+
+  const [attendanceData, setAttendanceData] = useState(
+    defaultAttendance
+  );
+
+  // STUDENT RESULTS
+  const [results, setResults] = useState([]);
+  const [resultsLoading, setResultsLoading] = useState(false);
+  const [resultsError, setResultsError] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+
   const [error, setError] = useState("");
+  const [attendanceError, setAttendanceError] = useState("");
+
   const [notice, setNotice] = useState("");
 
-  const [showBatchDetails, setShowBatchDetails] = useState(false);
-
   // ==========================================
-  // LOAD STUDENT PROFILE AND DASHBOARD
+  // LOAD STUDENT PROFILE, DASHBOARD,
+  // ATTENDANCE AND RESULTS
   // ==========================================
 
   const loadDashboard = useCallback(async (isRefresh = false) => {
@@ -223,9 +255,14 @@ export default function DashboardPage() {
     }
 
     setError("");
+    setAttendanceError("");
+    setResultsError("");
 
     try {
-      // Get authentication token.
+      // ==========================================
+      // GET AUTHENTICATION TOKEN
+      // ==========================================
+
       const token =
         typeof window !== "undefined"
           ? sessionStorage.getItem("token") ||
@@ -246,6 +283,7 @@ export default function DashboardPage() {
 
       // ==========================================
       // FETCH STUDENT PROFILE
+      // GET /api/student/profile
       // ==========================================
 
       const profileResponse = await fetch(
@@ -262,6 +300,18 @@ export default function DashboardPage() {
         .catch(() => ({}));
 
       if (!profileResponse.ok) {
+        if (profileResponse.status === 401) {
+          throw new Error(
+            "Your session has expired. Please sign in again."
+          );
+        }
+
+        if (profileResponse.status === 403) {
+          throw new Error(
+            "You do not have permission to access this dashboard."
+          );
+        }
+
         throw new Error(
           profileData.message ||
             profileData.error ||
@@ -294,7 +344,6 @@ export default function DashboardPage() {
       // FETCH DASHBOARD DATA
       // ==========================================
 
-      // Your existing implementation uses the same profile endpoint.
       const dashboardResponse = await fetch(
         `${API_URL}/api/student/profile`,
         {
@@ -341,10 +390,13 @@ export default function DashboardPage() {
         dashboardResult
       );
 
-      // Preserve the batch object instead of storing only its name.
       const studentBatch = isObject(user.batch)
         ? user.batch.batch || user.batch.name
         : user.batch;
+
+      // ==========================================
+      // SET STUDENT PROFILE
+      // ==========================================
 
       setStudent({
         id: user.userId || user.id || user._id || "",
@@ -359,11 +411,145 @@ export default function DashboardPage() {
           "Not assigned",
       });
 
-      // Merge batch details into dashboard state.
+      // ==========================================
+      // SET DASHBOARD DATA
+      // ==========================================
+
       setDashboard({
         ...dashboardResult,
         batchDetails: completeBatch,
       });
+
+      // ==========================================
+      // FETCH STUDENT ATTENDANCE
+      // GET /api/student/attendance
+      // ==========================================
+
+      setAttendanceLoading(true);
+
+      try {
+        const attendanceResponse = await fetch(
+          `${API_URL}/api/student/attendance`,
+          {
+            method: "GET",
+            headers,
+            cache: "no-store",
+          }
+        );
+
+        const attendanceResult = await attendanceResponse
+          .json()
+          .catch(() => ({}));
+
+        if (!attendanceResponse.ok) {
+          if (attendanceResponse.status === 401) {
+            throw new Error(
+              "Your session has expired. Please sign in again."
+            );
+          }
+
+          if (attendanceResponse.status === 403) {
+            throw new Error(
+              "You are not authorized to access attendance."
+            );
+          }
+
+          throw new Error(
+            attendanceResult.message ||
+              attendanceResult.error ||
+              "Unable to fetch student attendance."
+          );
+        }
+
+        const statistics = attendanceResult.statistics || {};
+
+        const attendanceRecords = Array.isArray(
+          attendanceResult.attendance
+        )
+          ? attendanceResult.attendance
+          : [];
+
+        setAttendanceData({
+          statistics: {
+            totalClasses: Number(statistics.totalClasses) || 0,
+            present: Number(statistics.present) || 0,
+            absent: Number(statistics.absent) || 0,
+            attendancePercentage:
+              Number(statistics.attendancePercentage) || 0,
+          },
+
+          attendance: attendanceRecords,
+        });
+
+        console.log(
+          "STUDENT ATTENDANCE RESPONSE:",
+          attendanceResult
+        );
+      } catch (attendanceErr) {
+        console.error(
+          "Student attendance error:",
+          attendanceErr
+        );
+
+        setAttendanceError(
+          attendanceErr.message || "Unable to load attendance."
+        );
+
+        setAttendanceData(defaultAttendance);
+      } finally {
+        setAttendanceLoading(false);
+      }
+
+      // ==========================================
+      // FETCH STUDENT RESULTS
+      // GET /api/student/progress
+      // ==========================================
+
+      setResultsLoading(true);
+
+      try {
+        const resultsResponse = await fetch(
+          `${API_URL}/api/student/progress`,
+          {
+            method: "GET",
+            headers,
+            cache: "no-store",
+          }
+        );
+
+        const resultsData = await resultsResponse
+          .json()
+          .catch(() => ({}));
+
+        if (!resultsResponse.ok) {
+          throw new Error(
+            resultsData.message ||
+              resultsData.error ||
+              "Unable to fetch student results."
+          );
+        }
+
+        const studentResults = Array.isArray(resultsData.results)
+          ? resultsData.results
+          : [];
+
+        setResults(studentResults);
+
+        console.log(
+          "STUDENT RESULTS RESPONSE:",
+          resultsData
+        );
+      } catch (resultError) {
+        console.error("Student results error:", resultError);
+
+        setResults([]);
+
+        setResultsError(
+          resultError.message || "Unable to load results."
+        );
+      } finally {
+        setResultsLoading(false);
+      }
 
       // ==========================================
       // DEBUG LOGS
@@ -383,7 +569,6 @@ export default function DashboardPage() {
         "EXTRACTED BATCH DETAILS:",
         completeBatch
       );
-
     } catch (err) {
       console.error("Student dashboard error:", err);
 
@@ -436,7 +621,6 @@ export default function DashboardPage() {
         "_blank",
         "noopener,noreferrer"
       );
-
     } catch {
       setNotice(
         "The meeting URL provided by the server is invalid."
@@ -445,25 +629,65 @@ export default function DashboardPage() {
   };
 
   // ==========================================
+  // OVERALL PROGRESS FROM EXAM RESULTS
+  // ==========================================
+
+  const totalObtained = results.reduce(
+    (sum, result) =>
+      sum + (Number(result.obtained) || 0),
+    0
+  );
+
+  const totalMaximum = results.reduce(
+    (sum, result) =>
+      sum + (Number(result.total) || 0),
+    0
+  );
+
+  const hasResults =
+    results.length > 0 && totalMaximum > 0;
+
+  const overallProgress = hasResults
+    ? Math.round((totalObtained / totalMaximum) * 100)
+    : 0;
+
+  // ==========================================
+  // COURSE PROGRESS FROM PROFILE API
+  // ==========================================
+
+  const rawCourseProgress =
+    dashboard?.overallProgress ??
+    dashboard?.progress ??
+    null;
+
+  const courseProgress = Number(rawCourseProgress);
+
+  const hasCourseProgress =
+    rawCourseProgress !== null &&
+    rawCourseProgress !== undefined &&
+    rawCourseProgress !== "" &&
+    Number.isFinite(courseProgress);
+
+  const safeCourseProgress = hasCourseProgress
+    ? Math.min(100, Math.max(0, courseProgress))
+    : 0;
+
+  // ==========================================
   // DASHBOARD STATISTICS
   // ==========================================
 
-  const overallProgress = Number(
-    dashboard?.overallProgress ?? dashboard?.progress
-  );
-
   const attendancePercentage = Number(
-    dashboard?.attendance?.percentage ??
-      dashboard?.attendancePercentage
+    attendanceData?.statistics?.attendancePercentage ?? 0
   );
 
   const attendanceAttended =
-    dashboard?.attendance?.attendedClasses ??
-    dashboard?.attendedClasses;
+    attendanceData?.statistics?.present ?? 0;
 
   const attendanceTotal =
-    dashboard?.attendance?.totalClasses ??
-    dashboard?.totalClasses;
+    attendanceData?.statistics?.totalClasses ?? 0;
+
+  const attendanceAbsent =
+    attendanceData?.statistics?.absent ?? 0;
 
   const pendingAssignments =
     dashboard?.pendingAssignments ??
@@ -473,25 +697,45 @@ export default function DashboardPage() {
 
   const stats = [
     {
-      title: "Overall progress",
-      value: Number.isFinite(overallProgress)
-        ? `${overallProgress}%`
+      title: "Overall Results",
+      value: resultsLoading
+        ? "Loading..."
+        : hasResults
+          ? `${overallProgress}%`
+          : "—",
+      subtitle: hasResults
+        ? "Based on exam results"
+        : "No exam results available",
+      progress: overallProgress,
+    },
+    {
+      title: "Student Batch Progress",
+      value: hasCourseProgress
+        ? `${safeCourseProgress}%`
         : "—",
-      subtitle: "Course completion",
-      progress: Number.isFinite(overallProgress)
-        ? Math.min(100, Math.max(0, overallProgress))
-        : 0,
+      subtitle: hasCourseProgress
+        ? "Batch completion"
+        : "Batch progress not available",
+      progress: safeCourseProgress,
+    },
+       {
+      title: "Batch Progress",
+      value: hasCourseProgress
+        ? `${safeCourseProgress}%`
+        : "—",
+      subtitle: hasCourseProgress
+        ? "Batch completion"
+        : "Batch progress not available",
+      progress: safeCourseProgress,
     },
     {
       title: "Attendance",
-      value: Number.isFinite(attendancePercentage)
-        ? `${attendancePercentage}%`
-        : "—",
-      subtitle:
-        attendanceAttended != null &&
-        attendanceTotal != null
-          ? `${attendanceAttended} of ${attendanceTotal} classes`
-          : "Attendance summary",
+      value: attendanceLoading
+        ? "Loading..."
+        : `${attendancePercentage}%`,
+      subtitle: attendanceLoading
+        ? "Fetching attendance"
+        : `${attendanceAttended} of ${attendanceTotal} classes`,
     },
     {
       title: "Pending assignments",
@@ -506,8 +750,7 @@ export default function DashboardPage() {
       value: nextLiveClass?.date
         ? formatDate(nextLiveClass.date)
         : nextLiveClass?.time || "—",
-      subtitle:
-        nextLiveClass?.title || "No upcoming class",
+      subtitle: nextLiveClass?.title || "No upcoming class",
     },
   ];
 
@@ -580,14 +823,9 @@ export default function DashboardPage() {
           </h1>
 
           <p className="mt-2 text-sm text-slate-600 sm:text-base">
-            {student?.id
-              ? `ID: ${student.id} · `
-              : ""}
-
+            {student?.id ? `ID: ${student.id} · ` : ""}
             Batch: {batchName}
-
             {" · "}
-
             Trainer: {trainerName}
           </p>
 
@@ -617,20 +855,6 @@ export default function DashboardPage() {
 
             Refresh
           </button>
-
-          <button
-            type="button"
-            onClick={() =>
-              handleJoin(
-                nextLiveClass?.title || "Live class"
-              )
-            }
-            disabled={loading}
-            className="rounded-lg bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60 sm:text-base"
-          >
-            Join live class
-          </button>
-
         </div>
       </header>
 
@@ -643,11 +867,7 @@ export default function DashboardPage() {
           role="status"
           className="mb-5 flex items-center gap-3 rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800"
         >
-          <RefreshCw
-            size={18}
-            className="animate-spin"
-          />
-
+          <RefreshCw size={18} className="animate-spin" />
           Fetching your profile and dashboard data...
         </div>
       )}
@@ -705,7 +925,7 @@ export default function DashboardPage() {
           STATISTICS CARDS
       ========================================== */}
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
 
         {stats.map((stat) => (
           <StatCard
@@ -722,24 +942,383 @@ export default function DashboardPage() {
       </section>
 
       {/* ==========================================
-          COURSE PROGRESS AND RIGHT SIDEBAR
+          STUDENT ATTENDANCE HISTORY
       ========================================== */}
 
-      <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.65fr)_minmax(280px,1fr)]">
+      <section className="mt-6 overflow-hidden rounded-xl border border-blue-100 bg-white shadow-sm">
 
-        <CourseProgress
-          onDetails={() => setShowBatchDetails(true)}
-        />
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 p-5">
 
-        <div className="flex min-w-0 flex-col gap-5">
+          <div>
+            <h2 className="text-xl font-bold text-[#102e60]">
+              My Attendance
+            </h2>
 
-          <LiveClassSchedule
-            onJoin={handleJoin}
-          />
+            <p className="mt-1 text-sm text-slate-500">
+              Your attendance records from your assigned batch.
+            </p>
+          </div>
 
-          <Announcements />
+          <div className="rounded-full bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700">
+            {attendanceLoading
+              ? "Loading..."
+              : `${attendancePercentage}% Attendance`}
+          </div>
 
         </div>
+
+        {/* ATTENDANCE SUMMARY */}
+
+        <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-3">
+
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+            <p className="text-sm font-medium text-slate-600">
+              Total Classes
+            </p>
+
+            <p className="mt-2 text-2xl font-bold text-[#102e60]">
+              {attendanceLoading ? "..." : attendanceTotal}
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-green-100 bg-green-50 p-4">
+            <p className="text-sm font-medium text-green-700">
+              Present
+            </p>
+
+            <p className="mt-2 text-2xl font-bold text-green-700">
+              {attendanceLoading ? "..." : attendanceAttended}
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-red-100 bg-red-50 p-4">
+            <p className="text-sm font-medium text-red-700">
+              Absent
+            </p>
+
+            <p className="mt-2 text-2xl font-bold text-red-700">
+              {attendanceLoading ? "..." : attendanceAbsent}
+            </p>
+          </div>
+
+        </div>
+
+        {/* ATTENDANCE ERROR */}
+
+        {attendanceError && (
+          <div className="mx-5 mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+
+            <p className="font-semibold">
+              Unable to load attendance
+            </p>
+
+            <p className="mt-1">
+              {attendanceError}
+            </p>
+
+            <button
+              type="button"
+              onClick={() => loadDashboard(true)}
+              className="mt-3 rounded-md bg-red-100 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-200"
+            >
+              Retry Attendance
+            </button>
+
+          </div>
+        )}
+
+        {/* ATTENDANCE TABLE */}
+
+        <div className="overflow-x-auto">
+
+          <table className="w-full min-w-[700px] text-left">
+
+            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-5 py-4 font-semibold">Date</th>
+                <th className="px-5 py-4 font-semibold">Batch</th>
+                <th className="px-5 py-4 font-semibold">Trainer</th>
+                <th className="px-5 py-4 font-semibold">Status</th>
+                <th className="px-5 py-4 font-semibold">Remarks</th>
+              </tr>
+            </thead>
+
+            <tbody className="divide-y divide-slate-100">
+
+              {attendanceLoading && (
+                <tr>
+                  <td colSpan={5} className="px-5 py-10 text-center">
+                    <div className="flex items-center justify-center gap-2 text-blue-700">
+                      <RefreshCw
+                        size={18}
+                        className="animate-spin"
+                      />
+
+                      <span className="text-sm font-medium">
+                        Loading attendance records...
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {!attendanceLoading &&
+                !attendanceError &&
+                attendanceData.attendance.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-10 text-center">
+
+                      <CalendarDays
+                        size={35}
+                        className="mx-auto mb-3 text-slate-300"
+                      />
+
+                      <p className="font-semibold text-slate-700">
+                        No attendance records found
+                      </p>
+
+                      <p className="mt-1 text-sm text-slate-500">
+                        Your attendance will appear here once your trainer marks it.
+                      </p>
+
+                    </td>
+                  </tr>
+                )}
+
+              {!attendanceLoading &&
+                attendanceData.attendance.map((record) => (
+                  <tr
+                    key={record._id}
+                    className="transition hover:bg-slate-50"
+                  >
+
+                    <td className="whitespace-nowrap px-5 py-4 text-sm font-medium text-slate-700">
+                      {formatDate(record.date)}
+                    </td>
+
+                    <td className="px-5 py-4 text-sm text-slate-700">
+                      {record.batch?.name ||
+                        record.batch?.batchName ||
+                        record.batch?.code ||
+                        "Not available"}
+                    </td>
+
+                    <td className="px-5 py-4 text-sm text-slate-700">
+                      {record.trainer?.name || "Not assigned"}
+                    </td>
+
+                    <td className="px-5 py-4">
+                      <span
+                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${
+                          record.status === "Present"
+                            ? "bg-green-100 text-green-700"
+                            : "bg-red-100 text-red-700"
+                        }`}
+                      >
+                        {record.status === "Present" ? (
+                          <CheckCircle2 size={14} />
+                        ) : (
+                          <X size={14} />
+                        )}
+
+                        {record.status}
+                      </span>
+                    </td>
+
+                    <td className="max-w-[250px] px-5 py-4 text-sm text-slate-500">
+                      {record.remarks || "—"}
+                    </td>
+
+                  </tr>
+                ))}
+
+            </tbody>
+          </table>
+
+        </div>
+
+      </section>
+
+      {/* ==========================================
+          STUDENT RESULTS
+      ========================================== */}
+
+      <section className="mt-6 overflow-hidden rounded-xl border border-blue-100 bg-white shadow-sm">
+
+        {/* RESULTS HEADER */}
+
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 p-5">
+
+          <div>
+            <h2 className="text-xl font-bold text-[#102e60]">
+              My Exam Results
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-500">
+              View your published examination results.
+            </p>
+          </div>
+
+          <div className="rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">
+            {resultsLoading
+              ? "Loading results..."
+              : `${results.length} Published ${
+                  results.length === 1 ? "Result" : "Results"
+                }`}
+          </div>
+
+        </div>
+
+        {/* RESULTS LOADING */}
+
+        {resultsLoading && (
+          <div className="flex items-center justify-center gap-2 p-10 text-blue-700">
+            <RefreshCw
+              size={20}
+              className="animate-spin"
+            />
+
+            <span className="text-sm font-medium">
+              Loading your results...
+            </span>
+          </div>
+        )}
+
+        {/* RESULTS ERROR */}
+
+        {!resultsLoading && resultsError && (
+          <div className="m-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+
+            <p className="font-semibold">
+              Unable to load results
+            </p>
+
+            <p className="mt-1">
+              {resultsError}
+            </p>
+
+            <button
+              type="button"
+              onClick={() => loadDashboard(true)}
+              className="mt-3 rounded-md bg-red-100 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-200"
+            >
+              Retry Results
+            </button>
+
+          </div>
+        )}
+
+        {/* NO RESULTS */}
+
+        {!resultsLoading &&
+          !resultsError &&
+          results.length === 0 && (
+            <div className="p-10 text-center">
+
+              <FileText
+                size={38}
+                className="mx-auto mb-3 text-slate-300"
+              />
+
+              <p className="font-semibold text-slate-700">
+                No results available
+              </p>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Your published exam results will appear here.
+              </p>
+
+            </div>
+          )}
+
+        {/* RESULTS TABLE */}
+
+        {!resultsLoading &&
+          !resultsError &&
+          results.length > 0 && (
+            <div className="overflow-x-auto">
+
+              <table className="w-full min-w-[650px] text-left">
+
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-5 py-4 font-semibold">
+                      Exam
+                    </th>
+
+                    <th className="px-5 py-4 font-semibold">
+                      Course
+                    </th>
+
+                    <th className="px-5 py-4 font-semibold">
+                      Date
+                    </th>
+
+                    <th className="px-5 py-4 font-semibold">
+                      Marks
+                    </th>
+
+                    <th className="px-5 py-4 font-semibold">
+                      Remarks
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-slate-100">
+
+                  {results.map((result, index) => (
+                    <tr
+                      key={result.resultId || result._id || index}
+                      className="transition hover:bg-slate-50"
+                    >
+
+                      <td className="px-5 py-4 text-sm font-semibold text-slate-800">
+                        {result.exam || "Assessment"}
+                      </td>
+
+                      <td className="px-5 py-4 text-sm text-slate-700">
+                        {result.course?.courseName ||
+                          result.course?.code ||
+                          "Not available"}
+                      </td>
+
+                      <td className="whitespace-nowrap px-5 py-4 text-sm text-slate-600">
+                        {formatDate(result.date)}
+                      </td>
+
+                      <td className="whitespace-nowrap px-5 py-4 text-sm font-semibold text-slate-700">
+                        {Number(result.obtained) || 0} /{" "}
+                        {Number(result.total) || 0}
+                      </td>
+
+                      <td className="max-w-[250px] px-5 py-4 text-sm text-slate-500">
+                        {result.remarks || "—"}
+                      </td>
+
+                    </tr>
+                  ))}
+
+                </tbody>
+
+              </table>
+
+            </div>
+          )}
+
+      </section>
+
+      {/* ==========================================
+          LIVE CLASS AND ANNOUNCEMENTS
+      ========================================== */}
+
+      <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-2">
+
+        <LiveClassSchedule
+          onJoin={handleJoin}
+        />
+
+        <Announcements />
+
       </div>
 
       {/* ==========================================
@@ -780,7 +1359,7 @@ export default function DashboardPage() {
             value={
               batchDurationMonths != null
                 ? `${batchDurationMonths} Months`
-                : "Not available"
+                : batchDetails.duration || "Not available"
             }
             subtitle="Total training duration"
             iconBackground="bg-blue-50"
@@ -825,6 +1404,7 @@ export default function DashboardPage() {
               </p>
 
             </div>
+
           </div>
 
           {/* ACTIVE STATUS */}
@@ -862,6 +1442,7 @@ export default function DashboardPage() {
               </p>
 
             </div>
+
           </div>
 
         </div>
@@ -932,6 +1513,8 @@ export default function DashboardPage() {
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
 
+            {/* CREATED AT */}
+
             <div className="rounded-lg bg-slate-50 p-4">
 
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -943,6 +1526,8 @@ export default function DashboardPage() {
               </p>
 
             </div>
+
+            {/* UPDATED AT */}
 
             <div className="rounded-lg bg-slate-50 p-4">
 
@@ -957,19 +1542,10 @@ export default function DashboardPage() {
             </div>
 
           </div>
+
         </div>
 
       </section>
-
-      {/* ==========================================
-          BATCH DETAILS MODAL
-      ========================================== */}
-
-      {showBatchDetails && (
-        <BatchDetailsModal
-          onClose={() => setShowBatchDetails(false)}
-        />
-      )}
 
     </main>
   );

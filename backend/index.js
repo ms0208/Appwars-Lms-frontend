@@ -14,6 +14,7 @@ import counsellorRoutes from "./router/counsellorRoutes.js";
 import trainerRoutes from "./router/trainerRoutes.js";
 import scheduleRoutes from "./router/scheduleRoutes.js";
 import studentAssessmentRoutes from "./router/studentAssessmentRoutes.js";
+import studentAttendanceRoutes from "./router/studentAttendanceRoutes.js";
 
 const app = express();
 
@@ -74,6 +75,7 @@ app.use("/api/admin", adminRoutes);
 // Student routes
 app.use("/api/student", studentRoutes);
 app.use("/api/studentassignments", studentAssessmentRoutes);
+app.use("/api/student", studentAttendanceRoutes);
 // Trainer Routes 
 app.use("/api/trainer", trainerRoutes)
 

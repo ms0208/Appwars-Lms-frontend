@@ -28,6 +28,13 @@ import {
   getOpenDoubts,
   replyToDoubt,
 } from "../controllers/trainercontroller.js";
+import {
+  getResults,
+  createResult,
+  getResultById,
+  updateResult,
+  deleteResult,
+} from "../controllers/adminResultController.js";
 import uploadAssignment from "../middleware/assignmentUpload.js";
 const router = express.Router();
 
@@ -108,4 +115,21 @@ router.get("/doubts", getOpenDoubts);
 
 router.post("/doubts/:doubtId/replies", replyToDoubt);
 
+// TRAINER STUDENT RESULTS
+// ==========================================
+
+// GET ALL RESULTS OF TRAINER'S ASSIGNED BATCHES
+router.get("/results", getResults);
+
+// CREATE RESULT
+router.post("/results", createResult);
+
+// GET SINGLE RESULT
+router.get("/results/:id", getResultById);
+
+// UPDATE RESULT
+router.patch("/results/:id", updateResult);
+
+// DELETE RESULT
+router.delete("/results/:id", deleteResult);
 export default router;

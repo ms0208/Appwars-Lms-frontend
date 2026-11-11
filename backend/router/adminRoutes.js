@@ -28,7 +28,9 @@ import {
   deleteCourse,
 
   // Payments
+  // Payments
   getPayments,
+  getPaymentById,
   createPayment,
   updatePayment,
   deletePayment,
@@ -278,6 +280,7 @@ router.route("/doubts/:id")
 
 // Get all payments, including summary.
 router.get("/payments", getPayments);
+router.get("/payments/:id", getPaymentById);
 
 // Create a payment / instalment.
 router.post("/payments", createPayment);

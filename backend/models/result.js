@@ -6,44 +6,41 @@ const resultSchema = new mongoose.Schema(
     student: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: [true, "Student is required."],
-      index: true,
+      required: true,
     },
 
-    course: {
+    batch: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Course",
-      required: [true, "Course is required."],
-      index: true,
+      ref: "Batch",
+      required: true,
     },
 
     exam: {
       type: String,
-      required: [true, "Exam name is required."],
+      required: true,
       trim: true,
     },
 
     date: {
       type: Date,
-      required: [true, "Exam date is required."],
+      required: true,
     },
 
     obtained: {
       type: Number,
-      required: [true, "Obtained marks are required."],
-      min: [0, "Obtained marks cannot be negative."],
+      required: true,
+      min: 0,
     },
 
     total: {
       type: Number,
-      required: [true, "Total marks are required."],
-      min: [1, "Total marks must be at least 1."],
+      required: true,
+      min: 1,
     },
 
     remarks: {
       type: String,
       default: "",
-      trim: true,
     },
 
     published: {
@@ -56,23 +53,9 @@ const resultSchema = new mongoose.Schema(
   }
 );
 
-// Validate obtained marks against total marks
-resultSchema.pre("validate", function () {
-  if (
-    typeof this.obtained === "number" &&
-    typeof this.total === "number" &&
-    this.obtained > this.total
-  ) {
-    this.invalidate(
-      "obtained",
-      "Obtained marks cannot exceed total marks."
-    );
-  }
-});
-
-// Prevent duplicate exam results for the same student and course
+// One result per student, batch and exam
 resultSchema.index(
-  { student: 1, course: 1, exam: 1 },
+  { student: 1, batch: 1, exam: 1 },
   { unique: true }
 );
 

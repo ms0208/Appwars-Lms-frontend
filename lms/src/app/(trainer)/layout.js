@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import Image from "next/image";
 import {
   LayoutDashboard,
   ClipboardCheck,
@@ -22,13 +23,18 @@ export default function TrainerLayout({ children }) {
       icon: LayoutDashboard,
     },
     {
-      name: "Attendance & Grading",
+      name: "Attendance",
       href: "/attendance-grading",
       icon: ClipboardCheck,
     },
     {
-      name:" Assignments",
+      name: " Assignments",
       href: "/trainerassignments",
+      icon: ClipboardList,
+    },
+    {
+      name: "Student Marks",
+      href: "/student-marks",
       icon: ClipboardList,
     }
   ];
@@ -50,9 +56,27 @@ export default function TrainerLayout({ children }) {
           }`}
       >
         <div className="mb-7 flex items-center justify-between px-2">
-          <h2 className="text-base font-bold">
-            Trainer Portal
-          </h2>
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white p-1">
+              <Image
+                src="/logos/APPWARS-LOGO-PRINT.png"
+                alt="APPWARS Technologies Private Limited"
+                width={50}
+                height={50}
+                className="h-full w-full object-contain"
+                priority
+              />
+            </div>
+
+            <div className="flex flex-col leading-tight">
+              <h2 className="text-base font-bold text-white">
+                Trainer Portal
+              </h2>
+              <p className="mt-1 text-[11px] font-medium text-blue-200">
+                APPWARS TECHNOLOGIES Pvt. Ltd.
+              </p>
+            </div>
+          </div>
 
           <button
             onClick={() => setMenuOpen(false)}
