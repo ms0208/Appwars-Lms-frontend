@@ -350,39 +350,133 @@ export const getRank = asyncHandler(async (req, res) => {
 // ==========================================
 
 export const getProgress = asyncHandler(async (req, res) => {
+  // ==========================================
+  // GET STUDENT WITH ASSIGNED BATCH
+  // ==========================================
+
+  const student = await User.findById(req.user.id)
+    .populate("batch", "batchName name code")
+    .select("name userId batch")
+    .lean();
+
+  if (!student) {
+    return res.status(404).json({
+      success: false,
+      message: "Student not found.",
+    });
+  }
+
+  const studentBatch = student.batch;
+
+  if (!studentBatch) {
+    return res.status(200).json({
+      success: true,
+      count: 0,
+      batch: null,
+      results: [],
+      message: "No batch assigned to this student.",
+    });
+  }
+
+  // ==========================================
+  // VALIDATE REQUESTED BATCH
+  // ==========================================
+
+  const requestedBatchId = req.query.batchId;
+
+  const assignedBatchId = String(
+    studentBatch._id || studentBatch
+  );
+
+  if (
+    requestedBatchId &&
+    requestedBatchId !== assignedBatchId
+  ) {
+    return res.status(403).json({
+      success: false,
+      message: "You cannot access results for another batch.",
+    });
+  }
+
+  // ==========================================
+  // FETCH PUBLISHED STUDENT RESULTS
+  // ==========================================
+
   const results = await Result.find({
-    student: req.user.id,
+    student: student._id,
     published: true,
   })
-    .populate("course", "courseName code duration")
-    .select("course exam date obtained total remarks published createdAt")
+    .select(
+      "exam date obtained total remarks published createdAt"
+    )
     .sort({ date: -1 })
     .lean();
 
+  // ==========================================
+  // FORMAT RESULTS WITH BATCH DETAILS
+  // ==========================================
+
   const items = results.map((result) => ({
     resultId: result._id,
-    course: result.course
-      ? {
-          courseName:
-            result.course.courseName || result.course.code || "Course",
-          code: result.course.code || "",
-          duration: result.course.duration || "",
-        }
-      : null,
-    exam: result.exam,
+
+    batch: {
+      _id: studentBatch._id,
+      batchName:
+        studentBatch.batchName ||
+        studentBatch.name ||
+        studentBatch.code ||
+        "Batch",
+      name:
+        studentBatch.name ||
+        studentBatch.batchName ||
+        studentBatch.code ||
+        "Batch",
+      code: studentBatch.code || "",
+    },
+
+    exam: result.exam || "Assessment",
+
     date: result.date,
-    obtained: result.obtained,
-    total: result.total,
+
+    obtained: Number(result.obtained) || 0,
+
+    total: Number(result.total) || 0,
+
     percentage:
-      result.total > 0
-        ? Math.round((result.obtained / result.total) * 100)
+      Number(result.total) > 0
+        ? Math.round(
+            (Number(result.obtained) /
+              Number(result.total)) *
+              100
+          )
         : 0,
+
     remarks: result.remarks || "",
   }));
 
+  // ==========================================
+  // RESPONSE
+  // ==========================================
+
   return res.status(200).json({
     success: true,
+
     count: items.length,
+
+    batch: {
+      _id: studentBatch._id,
+      batchName:
+        studentBatch.batchName ||
+        studentBatch.name ||
+        studentBatch.code ||
+        "Batch",
+      name:
+        studentBatch.name ||
+        studentBatch.batchName ||
+        studentBatch.code ||
+        "Batch",
+    },
+
     results: items,
   });
 });

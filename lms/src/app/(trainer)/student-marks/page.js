@@ -1,11 +1,9 @@
-
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Award,
   BookOpen,
-  CalendarDays,
   CheckCircle2,
   ClipboardList,
   Download,
@@ -29,15 +27,16 @@ const API_URL = (
 
 const RESULTS_API = `${API_URL}/api/trainer/results`;
 const BATCHES_API = `${API_URL}/api/trainer/batches`;
-const STUDENTS_API = `${API_URL}/api/trainer/students`;
+const STUDENTS_API = `${API_URL}/api/trainer/batches`;
 
 const getToday = () => {
   const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
 
-  return `${year}-${month}-${day}`;
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
 };
 
 const initialForm = {
@@ -76,6 +75,7 @@ async function apiRequest(url, options = {}) {
 
   const response = await fetch(url, {
     ...options,
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -95,21 +95,38 @@ async function apiRequest(url, options = {}) {
 }
 
 // ==========================================
-// GET ARRAY FROM API RESPONSE
+// GET ARRAY FROM DIFFERENT API STRUCTURES
 // ==========================================
 
 function getArrayResponse(data) {
   if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.results)) return data.results;
-  if (Array.isArray(data?.batches)) return data.batches;
-  if (Array.isArray(data?.students)) return data.students;
-  if (Array.isArray(data?.data)) return data.data;
-  if (Array.isArray(data?.result)) return data.result;
-  if (Array.isArray(data?.data?.results)) return data.data.results;
-  if (Array.isArray(data?.data?.batches)) return data.data.batches;
-  if (Array.isArray(data?.data?.students)) return data.data.students;
 
-  return [];
+  const possibleArrays = [
+    data?.students,
+    data?.batches,
+    data?.results,
+    data?.data,
+    data?.result,
+    data?.records,
+    data?.items,
+    data?.users,
+
+    data?.data?.students,
+    data?.data?.batches,
+    data?.data?.results,
+    data?.data?.users,
+    data?.data?.records,
+    data?.data?.items,
+
+    data?.trainer?.students,
+    data?.trainer?.batches,
+
+    data?.batch?.students,
+    data?.data?.batch?.students,
+    data?.data?.trainer?.students,
+  ];
+
+  return possibleArrays.find(Array.isArray) || [];
 }
 
 // ==========================================
@@ -121,7 +138,28 @@ function getId(value) {
 
   if (typeof value === "string") return value;
 
-  return value._id || value.id || "";
+  return String(value._id || value.id || value.value || "");
+}
+
+// ==========================================
+// GET BATCH VALUE
+// ==========================================
+
+function getBatchValue(value) {
+  if (!value) return "";
+
+  if (typeof value === "string") return value;
+
+  return (
+    value._id ||
+    value.id ||
+    value.batch ||
+    value.batchName ||
+    value.name ||
+    value.code ||
+    value.batchCode ||
+    ""
+  );
 }
 
 // ==========================================
@@ -138,6 +176,7 @@ function getStudentName(student) {
     student.fullName ||
     [student.firstName, student.lastName].filter(Boolean).join(" ") ||
     student.userId ||
+    student.email ||
     "Unknown Student"
   );
 }
@@ -156,6 +195,7 @@ function getBatchName(batch) {
     batch.name ||
     batch.batch ||
     batch.code ||
+    batch.batchCode ||
     batch.courseName ||
     "Unknown Batch"
   );
@@ -168,7 +208,55 @@ function getBatchName(batch) {
 function getBatchCode(batch) {
   if (!batch || typeof batch === "string") return "";
 
-  return batch.code || batch.batchCode || "";
+  return (
+    batch.batchCode ||
+    batch.code ||
+    batch.batch ||
+    ""
+  );
+}
+
+// ==========================================
+// BATCH COURSE
+// ==========================================
+
+function getBatchCourse(batch) {
+  if (!batch || typeof batch === "string") return "";
+
+  if (typeof batch.course === "string") {
+    return batch.course;
+  }
+
+  return (
+    batch.course?.courseName ||
+    batch.course?.name ||
+    batch.courseName ||
+    batch.course?.title ||
+    ""
+  );
+}
+
+// ==========================================
+// BATCH IDENTIFIERS
+// ==========================================
+
+function getBatchIdentifiers(batch) {
+  if (!batch) return [];
+
+  if (typeof batch === "string") {
+    return [batch.toLowerCase().trim()];
+  }
+
+  return [
+    getId(batch),
+    batch.batch,
+    batch.batchName,
+    batch.name,
+    batch.code,
+    batch.batchCode,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase().trim());
 }
 
 // ==========================================
@@ -178,7 +266,68 @@ function getBatchCode(batch) {
 function getStudentBatchId(student) {
   if (!student || typeof student === "string") return "";
 
-  return getId(student.batch);
+  return (
+    getId(student.batchId) ||
+    getId(student.batch) ||
+    getId(student.batch?._id) ||
+    getId(student.batch?._id)
+  );
+}
+
+// ==========================================
+// STUDENT BATCH VALUE
+// ==========================================
+
+function getStudentBatchValue(student) {
+  if (!student || typeof student === "string") return "";
+
+  return (
+    student.batch?.batch ||
+    student.batch?.batchName ||
+    student.batch?.name ||
+    student.batch?.code ||
+    student.batchName ||
+    student.batchCode ||
+    (typeof student.batch === "string" ? student.batch : "") ||
+    ""
+  );
+}
+
+// ==========================================
+// CHECK STUDENT BELONGS TO BATCH
+// ==========================================
+
+function studentBelongsToBatch(student, selectedBatch) {
+  if (!selectedBatch) return true;
+
+  const studentBatchId = getStudentBatchId(student);
+  const studentBatchValue = getStudentBatchValue(student);
+
+  // Student has no batch information in API response.
+  // Keep the student because the endpoint may already filter by trainer.
+  if (!studentBatchId && !studentBatchValue) {
+    return true;
+  }
+
+  const batchIdentifiers = getBatchIdentifiers(selectedBatch);
+
+  if (
+    studentBatchId &&
+    batchIdentifiers.includes(studentBatchId.toLowerCase())
+  ) {
+    return true;
+  }
+
+  if (
+    studentBatchValue &&
+    batchIdentifiers.includes(
+      String(studentBatchValue).toLowerCase().trim()
+    )
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 // ==========================================
@@ -186,13 +335,23 @@ function getStudentBatchId(student) {
 // ==========================================
 
 function normalizeBatch(batch) {
+  if (!batch) return null;
+
   return {
     id: getId(batch),
     name: getBatchName(batch),
     code: getBatchCode(batch),
     status: batch.status || "",
-    courseName: batch.courseName || batch.course?.courseName || "",
-    duration: batch.duration || "",
+    courseName: getBatchCourse(batch),
+    duration:
+      batch.duration ||
+      batch.durationMonths ||
+      "",
+    studentCount:
+      batch.studentCount ??
+      batch.totalStudents ??
+      batch.students?.length ??
+      0,
     raw: batch,
   };
 }
@@ -202,15 +361,39 @@ function normalizeBatch(batch) {
 // ==========================================
 
 function normalizeStudent(student) {
+  if (!student) return null;
+
+  const rawStudent =
+    student.student && typeof student.student === "object"
+      ? student.student
+      : student;
+
+  const studentId =
+    rawStudent._id ||
+    rawStudent.id ||
+    rawStudent.studentId ||
+    "";
+
   return {
-    id: getId(student),
-    name: getStudentName(student),
-    userId: student.userId || "",
-    email: student.email || "",
-    batchId: getStudentBatchId(student),
-    raw: student,
+    id: String(studentId),
+
+    name: getStudentName(rawStudent),
+
+    userId:
+      rawStudent.userId ||
+      rawStudent.studentId ||
+      "",
+
+    email: rawStudent.email || "",
+
+    batchId: getStudentBatchId(rawStudent),
+
+    batchValue: getStudentBatchValue(rawStudent),
+
+    raw: rawStudent,
   };
 }
+
 
 // ==========================================
 // NORMALIZE RESULT
@@ -227,6 +410,8 @@ function normalizeResult(item) {
       ? item.batch
       : null;
 
+  const batchName = getBatchName(batch || item.batch);
+
   return {
     id: item._id || item.id,
 
@@ -236,10 +421,10 @@ function normalizeResult(item) {
 
     batchId: getId(item.batch),
     batch,
-    batchName: getBatchName(batch || item.batch),
+    batchName,
     batchCode: getBatchCode(batch),
     batchStatus: batch?.status || "",
-    batchCourseName: batch?.courseName || "",
+    batchCourseName: getBatchCourse(batch),
 
     exam: item.exam || "",
     date: item.date ? String(item.date).split("T")[0] : "",
@@ -261,7 +446,11 @@ function normalizeResult(item) {
 function formatDate(date) {
   if (!date) return "—";
 
-  return new Date(date).toLocaleDateString("en-IN", {
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) return "—";
+
+  return parsedDate.toLocaleDateString("en-IN", {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -335,7 +524,7 @@ export default function TrainerResultsPage() {
       const response = await apiRequest(RESULTS_API);
       const records = getArrayResponse(response);
 
-      setResults(records.map(normalizeResult));
+      setResults(records.map(normalizeResult).filter(Boolean));
     } catch (err) {
       setError(err.message || "Failed to load results.");
     } finally {
@@ -357,18 +546,12 @@ export default function TrainerResultsPage() {
 
       const normalized = records
         .map(normalizeBatch)
-        .filter((batch) => batch.id);
+        .filter((batch) => batch?.id);
 
       setBatches(normalized);
     } catch (err) {
       console.error("Fetch batches error:", err);
-
-      // Fallback: use batches present in existing results.
-      setBatches((previous) => {
-        if (previous.length) return previous;
-
-        return [];
-      });
+      setBatches([]);
     } finally {
       setLoadingBatches(false);
     }
@@ -412,12 +595,25 @@ export default function TrainerResultsPage() {
           code: result.batchCode,
           status: result.batchStatus,
           courseName: result.batchCourseName,
+          studentCount: 0,
         });
       }
     });
 
     return Array.from(batchMap.values());
   }, [batches, results]);
+
+  // ==========================================
+  // SELECTED BATCH OBJECT
+  // ==========================================
+
+  const selectedBatch = useMemo(() => {
+    return (
+      availableBatches.find(
+        (batch) => batch.id === form.batchId
+      ) || null
+    );
+  }, [availableBatches, form.batchId]);
 
   // ==========================================
   // FALLBACK STUDENTS FROM RESULTS
@@ -441,7 +637,9 @@ export default function TrainerResultsPage() {
           id: result.studentId,
           name: result.studentName,
           userId: result.student?.userId || "",
+          email: result.student?.email || "",
           batchId: result.batchId,
+          raw: result.student,
         });
       }
     });
@@ -451,46 +649,77 @@ export default function TrainerResultsPage() {
 
   // ==========================================
   // FETCH STUDENTS FOR SELECTED BATCH
-  // GET /api/trainer/students?batchId=...
+  //
+  // Tries:
+  // ?batchId=MongoDB_ID
+  // ?batch=MongoDB_ID
+  // ?batchName=MERN-01
   // ==========================================
 
-  const fetchStudents = useCallback(async (batchId) => {
-    if (!batchId) {
-      setStudents([]);
-      return;
-    }
 
-    try {
-      setLoadingStudents(true);
+  // ==========================================
+  // FETCH ALL STUDENTS FOR SELECTED BATCH
+  // GET /api/trainer/batches/:batchId/students
+  // ==========================================
 
-      const response = await apiRequest(
-        `${STUDENTS_API}?batchId=${encodeURIComponent(batchId)}`
-      );
+  const fetchStudents = useCallback(
+    async (batchId, batchObject = null) => {
+      if (!batchId) {
+        setStudents([]);
+        return;
+      }
 
-      const records = getArrayResponse(response);
+      try {
+        setLoadingStudents(true);
+        setError("");
 
-      const normalized = records
-        .map(normalizeStudent)
-        .filter((student) => {
-          if (!student.id) return false;
+        // Clear old batch students before loading new ones
+        setStudents([]);
 
-          // If the API returns batch information, ensure it matches.
-          return (
-            !student.batchId ||
-            student.batchId === batchId
-          );
-        });
+        // Direct backend endpoint
+        const url = `${STUDENTS_API}/${encodeURIComponent(batchId)}/students`;
 
-      setStudents(normalized);
-    } catch (err) {
-      console.error("Fetch batch students error:", err);
+        console.log("Fetching batch students from:", url);
 
-      // Fallback to students already present in result records.
-      setStudents([]);
-    } finally {
-      setLoadingStudents(false);
-    }
-  }, []);
+        const response = await apiRequest(url);
+
+        console.log("Batch students API response:", response);
+
+        // Extract students from the API response
+        const records = getArrayResponse(response);
+
+        // Normalize all returned student records
+        const normalizedStudents = records
+          .map(normalizeStudent)
+          .filter((student) => student && student.id);
+
+        // The backend endpoint is already batch-specific.
+        // Therefore, do not apply additional batch filtering.
+        setStudents(normalizedStudents);
+
+        console.log(
+          `Successfully fetched ${normalizedStudents.length} students`
+        );
+      } catch (err) {
+        console.error("Fetch batch students error:", err);
+
+        setStudents([]);
+
+        setError(
+          err.message || "Failed to fetch students for the selected batch."
+        );
+      } finally {
+        setLoadingStudents(false);
+      }
+    },
+    []
+  );
+
+
+  // ==========================================
+  // STUDENTS FOR SELECTED BATCH
+  // ==========================================
+
 
   // ==========================================
   // STUDENTS FOR SELECTED BATCH
@@ -499,18 +728,37 @@ export default function TrainerResultsPage() {
   const batchStudents = useMemo(() => {
     const studentMap = new Map();
 
+    // Students fetched directly from selected batch API
     students.forEach((student) => {
-      studentMap.set(student.id, student);
-    });
-
-    resultStudents.forEach((student) => {
-      if (!studentMap.has(student.id)) {
+      if (student.id) {
         studentMap.set(student.id, student);
       }
     });
 
+    // Keep current student available while editing
+    if (editingId && form.studentId && selectedResult) {
+      const selectedStudentId = form.studentId;
+
+      if (!studentMap.has(selectedStudentId)) {
+        studentMap.set(selectedStudentId, {
+          id: selectedStudentId,
+          name: selectedResult.studentName,
+          userId: selectedResult.student?.userId || "",
+          email: selectedResult.student?.email || "",
+          batchId: selectedResult.batchId,
+          raw: selectedResult.student,
+        });
+      }
+    }
+
     return Array.from(studentMap.values());
-  }, [students, resultStudents]);
+  }, [
+    students,
+    editingId,
+    form.studentId,
+    selectedResult,
+  ]);
+
 
   // ==========================================
   // FILTER RESULTS
@@ -551,10 +799,10 @@ export default function TrainerResultsPage() {
     const average =
       results.length > 0
         ? results.reduce(
-            (sum, result) =>
-              sum + getPercentage(result.obtained, result.total),
-            0
-          ) / results.length
+          (sum, result) =>
+            sum + getPercentage(result.obtained, result.total),
+          0
+        ) / results.length
         : 0;
 
     const uniqueStudents = new Set(
@@ -588,8 +836,17 @@ export default function TrainerResultsPage() {
   // SELECT BATCH
   // ==========================================
 
+
+  // ==========================================
+  // SELECT BATCH
+  // ==========================================
+
   const handleBatchChange = (e) => {
     const batchId = e.target.value;
+
+    const batchObject =
+      availableBatches.find((batch) => batch.id === batchId) ||
+      null;
 
     setForm((previous) => ({
       ...previous,
@@ -597,12 +854,15 @@ export default function TrainerResultsPage() {
       studentId: "",
     }));
 
+    // Clear previously fetched students
     setStudents([]);
 
+    // Fetch all students for newly selected batch
     if (batchId) {
-      fetchStudents(batchId);
+      fetchStudents(batchId, batchObject);
     }
   };
+
 
   // ==========================================
   // OPEN CREATE FORM
@@ -610,6 +870,7 @@ export default function TrainerResultsPage() {
 
   const openCreateForm = () => {
     setEditingId(null);
+    setSelectedResult(null);
 
     setForm({
       ...initialForm,
@@ -619,6 +880,7 @@ export default function TrainerResultsPage() {
     setStudents([]);
     setError("");
     setSuccess("");
+    setShowDetails(false);
     setShowForm(true);
   };
 
@@ -628,20 +890,28 @@ export default function TrainerResultsPage() {
 
   const openEditForm = (result) => {
     setEditingId(result.id);
+    setSelectedResult(result);
 
     setForm({
       studentId: result.studentId,
       batchId: result.batchId,
       exam: result.exam,
-      date: result.date,
+      date: result.date || getToday(),
       obtained: String(result.obtained),
       total: String(result.total),
       remarks: result.remarks,
       published: result.published,
     });
 
+    setStudents([]);
+
+    const batchObject =
+      availableBatches.find(
+        (batch) => batch.id === result.batchId
+      ) || null;
+
     if (result.batchId) {
-      fetchStudents(result.batchId);
+      fetchStudents(result.batchId, batchObject);
     }
 
     setError("");
@@ -657,10 +927,13 @@ export default function TrainerResultsPage() {
   const closeForm = () => {
     setShowForm(false);
     setEditingId(null);
+    setSelectedResult(null);
+
     setForm({
       ...initialForm,
       date: getToday(),
     });
+
     setStudents([]);
   };
 
@@ -1333,9 +1606,7 @@ export default function TrainerResultsPage() {
                     {batchStudents.map((student) => (
                       <option key={student.id} value={student.id}>
                         {student.name}
-                        {student.userId
-                          ? ` (${student.userId})`
-                          : ""}
+                        {student.userId ? ` (${student.userId})` : ""}
                       </option>
                     ))}
                   </select>
@@ -1344,9 +1615,22 @@ export default function TrainerResultsPage() {
                     !loadingStudents &&
                     batchStudents.length === 0 && (
                       <p className="mt-2 text-xs text-amber-600">
-                        No students found in this batch. Check the trainer students API.
+                        No students found in this batch. The API must return
+                        student records, not only the student count.
                       </p>
                     )}
+
+                  {selectedBatch && (
+                    <p className="mt-2 text-xs text-slate-500">
+                      Batch: {selectedBatch.code || selectedBatch.name}
+                      {selectedBatch.courseName
+                        ? ` | Course: ${selectedBatch.courseName}`
+                        : ""}
+                      {selectedBatch.studentCount
+                        ? ` | Students: ${selectedBatch.studentCount}`
+                        : ""}
+                    </p>
+                  )}
                 </div>
 
                 {/* EXAM NAME */}
@@ -1665,9 +1949,8 @@ function StatCard({ icon, label, value, color }) {
         </div>
 
         <div
-          className={`rounded-xl p-3 ${
-            colorClasses[color] || colorClasses.blue
-          }`}
+          className={`rounded-xl p-3 ${colorClasses[color] || colorClasses.blue
+            }`}
         >
           {icon}
         </div>
@@ -1709,11 +1992,10 @@ function ActionButton({
       type="button"
       title={title}
       onClick={onClick}
-      className={`rounded-lg p-2 transition ${
-        danger
-          ? "text-red-500 hover:bg-red-50"
-          : "text-slate-500 hover:bg-blue-50 hover:text-[#102e60]"
-      }`}
+      className={`rounded-lg p-2 transition ${danger
+        ? "text-red-500 hover:bg-red-50"
+        : "text-slate-500 hover:bg-blue-50 hover:text-[#102e60]"
+        }`}
     >
       {children}
     </button>

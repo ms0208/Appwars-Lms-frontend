@@ -110,17 +110,17 @@ export const registerAdmin = async (req, res, next) => {
     }
 
     // Check whether an Admin already exists
-    const existingAdmin = await User.exists({
-      role: "Admin",
-    });
+    // const existingAdmin = await User.exists({
+    //   role: "Admin",
+    // });
 
-    if (existingAdmin) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "Admin registration is closed. Contact your administrator.",
-      });
-    }
+    // if (existingAdmin) {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message:
+    //       "Admin registration is closed. Contact your administrator.",
+    //   });
+    // }
 
     // Check duplicate email
     const emailExists = await User.exists({

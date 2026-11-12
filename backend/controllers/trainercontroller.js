@@ -7,8 +7,8 @@ import Announcement from "../models/Announcements.js";
 import AssignmentSubmission from "../models/TrainerAssignmentSubmission.js";
 import Assignment from "../models/Assignement.js";
 import Doubt from "../models/TrainerDoubts.js";
-import fs from "fs/promises";
-import path from "path";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 // UPLOAD Documents 
 const ASSIGNMENT_UPLOAD_DIR = path.resolve(
@@ -199,7 +199,8 @@ export const getDashboard = async (req, res) => {
     // Get logged-in trainer.
     const trainer = await User.findById(trainerId).select(
       "-password"
-    );
+    )
+      .lean();
 
     if (!trainer) {
       return res.status(404).json({
@@ -213,7 +214,10 @@ export const getDashboard = async (req, res) => {
       trainer: trainerId,
       isActive: true,
     }).lean();
-
+    // Populate trainer batch field for dashboard response
+    trainer.batch = batches.length
+      ? batches.map((batch) => batch.batch).join(", ")
+      : "";
     // Get assigned batch names.
     const batchNames = batches
       .map((batch) => batch.batch)
@@ -222,10 +226,10 @@ export const getDashboard = async (req, res) => {
     // Count all active students in the assigned batches.
     const totalStudents = batchNames.length
       ? await User.countDocuments({
-          role: "Student",
-          isActive: true,
-          batch: { $in: batchNames },
-        })
+        role: "Student",
+        isActive: true,
+        batch: { $in: batchNames },
+      })
       : 0;
 
     // Calculate student count for each batch.
@@ -1470,7 +1474,7 @@ export const createAssignment = async (req, res) => {
   } catch (error) {
     // Remove the uploaded file if assignment creation fails.
     if (uploadedFilePath) {
-      await fs.unlink(uploadedFilePath).catch(() => {});
+      await fs.unlink(uploadedFilePath).catch(() => { });
     }
 
     return sendError(
@@ -1554,10 +1558,20 @@ export const getAssignments = async (req, res) => {
 // PATCH /api/trainer/assignments/:assignmentId
 // ==========================================
 
+
 export const updateAssignment = async (req, res) => {
+  let uploadedFilePath = null;
+
   try {
     const { assignmentId } = req.params;
     const trainerId = req.user.id;
+
+    // Safely handle missing request body.
+    const body = req.body || {};
+
+    if (req.file) {
+      uploadedFilePath = req.file.path;
+    }
 
     if (!isValidObjectId(assignmentId)) {
       return res.status(400).json({
@@ -1566,7 +1580,7 @@ export const updateAssignment = async (req, res) => {
       });
     }
 
-    // Trainer can update only their own assignment.
+    // Find assignment belonging to this trainer.
     const assignment = await Assignment.findOne({
       _id: assignmentId,
       trainer: trainerId,
@@ -1575,7 +1589,8 @@ export const updateAssignment = async (req, res) => {
     if (!assignment) {
       return res.status(404).json({
         success: false,
-        message: "Assignment not found or you do not own this assignment.",
+        message:
+          "Assignment not found or you do not own this assignment.",
       });
     }
 
@@ -1591,8 +1606,9 @@ export const updateAssignment = async (req, res) => {
       allowedSubmissionTypes,
       status,
       isPublished,
-    } = req.body;
+    } = body;
 
+    // TITLE
     if (title !== undefined) {
       if (typeof title !== "string" || !title.trim()) {
         return res.status(400).json({
@@ -1604,8 +1620,12 @@ export const updateAssignment = async (req, res) => {
       assignment.title = title.trim();
     }
 
+    // DESCRIPTION
     if (description !== undefined) {
-      if (typeof description !== "string" || !description.trim()) {
+      if (
+        typeof description !== "string" ||
+        !description.trim()
+      ) {
         return res.status(400).json({
           success: false,
           message: "Assignment description is required.",
@@ -1615,10 +1635,12 @@ export const updateAssignment = async (req, res) => {
       assignment.description = description.trim();
     }
 
+    // INSTRUCTIONS
     if (instructions !== undefined) {
       assignment.instructions = String(instructions).trim();
     }
 
+    // BATCH
     if (batchId !== undefined) {
       if (!isValidObjectId(batchId)) {
         return res.status(400).json({
@@ -1632,7 +1654,8 @@ export const updateAssignment = async (req, res) => {
       if (!batch) {
         return res.status(403).json({
           success: false,
-          message: "You cannot assign work to a batch not assigned to you.",
+          message:
+            "You cannot assign work to a batch not assigned to you.",
         });
       }
 
@@ -1640,6 +1663,7 @@ export const updateAssignment = async (req, res) => {
       assignment.batchId = batch.batch;
     }
 
+    // COURSE
     if (course !== undefined) {
       if (course && !isValidObjectId(course)) {
         return res.status(400).json({
@@ -1648,9 +1672,10 @@ export const updateAssignment = async (req, res) => {
         });
       }
 
-      assignment.course = course || null;
+      assignment.course = course || undefined;
     }
 
+    // DUE DATE
     if (dueDate !== undefined) {
       const parsedDate = new Date(dueDate);
 
@@ -1664,6 +1689,7 @@ export const updateAssignment = async (req, res) => {
       assignment.dueDate = parsedDate;
     }
 
+    // TOTAL MARKS
     if (totalMarks !== undefined) {
       const parsedMarks = Number(totalMarks);
 
@@ -1677,22 +1703,24 @@ export const updateAssignment = async (req, res) => {
       assignment.totalMarks = parsedMarks;
     }
 
-    if (attachmentUrl !== undefined) {
-      if (typeof attachmentUrl !== "string") {
-        return res.status(400).json({
-          success: false,
-          message: "Attachment URL must be text.",
-        });
+    // INSTRUCTIONS / SUBMISSION TYPES
+    if (allowedSubmissionTypes !== undefined) {
+      let parsedTypes = allowedSubmissionTypes;
+
+      if (typeof parsedTypes === "string") {
+        try {
+          parsedTypes = JSON.parse(parsedTypes);
+        } catch {
+          parsedTypes = parsedTypes.split(",").map((item) =>
+            item.trim()
+          );
+        }
       }
 
-      assignment.attachmentUrl = attachmentUrl.trim();
-    }
-
-    if (allowedSubmissionTypes !== undefined) {
       if (
-        !Array.isArray(allowedSubmissionTypes) ||
-        allowedSubmissionTypes.length === 0 ||
-        allowedSubmissionTypes.some(
+        !Array.isArray(parsedTypes) ||
+        parsedTypes.length === 0 ||
+        parsedTypes.some(
           (type) => !["text", "url"].includes(type)
         )
       ) {
@@ -1703,10 +1731,53 @@ export const updateAssignment = async (req, res) => {
       }
 
       assignment.allowedSubmissionTypes = [
-        ...new Set(allowedSubmissionTypes),
+        ...new Set(parsedTypes),
       ];
     }
 
+    // ATTACHMENT
+    if (req.file) {
+      const validPDF = await isValidPDF(req.file.path);
+
+      if (!validPDF) {
+        await fs.unlink(req.file.path).catch(() => {});
+
+        return res.status(400).json({
+          success: false,
+          message: "The uploaded document is not a valid PDF.",
+        });
+      }
+
+      // Keep the previous attachment until the new one is validated.
+      const oldAttachment = assignment.attachmentUrl;
+
+      assignment.attachmentUrl =
+        `/uploads/assignments/${req.file.filename}`;
+
+      // Delete old local attachment after replacing it.
+      if (
+        oldAttachment &&
+        oldAttachment.startsWith("/uploads/assignments/")
+      ) {
+        const oldFilePath = path.join(
+          process.cwd(),
+          oldAttachment.replace(/^\/+/, "")
+        );
+
+        await fs.unlink(oldFilePath).catch(() => {});
+      }
+    } else if (attachmentUrl !== undefined) {
+      if (typeof attachmentUrl !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "Attachment URL must be text.",
+        });
+      }
+
+      assignment.attachmentUrl = attachmentUrl.trim();
+    }
+
+    // STATUS
     if (status !== undefined) {
       if (!["Draft", "Published", "Closed"].includes(status)) {
         return res.status(400).json({
@@ -1722,18 +1793,28 @@ export const updateAssignment = async (req, res) => {
       }
     }
 
+    // PUBLISHED
     if (isPublished !== undefined) {
-      if (typeof isPublished !== "boolean") {
+      const published =
+        typeof isPublished === "boolean"
+          ? isPublished
+          : isPublished === "true"
+            ? true
+            : isPublished === "false"
+              ? false
+              : null;
+
+      if (published === null) {
         return res.status(400).json({
           success: false,
           message: "isPublished must be true or false.",
         });
       }
 
-      assignment.isPublished = isPublished;
+      assignment.isPublished = published;
 
       if (status === undefined) {
-        assignment.status = isPublished ? "Published" : "Draft";
+        assignment.status = published ? "Published" : "Draft";
       }
     }
 
@@ -1750,10 +1831,23 @@ export const updateAssignment = async (req, res) => {
       message: "Assignment updated successfully.",
       assignment,
     });
+
   } catch (error) {
-    return sendError(res, error, "Unable to update assignment.");
+    // Remove newly uploaded file if update fails.
+    if (uploadedFilePath) {
+      await fs.unlink(uploadedFilePath).catch(() => {});
+    }
+
+    console.error("Update Assignment Error:", error);
+
+    return sendError(
+      res,
+      error,
+      "Unable to update assignment."
+    );
   }
 };
+
 
 // ==========================================
 // 4. DELETE ASSIGNMENT

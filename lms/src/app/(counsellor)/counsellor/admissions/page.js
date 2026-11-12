@@ -10,7 +10,6 @@ import {
   Trash2,
   X,
   Users,
-  IndianRupee,
   Filter,
   Eye,
   CheckCircle2,
@@ -141,20 +140,15 @@ function mapAdmission(student) {
 
 async function apiRequest(endpoint, options = {}) {
   const token =
-   typeof window !== "undefined"
-    ? (
-        sessionStorage.getItem("token") ||
-        localStorage.getItem("token") ||
-        sessionStorage.getItem("token") ||
+    typeof window !== "undefined"
+      ? sessionStorage.getItem("token") ||
         localStorage.getItem("token")
-      )
-    : null;
+      : null;
 
-if (!token) {
-  throw new Error(
-    "Your session has expired. Please log in again."
-  );
-}
+  if (!token) {
+    throw new Error("Your session has expired. Please log in again.");
+  }
+
   const response = await fetch(`${API_ROOT}${endpoint}`, {
     method: options.method || "GET",
     headers: {
@@ -255,15 +249,12 @@ export default function AdmissionsPage() {
   const [deletingId, setDeletingId] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [currentMonth, setCurrentMonth] = useState("");
 
   const fetchAdmissions = useCallback(async () => {
     setLoading(true);
     setError("");
 
     try {
-      // Fetch all records so the frontend filters and CSV export
-      // operate on the complete admission list.
       const result = await apiRequest(
         "/counsellor/admissions?limit=100"
       );
@@ -271,12 +262,6 @@ export default function AdmissionsPage() {
       const records = Array.isArray(result.data) ? result.data : [];
 
       setAdmissions(records.map(mapAdmission));
-
-      const now = new Date();
-
-      setCurrentMonth(
-        `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
-      );
     } catch (err) {
       setError(err.message || "Unable to load admissions.");
     } finally {
@@ -332,27 +317,20 @@ export default function AdmissionsPage() {
     });
   }, [admissions, search, feeFilter, modeFilter, monthFilter]);
 
-  const totalFees = filteredAdmissions.reduce(
-    (sum, item) => sum + Number(item.totalFee || 0),
-    0
-  );
+  // Dashboard summary uses all admissions, not only filtered records.
+  const totalAdmissions = admissions.length;
 
-  const pendingCount = filteredAdmissions.filter(
+  const pendingCount = admissions.filter(
     (item) => item.feeStatus === "Pending"
   ).length;
 
+  const feeClearAmount = admissions
+    .filter((item) => item.feeStatus === "Clear")
+    .reduce((sum, item) => sum + Number(item.totalPaid || 0), 0);
+
   function openAddModal() {
     setEditingId(null);
-
-    setForm({
-      ...emptyAdmission,
-      ...(currentMonth
-        ? {
-            batchStartDate: "",
-          }
-        : {}),
-    });
-
+    setForm({ ...emptyAdmission });
     setError("");
     setNotice("");
     setModalOpen(true);
@@ -360,12 +338,10 @@ export default function AdmissionsPage() {
 
   function openEditModal(admission) {
     setEditingId(admission.id);
-
     setForm({
       ...emptyAdmission,
       ...admission,
     });
-
     setError("");
     setNotice("");
     setModalOpen(true);
@@ -446,8 +422,6 @@ export default function AdmissionsPage() {
 
         const student = result.data?.student;
 
-        // Display generated credentials once, only when returned
-        // by the existing backend credential-generation workflow.
         if (student?.userId && result.data?.temporaryPassword) {
           window.alert(
             `Student admission created successfully.\n\n` +
@@ -460,7 +434,7 @@ export default function AdmissionsPage() {
 
       setModalOpen(false);
       setEditingId(null);
-      setForm(emptyAdmission);
+      setForm({ ...emptyAdmission });
 
       await fetchAdmissions();
     } catch (err) {
@@ -505,6 +479,27 @@ export default function AdmissionsPage() {
     }
   }
 
+  const summaryCards = [
+    {
+      label: "Total Admissions",
+      value: totalAdmissions,
+      icon: Users,
+      color: "bg-blue-100 text-blue-700",
+    },
+    {
+      label: "Pending Fee Accounts",
+      value: pendingCount,
+      icon: Clock,
+      color: "bg-amber-100 text-amber-700",
+    },
+    {
+      label: "Fee Clear Amounts",
+      value: money(feeClearAmount),
+      icon: CheckCircle2,
+      color: "bg-green-100 text-green-700",
+    },
+  ];
+
   return (
     <div className="min-h-screen space-y-6 bg-slate-50 p-4 sm:p-6 lg:p-8">
       {/* Page heading */}
@@ -519,7 +514,7 @@ export default function AdmissionsPage() {
           </h1>
 
           <p className="mt-2 text-sm text-slate-500">
-            Manage student registrations, course fees, and batch details.
+            Manage student registrations and admission records.
           </p>
         </div>
 
@@ -573,36 +568,9 @@ export default function AdmissionsPage() {
         </div>
       )}
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          {
-            label: "Total Admissions",
-            value: filteredAdmissions.length,
-            icon: Users,
-            color: "bg-blue-100 text-blue-700",
-          },
-          {
-            label: "Total Course Fees",
-            value: money(totalFees),
-            icon: IndianRupee,
-            color: "bg-indigo-100 text-indigo-700",
-          },
-          {
-            label: "Pending Fee Accounts",
-            value: pendingCount,
-            icon: Clock,
-            color: "bg-amber-100 text-amber-700",
-          },
-          {
-            label: "Fee Clear Accounts",
-            value: filteredAdmissions.filter(
-              (item) => item.feeStatus === "Clear"
-            ).length,
-            icon: CheckCircle2,
-            color: "bg-green-100 text-green-700",
-          },
-        ].map((stat) => {
+      {/* Summary cards: only three */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {summaryCards.map((stat) => {
           const Icon = stat.icon;
 
           return (
@@ -612,7 +580,9 @@ export default function AdmissionsPage() {
             >
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm text-slate-500">{stat.label}</p>
+                  <p className="text-sm text-slate-500">
+                    {stat.label}
+                  </p>
 
                   <p className="mt-3 text-2xl font-bold text-slate-900">
                     {loading ? "—" : stat.value}
@@ -702,7 +672,7 @@ export default function AdmissionsPage() {
         </div>
       </div>
 
-      {/* Admissions table */}
+      {/* Admission records */}
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-col justify-between gap-2 border-b border-slate-100 p-5 sm:flex-row sm:items-center">
           <div>
@@ -730,25 +700,20 @@ export default function AdmissionsPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1350px] text-left text-sm">
+          <table className="w-full min-w-[850px] text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 {[
                   "Student",
-                  "Course",
-                  "Total Fee",
-                  "Registration",
-                  "Installments",
-                  "Payment",
                   "Fee Status",
-                  "Trainer",
                   "Batch",
                   "Start Date",
-                  "Time",
-                  "Video",
                   "Actions",
                 ].map((heading) => (
-                  <th key={heading} className="px-4 py-4 font-semibold">
+                  <th
+                    key={heading}
+                    className="px-4 py-4 font-semibold"
+                  >
                     {heading}
                   </th>
                 ))}
@@ -758,7 +723,7 @@ export default function AdmissionsPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={13} className="px-4 py-16 text-center">
+                  <td colSpan={5} className="px-4 py-16 text-center">
                     <RefreshCw className="mx-auto h-7 w-7 animate-spin text-blue-700" />
                     <p className="mt-3 text-sm text-slate-500">
                       Loading admissions from the server...
@@ -798,37 +763,6 @@ export default function AdmissionsPage() {
                         )}
                       </td>
 
-                      <td className="px-4 py-4 text-slate-600">
-                        {item.course || "—"}
-                      </td>
-
-                      <td className="px-4 py-4 font-semibold text-slate-800">
-                        {money(item.totalFee)}
-                      </td>
-
-                      <td className="px-4 py-4 text-slate-600">
-                        {money(item.registrationFee)}
-                      </td>
-
-                      <td className="px-4 py-4 text-slate-600">
-                        {[0, 1, 2, 3].map((number) => (
-                          <p key={number}>
-                            {number}:{" "}
-                            {money(item[`installment${number}`])}
-                          </p>
-                        ))}
-                      </td>
-
-                      <td className="px-4 py-4">
-                        <p className="text-slate-700">
-                          {item.paymentMode}
-                        </p>
-
-                        <p className="mt-1 text-xs text-slate-400">
-                          Bajaj: {item.bajajFinance}
-                        </p>
-                      </td>
-
                       <td className="px-4 py-4">
                         <span
                           className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
@@ -839,10 +773,6 @@ export default function AdmissionsPage() {
                         >
                           {item.feeStatus}
                         </span>
-                      </td>
-
-                      <td className="px-4 py-4 text-slate-600">
-                        {item.trainer || "—"}
                       </td>
 
                       <td className="px-4 py-4">
@@ -857,22 +787,6 @@ export default function AdmissionsPage() {
 
                       <td className="px-4 py-4 text-slate-600">
                         {displayDate(item.batchStartDate)}
-                      </td>
-
-                      <td className="px-4 py-4 text-slate-600">
-                        {item.time || "—"}
-                      </td>
-
-                      <td className="px-4 py-4">
-                        <span
-                          className={
-                            item.videoAccess === "Yes"
-                              ? "font-medium text-green-700"
-                              : "font-medium text-slate-400"
-                          }
-                        >
-                          {item.videoAccess}
-                        </span>
                       </td>
 
                       <td className="px-4 py-4">
@@ -921,7 +835,10 @@ export default function AdmissionsPage() {
 
                   {filteredAdmissions.length === 0 && (
                     <tr>
-                      <td colSpan={13} className="px-4 py-16 text-center">
+                      <td
+                        colSpan={5}
+                        className="px-4 py-16 text-center"
+                      >
                         <Users className="mx-auto mb-3 h-10 w-10 text-slate-300" />
 
                         <p className="font-semibold text-slate-700">
@@ -966,6 +883,7 @@ export default function AdmissionsPage() {
             </div>
 
             <form onSubmit={saveAdmission} className="space-y-6 p-5">
+              {/* Student and course details */}
               <section>
                 <h3 className="mb-4 font-semibold text-blue-800">
                   Student and Course Details
@@ -1053,6 +971,7 @@ export default function AdmissionsPage() {
                 </div>
               </section>
 
+              {/* Installment details */}
               <section>
                 <h3 className="mb-4 font-semibold text-blue-800">
                   Installment Details
@@ -1121,6 +1040,7 @@ export default function AdmissionsPage() {
                 </div>
               </section>
 
+              {/* Batch details */}
               <section>
                 <h3 className="mb-4 font-semibold text-blue-800">
                   Batch Details
@@ -1261,9 +1181,15 @@ export default function AdmissionsPage() {
                 ["Email", selectedAdmission.email],
                 ["Batch", selectedAdmission.batch],
                 ["Course", selectedAdmission.course],
-                ["Admission Date", displayDate(selectedAdmission.admissionDate)],
+                [
+                  "Admission Date",
+                  displayDate(selectedAdmission.admissionDate),
+                ],
                 ["Total Fee", money(selectedAdmission.totalFee)],
-                ["Registration Fee", money(selectedAdmission.registrationFee)],
+                [
+                  "Registration Fee",
+                  money(selectedAdmission.registrationFee),
+                ],
                 ["Installment 0", money(selectedAdmission.installment0)],
                 ["Installment 1", money(selectedAdmission.installment1)],
                 ["Installment 2", money(selectedAdmission.installment2)],
@@ -1276,11 +1202,20 @@ export default function AdmissionsPage() {
                 ["Trainer", selectedAdmission.trainer],
                 ["Batch Mode", selectedAdmission.mode],
                 ["Batch Type", selectedAdmission.batchType],
-                ["Batch Start", displayDate(selectedAdmission.batchStartDate)],
-                ["Batch End", displayDate(selectedAdmission.batchEndDate)],
+                [
+                  "Batch Start",
+                  displayDate(selectedAdmission.batchStartDate),
+                ],
+                [
+                  "Batch End",
+                  displayDate(selectedAdmission.batchEndDate),
+                ],
                 ["Batch Time", selectedAdmission.time],
                 ["Video Access", selectedAdmission.videoAccess],
-                ["Account Status", selectedAdmission.isActive ? "Active" : "Inactive"],
+                [
+                  "Account Status",
+                  selectedAdmission.isActive ? "Active" : "Inactive",
+                ],
               ].map(([label, value]) => (
                 <div
                   key={label}

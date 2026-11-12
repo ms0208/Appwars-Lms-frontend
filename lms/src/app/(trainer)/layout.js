@@ -36,6 +36,11 @@ export default function TrainerLayout({ children }) {
       name: "Student Marks",
       href: "/student-marks",
       icon: ClipboardList,
+    },
+    {
+      name:"Trainer Profile",
+      href:"/trainer-profile",
+      icon:ClipboardList
     }
   ];
 

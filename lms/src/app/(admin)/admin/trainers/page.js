@@ -426,13 +426,13 @@ export default function TrainersPage() {
           color="amber"
           description="Awaiting confirmation"
         />
-        <StatCard
+        {/* <StatCard
           title="Average Experience"
           value={`${averageExperience} yrs`}
           icon={BriefcaseBusiness}
           color="purple"
           description="Across all trainers"
-        />
+        /> */}
       </div>
 
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -484,9 +484,6 @@ export default function TrainersPage() {
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-5 py-4 font-semibold">Trainer</th>
-                <th className="px-5 py-4 font-semibold">Contact</th>
-                <th className="px-5 py-4 font-semibold">Specialization</th>
-                <th className="px-5 py-4 font-semibold">Experience</th>
                 <th className="px-5 py-4 font-semibold">Status</th>
                 <th className="px-5 py-4 text-right font-semibold">Actions</th>
               </tr>
@@ -512,31 +509,6 @@ export default function TrainersPage() {
                       </div>
                     </div>
                   </td>
-
-                  <td className="px-5 py-4">
-                    <p className="flex items-center gap-2 text-slate-700">
-                      <Mail size={14} className="text-slate-400" />
-                      {trainer.email}
-                    </p>
-                    <p className="mt-1 flex items-center gap-2 text-xs text-slate-500">
-                      <Phone size={13} />
-                      {trainer.phone || "—"}
-                    </p>
-                  </td>
-
-                  <td className="px-5 py-4">
-                    <p className="font-medium text-slate-700">
-                      {trainer.specialization || "—"}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {trainer.qualification || "—"}
-                    </p>
-                  </td>
-
-                  <td className="px-5 py-4 text-slate-600">
-                    {trainer.experience} years
-                  </td>
-
                   <td className="px-5 py-4">
                     <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
                       statusStyles[trainer.status] || "bg-slate-100 text-slate-600"

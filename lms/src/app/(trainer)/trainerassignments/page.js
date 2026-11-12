@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -28,6 +27,8 @@ import {
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
 
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
 const EMPTY_FORM = {
   title: "",
   description: "",
@@ -41,22 +42,17 @@ const EMPTY_FORM = {
   status: "Draft",
 };
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
-
 const inputClass =
   "w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
 
 function getId(value) {
   if (!value) return "";
-
   if (typeof value === "string") return value;
-
   return value._id || value.id || "";
 }
 
 function getName(value) {
   if (!value) return "";
-
   if (typeof value === "string") return value;
 
   return (
@@ -76,7 +72,6 @@ function getName(value) {
 
 function getBatchName(batch) {
   if (!batch) return "Batch not assigned";
-
   if (typeof batch === "string") return batch;
 
   return (
@@ -89,24 +84,18 @@ function getBatchName(batch) {
 }
 
 function getCourseId(value) {
-  if (!value) return "";
-
-  if (typeof value === "string") return "";
-
+  if (!value || typeof value === "string") return "";
   return value._id || value.id || value.courseId || "";
 }
 
 function getCourseName(value) {
   if (!value) return "";
-
   if (typeof value === "string") return value;
-
   return getName(value);
 }
 
 function dateOnly(value) {
   if (!value) return "";
-
   return String(value).slice(0, 10);
 }
 
@@ -136,48 +125,29 @@ function mapAssignment(item) {
         ? batchObject.course
         : null;
 
-  const courseName =
-    getCourseName(item.course) ||
-    getCourseName(batchObject?.course) ||
-    "";
-
   return {
     ...item,
     id: getId(item),
-
-    batchId:
-      getId(batchObject) ||
-      item.batchId ||
-      "",
-
+    batchId: getId(batchObject) || item.batchId || "",
     batch: getBatchName(batchObject || item.batch),
-
     courseId: getCourseId(courseObject),
-
-    course: courseName,
-
+    course:
+      getCourseName(item.course) ||
+      getCourseName(batchObject?.course) ||
+      "",
     trainer: getName(item.trainer),
-
     dueDate: dateOnly(item.dueDate),
-
     totalMarks: Number(item.totalMarks ?? 100),
-
     attachmentUrl: getAttachmentUrl(item.attachmentUrl),
-
     instructions: item.instructions || "",
-
     allowedSubmissionTypes: Array.isArray(
       item.allowedSubmissionTypes
     )
       ? item.allowedSubmissionTypes
       : ["text", "url"],
-
     status: item.status || "Draft",
-
     isPublished:
-      item.isPublished ??
-      item.status === "Published",
-
+      item.isPublished ?? item.status === "Published",
     createdAt: dateOnly(item.createdAt),
   };
 }
@@ -241,11 +211,9 @@ function StatCard({ title, value, subtitle, icon: Icon, color }) {
           <p className="text-sm font-medium text-gray-500">
             {title}
           </p>
-
           <p className="mt-2 text-3xl font-bold text-gray-900">
             {value}
           </p>
-
           <p className="mt-1 text-xs text-gray-500">
             {subtitle}
           </p>
@@ -264,12 +232,8 @@ function FormField({ label, children, required = false }) {
     <label className="block">
       <span className="mb-1.5 block text-sm font-medium text-gray-700">
         {label}
-
-        {required && (
-          <span className="ml-1 text-red-500">*</span>
-        )}
+        {required && <span className="ml-1 text-red-500">*</span>}
       </span>
-
       {children}
     </label>
   );
@@ -301,7 +265,7 @@ export default function AssignmentsPage() {
   const [successMessage, setSuccessMessage] = useState("");
 
   // ==========================================
-  // AUTHENTICATION HEADERS
+  // AUTHENTICATION
   // ==========================================
 
   const getAuthHeaders = useCallback(() => {
@@ -315,9 +279,9 @@ export default function AssignmentsPage() {
         localStorage.getItem("appwars_token");
     }
 
-    return {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    };
+    return token
+      ? { Authorization: `Bearer ${token}` }
+      : {};
   }, []);
 
   // ==========================================
@@ -337,8 +301,8 @@ export default function AssignmentsPage() {
       };
 
       if (isFormData) {
-        // Do not manually set multipart Content-Type.
-        // Browser automatically adds the boundary.
+        // Never manually set multipart Content-Type.
+        // The browser adds the correct boundary.
         delete headers["Content-Type"];
       } else if (options.body) {
         headers["Content-Type"] = "application/json";
@@ -401,10 +365,7 @@ export default function AssignmentsPage() {
 
       const mappedBatches = batchItems
         .map((item) => {
-          const course =
-            item.course ||
-            item.courseId ||
-            null;
+          const course = item.course || item.courseId || null;
 
           return {
             id: getId(item),
@@ -457,8 +418,7 @@ export default function AssignmentsPage() {
     [batches, form.batchId]
   );
 
-  const selectedCourseName =
-    selectedBatch?.courseName || "";
+  const selectedCourseName = selectedBatch?.courseName || "";
 
   // ==========================================
   // FILTER ASSIGNMENTS
@@ -665,56 +625,49 @@ export default function AssignmentsPage() {
     setSaving(true);
 
     try {
-      const payload = new FormData();
+      const assignmentData = {
+        title: form.title.trim(),
+        description: form.description.trim(),
+        instructions: form.instructions.trim(),
+        batchId: form.batchId,
+        dueDate: form.dueDate,
+        totalMarks: Number(form.totalMarks),
+        allowedSubmissionTypes: form.allowedSubmissionTypes,
+        status: form.status,
+        isPublished: form.status === "Published",
+      };
 
-      payload.append("title", form.title.trim());
-      payload.append("description", form.description.trim());
-      payload.append("instructions", form.instructions.trim());
+      let payload;
 
-      // Batch MongoDB ID.
-      payload.append("batchId", form.batchId);
-
-      // IMPORTANT:
-      // Do not send course ID.
-      // Backend validates trainer batch ownership.
-      // Course is optional and is not required here.
-
-      payload.append("dueDate", form.dueDate);
-
-      payload.append(
-        "totalMarks",
-        String(Number(form.totalMarks))
-      );
-
-      payload.append(
-        "allowedSubmissionTypes",
-        JSON.stringify(form.allowedSubmissionTypes)
-      );
-
-      payload.append("status", form.status);
-
-      payload.append(
-        "isPublished",
-        String(form.status === "Published")
-      );
-
-      // Actual PDF file.
       if (attachmentFile) {
+        // Use multipart FormData when uploading a PDF.
+        payload = new FormData();
+
+        Object.entries(assignmentData).forEach(([key, value]) => {
+          payload.append(
+            key,
+            Array.isArray(value) ? JSON.stringify(value) : String(value)
+          );
+        });
+
+        // Must match uploadAssignment.single("attachment")
+        // in the backend route.
         payload.append("attachment", attachmentFile);
+      } else {
+        // JSON request when no new PDF is selected.
+        payload = JSON.stringify(assignmentData);
       }
 
-      const result = editingId
-        ? await apiRequest(
-            `/trainer/assignments/${editingId}`,
-            {
-              method: "PATCH",
-              body: payload,
-            }
-          )
-        : await apiRequest("/trainer/assignments", {
-            method: "POST",
-            body: payload,
-          });
+      const endpoint = editingId
+        ? `/trainer/assignments/${editingId}`
+        : "/trainer/assignments";
+
+      const method = editingId ? "PATCH" : "POST";
+
+      const result = await apiRequest(endpoint, {
+        method,
+        body: payload,
+      });
 
       const savedItem =
         result.assignment ||
@@ -932,12 +885,10 @@ export default function AssignmentsPage() {
         {dropdownError && (
           <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
             <AlertCircle size={18} className="mt-0.5 shrink-0" />
-
             <div>
               <p className="font-semibold">
                 Unable to load assigned batches
               </p>
-
               <p className="mt-1">{dropdownError}</p>
             </div>
           </div>
@@ -1031,7 +982,6 @@ export default function AssignmentsPage() {
         <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
           <div className="mb-4 flex items-center gap-2">
             <Filter size={18} className="text-gray-500" />
-
             <h2 className="font-semibold text-gray-900">
               Search and Filters
             </h2>
@@ -1298,9 +1248,7 @@ export default function AssignmentsPage() {
         </div>
       </div>
 
-      {/* ======================================
-          CREATE / EDIT MODAL
-      ====================================== */}
+      {/* CREATE / EDIT MODAL */}
 
       {modalOpen && (
         <div
@@ -1400,9 +1348,7 @@ export default function AssignmentsPage() {
                       updateForm("batchId", event.target.value)
                     }
                     className={inputClass}
-                    disabled={
-                      dropdownLoading || batches.length === 0
-                    }
+                    disabled={dropdownLoading || batches.length === 0}
                   >
                     <option value="">
                       {dropdownLoading
@@ -1490,7 +1436,6 @@ export default function AssignmentsPage() {
 
                         <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-[#173b70] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#102b53]">
                           <Plus size={16} />
-
                           Choose PDF
 
                           <input
@@ -1672,9 +1617,7 @@ export default function AssignmentsPage() {
         </div>
       )}
 
-      {/* ======================================
-          VIEW ASSIGNMENT MODAL
-      ====================================== */}
+      {/* VIEW ASSIGNMENT MODAL */}
 
       {viewAssignment && (
         <div
@@ -1783,9 +1726,7 @@ export default function AssignmentsPage() {
                   type="button"
                   onClick={() => {
                     const selected = viewAssignment;
-
                     setViewAssignment(null);
-
                     openEditModal(selected);
                   }}
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#173b70] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#102b53]"
