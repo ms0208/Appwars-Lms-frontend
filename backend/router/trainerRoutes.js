@@ -27,6 +27,7 @@ import {
   getStudentPerformance,
   getOpenDoubts,
   replyToDoubt,
+  updateStudentAssignmentStatus,
 } from "../controllers/trainercontroller.js";
 import {
   getResults,
@@ -75,6 +76,11 @@ router.post(
 );
 router.patch("/assignments/:assignmentId", updateAssignment);
 router.delete("/assignments/:assignmentId", deleteAssignment);
+router.put(
+  "/assignments/:assignmentId/students/:studentId/status",
+  protect,
+  updateStudentAssignmentStatus
+);
 
 // ==========================================
 // ANNOUNCEMENTS

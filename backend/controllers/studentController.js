@@ -17,6 +17,8 @@ import Job from "../models/Job.js";
 import StudentProgress from "../models/StudentProgress.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/apiError.js";
+import Assignment from "../models/Assignement.js";
+import AssignmentProgress from "../models/AssignmentProgress.js";
 
 const idOf = (value) => String(value?._id || value);
 const validId = (value) => mongoose.isValidObjectId(value);
@@ -701,3 +703,274 @@ export const getJobs = asyncHandler(async (_req, res) => {
     .sort({ createdAt: -1 }).limit(100).lean();
   res.json({ jobs });
 });
+
+/* ==========================================
+   STUDENT ASSIGNMENTS
+   GET /api/student/assignments
+========================================== */
+
+
+export const getAssignments = asyncHandler(async (req, res) => {
+  const studentId = req.user.id || req.user._id;
+
+  // Get logged-in student
+  const student = await User.findById(studentId).select("batch batchId");
+
+  if (!student) {
+    return res.status(404).json({
+      success: false,
+      message: "Student not found",
+    });
+  }
+
+  let batchDetails = null;
+
+  // Resolve batch using batchId
+  if (student.batchId) {
+    batchDetails = await Batch.findById(student.batchId);
+  }
+
+  // Resolve batch using batch name if batchId is unavailable
+  if (!batchDetails && student.batch) {
+    batchDetails = await Batch.findOne({
+      batch: student.batch.trim(),
+      isActive: true,
+    });
+  }
+
+  if (!batchDetails) {
+    return res.status(404).json({
+      success: false,
+      message: "Batch not found for this student",
+    });
+  }
+
+  // Fetch published assignments for student's batch
+  const assignments = await Assignment.find({
+    batch: batchDetails._id,
+    status: "Published",
+  })
+    .populate("batch", "batch course")
+    .populate("course", "title courseName code")
+    .populate("trainer", "userId name email")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  // Get assignment IDs
+  const assignmentIds = assignments.map(
+    (assignment) => assignment._id
+  );
+
+  // Fetch progress records for this student
+  const progressRecords = await AssignmentProgress.find({
+    student: studentId,
+    assignment: { $in: assignmentIds },
+  }).lean();
+
+  // Create a lookup for assignment progress
+  const progressMap = new Map(
+    progressRecords.map((progress) => [
+      progress.assignment.toString(),
+      progress.status,
+    ])
+  );
+
+  // Attach progress status to every assignment
+  const assignmentsWithProgress = assignments.map((assignment) => ({
+    ...assignment,
+    progressStatus:
+      progressMap.get(assignment._id.toString()) || "Not Access",
+  }));
+
+  return res.status(200).json({
+    success: true,
+    count: assignmentsWithProgress.length,
+
+    batch: {
+      _id: batchDetails._id,
+      batch: batchDetails.batch,
+      course: batchDetails.course,
+    },
+
+    assignments: assignmentsWithProgress,
+  });
+});
+
+// ==========================================
+// STUDENT SUBMIT ASSIGNMENT
+// POST /api/student/assignments/:assignmentId/submit
+// ==========================================
+
+export const submitAssignment = async (req, res) => {
+  // try {
+  //   const studentId = req.user.id || req.user._id;
+
+  //   const { assignmentId } = req.params;
+
+  //   const { answerText, submissionUrl } = req.body;
+
+  //   // Validate assignment ID
+  //   if (!mongoose.Types.ObjectId.isValid(assignmentId)) {
+  //     return res.status(400).json({
+  //       success: false,
+  //       message: "Invalid assignment ID.",
+  //     });
+  //   }
+
+  //   // Validate form fields
+  //   if (!answerText?.trim() && !submissionUrl?.trim()) {
+  //     return res.status(400).json({
+  //       success: false,
+  //       message: "Please enter your answer or provide a Project/GitHub URL.",
+  //     });
+  //   }
+
+  //   // Get logged-in student
+  //   const student = await User.findById(studentId).select(
+  //     "_id userId name email role batch batchId"
+  //   );
+
+  //   if (!student || student.role !== "Student") {
+  //     return res.status(403).json({
+  //       success: false,
+  //       message: "Only students can submit assignments.",
+  //     });
+  //   }
+
+  //   // Resolve student's batch
+  //   let batchDetails = null;
+
+  //   if (student.batchId) {
+  //     batchDetails = await Batch.findById(student.batchId);
+  //   }
+
+  //   if (!batchDetails && student.batch) {
+  //     batchDetails = await Batch.findOne({
+  //       batch: student.batch.trim(),
+  //     });
+  //   }
+
+  //   if (!batchDetails) {
+  //     return res.status(404).json({
+  //       success: false,
+  //       message: "Your batch could not be found.",
+  //     });
+  //   }
+
+  //   // Get assignment created by trainer
+  //   const assignment = await Assignment.findById(assignmentId)
+  //     .populate("batch", "batch course")
+  //     .populate("trainer", "name email userId");
+
+  //   if (!assignment) {
+  //     return res.status(404).json({
+  //       success: false,
+  //       message: "Assignment not found.",
+  //     });
+  //   }
+
+  //   // Assignment must be published
+  //   if (assignment.status !== "Published") {
+  //     return res.status(400).json({
+  //       success: false,
+  //       message: "This assignment is not published.",
+  //     });
+  //   }
+
+  //   // Verify assignment belongs to student's batch
+  //   const assignmentBatchId =
+  //     assignment.batch?._id?.toString() ||
+  //     assignment.batch?.toString();
+
+  //   if (assignmentBatchId !== batchDetails._id.toString()) {
+  //     return res.status(403).json({
+  //       success: false,
+  //       message: "This assignment does not belong to your batch.",
+  //     });
+  //   }
+
+  //   // Check deadline
+  //   if (
+  //     assignment.dueDate &&
+  //     new Date() > new Date(assignment.dueDate)
+  //   ) {
+  //     return res.status(400).json({
+  //       success: false,
+  //       message: "Assignment submission deadline has passed.",
+  //     });
+  //   }
+
+  //   const trainerId =
+  //     assignment.trainer?._id ||
+  //     assignment.trainer ||
+  //     assignment.createdBy;
+
+  //   // Check previous submission
+  //   let submission = await AssignmentSubmission.findOne({
+  //     student: student._id,
+  //     assignment: assignment._id,
+  //   });
+
+  //   const submissionData = {
+  //     student: student._id,
+  //     batch: batchDetails._id,
+  //     trainer: trainerId,
+  //     assignment: assignment._id,
+
+  //     title: assignment.title,
+  //     assignmentTitle: assignment.title,
+
+  //     // Trainer grading frontend reads submission.description
+  //     description: answerText?.trim() || "",
+
+  //     // Form GitHub/project URL
+  //     submissionUrl: submissionUrl?.trim() || "",
+
+  //     maxMarks: Number(assignment.totalMarks || 50),
+
+  //     result: "Pending",
+  //     feedback: "",
+  //     submittedAt: new Date(),
+  //   };
+
+  //   // Save new submission or update existing submission
+  //   if (submission) {
+  //     submission.set(submissionData);
+  //     await submission.save();
+  //   } else {
+  //     submission = await AssignmentSubmission.create(
+  //       submissionData
+  //     );
+  //   }
+
+  //   // Populate for trainer grading page
+  //   await submission.populate([
+  //     {
+  //       path: "student",
+  //       select: "userId name email",
+  //     },
+  //     {
+  //       path: "batch",
+  //       select: "batch course",
+  //     },
+  //     {
+  //       path: "trainer",
+  //       select: "userId name email",
+  //     },
+  //   ]);
+
+  //   return res.status(201).json({
+  //     success: true,
+  //     message: "Assignment submitted successfully to your trainer.",
+  //     submission,
+  //   });
+  // } catch (error) {
+  //   console.error("Submit Assignment Error:", error);
+
+  //   return res.status(500).json({
+  //     success: false,
+  //     message: "Unable to submit assignment.",
+  //     error: error.message,
+  //   });
+  // }
+};

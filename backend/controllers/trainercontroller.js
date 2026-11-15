@@ -4,9 +4,10 @@ import User from "../models/user.js";
 import Batch from "../models/Batch.js";
 import Attendance from "../models/Attendance.js";
 import Announcement from "../models/Announcements.js";
-import AssignmentSubmission from "../models/TrainerAssignmentSubmission.js";
+import AssignmentSubmission from "../models/AssignmentSubmission.js";
 import Assignment from "../models/Assignement.js";
 import Doubt from "../models/TrainerDoubts.js";
+import AssignmentProgress from "../models/AssignmentProgress.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -1885,5 +1886,141 @@ export const deleteAssignment = async (req, res) => {
     });
   } catch (error) {
     return sendError(res, error, "Unable to delete assignment.");
+  }
+};
+// ==========================================
+// UPDATE STUDENT ASSIGNMENT STATUS
+// PUT /api/trainer/submissions/:submissionId/status
+// ==========================================
+
+export const updateStudentAssignmentStatus = async (req, res) => {
+  try {
+    const trainerId = req.user.id || req.user._id;
+
+    const { assignmentId, studentId } = req.params;
+    const { status } = req.body;
+
+    const allowedStatuses = [
+      "Pending",
+      "Complete",
+      "Not Access",
+    ];
+
+    if (
+      !mongoose.Types.ObjectId.isValid(assignmentId) ||
+      !mongoose.Types.ObjectId.isValid(studentId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid assignment or student ID",
+      });
+    }
+
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status",
+      });
+    }
+
+    // Find assignment belonging to logged-in trainer
+    const assignment = await Assignment.findOne({
+      _id: assignmentId,
+      $or: [
+        { trainer: trainerId },
+        { createdBy: trainerId },
+      ],
+    });
+
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        message: "Assignment not found or unauthorized",
+      });
+    }
+
+    // Verify student
+    const student = await User.findById(studentId).select(
+      "_id name userId role batch batchId"
+    );
+
+    if (!student || student.role !== "Student") {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    // Verify student belongs to assignment batch
+    const assignmentBatchId = String(assignment.batch);
+    let studentBatchId = student.batchId
+      ? String(student.batchId)
+      : null;
+
+    if (!studentBatchId && student.batch) {
+      const batch = await mongoose.model("Batch").findOne({
+        batch: student.batch.trim(),
+      });
+
+      studentBatchId = batch ? String(batch._id) : null;
+    }
+
+    if (studentBatchId !== assignmentBatchId) {
+      return res.status(403).json({
+        success: false,
+        message: "This student does not belong to the assignment batch",
+      });
+    }
+
+    // Create or update progress for this student
+    const progress = await AssignmentProgress.findOneAndUpdate(
+      {
+        assignment: assignmentId,
+        student: studentId,
+      },
+      {
+        $set: {
+          assignment: assignmentId,
+          student: studentId,
+          trainer: trainerId,
+          batch: assignment.batch,
+          status,
+          updatedBy: trainerId,
+        },
+      },
+      {
+        new: true,
+        upsert: true,
+        runValidators: true,
+      }
+    ).populate([
+      {
+        path: "student",
+        select: "name userId email",
+      },
+      {
+        path: "assignment",
+        select: "title dueDate",
+      },
+      {
+        path: "batch",
+        select: "batch course",
+      },
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      message: "Student assignment status updated successfully",
+      progress,
+    });
+
+  } catch (error) {
+    console.error("Update Student Assignment Status:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update assignment status",
+      error: error.message,
+    });
   }
 };

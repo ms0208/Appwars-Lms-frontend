@@ -60,20 +60,12 @@ const DEFAULT_SETTINGS = {
     enableLiveClasses: true,
     enableCertificates: true,
   },
-  appearance: {
-    theme: "light",
-    compactSidebar: false,
-    animations: true,
-  },
 };
 
 const NAVIGATION = [
   { id: "company", label: "Company Profile", icon: Building2 },
   { id: "admin", label: "Admin Profile", icon: UserRound },
-  { id: "notifications", label: "Notifications", icon: Bell },
-  { id: "lms", label: "LMS Configuration", icon: GraduationCap },
   { id: "security", label: "Security", icon: ShieldCheck },
-  { id: "appearance", label: "Appearance", icon: Palette },
 ];
 
 const API_ROOT = (
@@ -342,18 +334,6 @@ export default function SettingsPage() {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (!loaded) return;
-
-    document.documentElement.classList.toggle(
-      "dark",
-      settings.appearance.theme === "dark"
-    );
-
-    localStorage.setItem("appwars-theme", settings.appearance.theme);
-  }, [settings.appearance.theme, loaded]);
-
   const updateField = (section, field, value) => {
     setSettings((previous) => ({
       ...previous,
@@ -624,10 +604,6 @@ export default function SettingsPage() {
               <ShieldCheck size={18} />
               <span className="text-sm font-semibold">Admin Settings</span>
             </div>
-            <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-              Settings are loaded and saved through the backend. Local storage
-              is used for theme preferences and fallback display only.
-            </p>
           </div>
         </aside>
 
@@ -1037,142 +1013,11 @@ export default function SettingsPage() {
                   Security recommendations
                 </h3>
                 <ul className="mt-3 list-inside list-disc space-y-2 text-sm text-slate-600 dark:text-slate-300">
-                  <li>Use a unique password with at least 8 characters.</li>
+                  <li>Use a unique password with at least 12 characters.</li>
                   <li>Never store passwords in browser storage.</li>
                   <li>Use server-side authentication and authorization.</li>
                   <li>Enable multi-factor authentication when supported.</li>
                 </ul>
-              </div>
-            </div>
-          )}
-
-          {activeTab === "appearance" && (
-            <div>
-              <SectionHeading
-                title="Appearance"
-                description="Customize the visual appearance of your admin portal."
-              />
-
-              <h3 className="mb-3 font-semibold text-slate-800 dark:text-white">
-                Choose Theme
-              </h3>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => updateField("appearance", "theme", "light")}
-                  aria-pressed={settings.appearance.theme === "light"}
-                  className={`rounded-xl border-2 p-4 text-left transition ${
-                    settings.appearance.theme === "light"
-                      ? "border-blue-600 ring-2 ring-blue-100 dark:ring-blue-900"
-                      : "border-slate-200 dark:border-slate-700"
-                  }`}
-                >
-                  <div className="rounded-lg border border-slate-200 bg-slate-100 p-3">
-                    <div className="mb-3 flex gap-2">
-                      <div className="h-3 w-12 rounded bg-blue-700" />
-                      <div className="h-3 w-20 rounded bg-white" />
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="h-16 rounded bg-white shadow-sm" />
-                      <div className="h-16 rounded bg-white shadow-sm" />
-                      <div className="h-16 rounded bg-white shadow-sm" />
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex items-center justify-between">
-                    <span className="flex items-center gap-2 font-semibold text-slate-800 dark:text-white">
-                      <Sun size={18} /> Light Mode
-                    </span>
-                    {settings.appearance.theme === "light" && (
-                      <CheckCircle2 size={20} className="text-blue-600" />
-                    )}
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                    Bright background and dark text.
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => updateField("appearance", "theme", "dark")}
-                  aria-pressed={settings.appearance.theme === "dark"}
-                  className={`rounded-xl border-2 p-4 text-left transition ${
-                    settings.appearance.theme === "dark"
-                      ? "border-blue-600 ring-2 ring-blue-100 dark:ring-blue-900"
-                      : "border-slate-200 dark:border-slate-700"
-                  }`}
-                >
-                  <div className="rounded-lg border border-slate-700 bg-slate-950 p-3">
-                    <div className="mb-3 flex gap-2">
-                      <div className="h-3 w-12 rounded bg-blue-500" />
-                      <div className="h-3 w-20 rounded bg-slate-800" />
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="h-16 rounded bg-slate-800" />
-                      <div className="h-16 rounded bg-slate-800" />
-                      <div className="h-16 rounded bg-slate-800" />
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex items-center justify-between">
-                    <span className="flex items-center gap-2 font-semibold text-slate-800 dark:text-white">
-                      <Moon size={18} /> Dark Mode
-                    </span>
-                    {settings.appearance.theme === "dark" && (
-                      <CheckCircle2 size={20} className="text-blue-600" />
-                    )}
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                    Dark background and lighter text.
-                  </p>
-                </button>
-              </div>
-
-              <h3 className="mt-8 border-b border-slate-100 pb-3 font-semibold text-slate-800 dark:border-slate-800 dark:text-white">
-                Display Preferences
-              </h3>
-
-              <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                <Toggle
-                  label="Compact Sidebar"
-                  description="Save space if your admin layout supports compact mode."
-                  checked={settings.appearance.compactSidebar}
-                  onChange={(value) => updateField("appearance", "compactSidebar", value)}
-                />
-                <Toggle
-                  label="Animations"
-                  description="Save your interface animation preference."
-                  checked={settings.appearance.animations}
-                  onChange={(value) => updateField("appearance", "animations", value)}
-                />
-              </div>
-
-              <div className="mt-6 rounded-lg bg-slate-50 p-4 dark:bg-slate-800">
-                <div className="flex items-center gap-2 font-semibold text-slate-800 dark:text-white">
-                  <Monitor size={18} />
-                  Current Theme
-                </div>
-                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                  {settings.appearance.theme === "dark"
-                    ? "Dark Mode is active."
-                    : "Light Mode is active."}
-                </p>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  Theme changes apply immediately. Save Settings stores the
-                  preference on the server.
-                </p>
-              </div>
-
-              <div className="mt-7 flex justify-end">
-                <button
-                  type="button"
-                  onClick={saveSettings}
-                  disabled={saving}
-                  className="flex items-center gap-2 rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
-                >
-                  <Save size={16} /> Save Appearance
-                </button>
               </div>
             </div>
           )}

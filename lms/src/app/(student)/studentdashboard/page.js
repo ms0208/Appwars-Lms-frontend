@@ -745,13 +745,6 @@ export default function DashboardPage() {
           : "—",
       subtitle: "Assignments awaiting submission",
     },
-    {
-      title: "Next live class",
-      value: nextLiveClass?.date
-        ? formatDate(nextLiveClass.date)
-        : nextLiveClass?.time || "—",
-      subtitle: nextLiveClass?.title || "No upcoming class",
-    },
   ];
 
   // ==========================================
@@ -1311,15 +1304,6 @@ export default function DashboardPage() {
           LIVE CLASS AND ANNOUNCEMENTS
       ========================================== */}
 
-      <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-2">
-
-        <LiveClassSchedule
-          onJoin={handleJoin}
-        />
-
-        <Announcements />
-
-      </div>
 
       {/* ==========================================
           COMPLETE BATCH INFORMATION
@@ -1491,57 +1475,6 @@ export default function DashboardPage() {
           <p className="text-sm leading-7 text-slate-700">
             {batchDescription}
           </p>
-
-        </div>
-
-        {/* RECORD INFORMATION */}
-
-        <div className="mt-5 border-t border-slate-100 pt-5">
-
-          <div className="mb-4 flex items-center gap-2">
-
-            <FileText
-              size={19}
-              className="text-slate-500"
-            />
-
-            <h3 className="font-bold text-slate-800">
-              Record Information
-            </h3>
-
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-
-            {/* CREATED AT */}
-
-            <div className="rounded-lg bg-slate-50 p-4">
-
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Batch Created At
-              </p>
-
-              <p className="mt-2 text-sm font-semibold text-slate-700">
-                {formatDate(batchCreatedAt)}
-              </p>
-
-            </div>
-
-            {/* UPDATED AT */}
-
-            <div className="rounded-lg bg-slate-50 p-4">
-
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Last Updated
-              </p>
-
-              <p className="mt-2 text-sm font-semibold text-slate-700">
-                {formatDate(batchUpdatedAt)}
-              </p>
-
-            </div>
-
-          </div>
 
         </div>
 

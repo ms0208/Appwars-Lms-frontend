@@ -23,7 +23,9 @@ import {
   uploadResume,
   getMockInterviews,
   mockInterviewAction,
-  getJobs
+  getAssignments,
+  getJobs,
+  submitAssignment
 } from "../controllers/studentController.js";
 
 const router = Router();
@@ -59,7 +61,12 @@ router.get("/profile", getProfile);
 router.put("/profile", updateProfile);
 
 router.get("/courses", getCourses);
-router.get("/resources", getResources);
+router.get("/resources", protect, getAssignments);
+router.post(
+  "/assignments/:assignmentId/submit",
+  protect,
+  submitAssignment
+);
 router.get("/live-classes", getLiveClasses);
 router.patch("/live-classes/:id/reminder", setLiveClassReminder);
 
@@ -79,5 +86,6 @@ router.post("/resume", uploadResumeFile.single("resume"), uploadResume);
 router.get("/mock-interviews", getMockInterviews);
 router.post("/mock-interviews/:id/action", mockInterviewAction);
 router.get("/jobs", getJobs);
+
 
 export default router;

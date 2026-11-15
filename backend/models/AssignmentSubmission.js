@@ -1,46 +1,86 @@
+
 import mongoose from "mongoose";
 
 const assignmentSubmissionSchema = new mongoose.Schema(
   {
-    assignment: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Assignment",
-      required: true,
-      index: true,
-    },
-
+    // Student details
     student: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
     },
 
-    answerText: {
+    // Batch details
+    batch: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Batch",
+      required: true,
+    },
+
+    // Trainer details
+    trainer: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+
+    // Original trainer assignment
+    assignment: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Assignment",
+      required: true,
+    },
+
+    // Assignment information
+    title: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    assignmentTitle: {
+      type: String,
+      trim: true,
+    },
+
+    // Student's submitted answer
+    description: {
       type: String,
       default: "",
     },
 
+    // GitHub / Project URL
     submissionUrl: {
       type: String,
       default: "",
+      trim: true,
     },
 
-    submittedAt: {
-      type: Date,
-      default: null,
-    },
-
+    // Trainer assignment completion status
     status: {
       type: String,
-      enum: ["Draft", "Submitted", "Late", "Graded"],
-      default: "Draft",
+      enum: ["Pending", "Complete", "Not Access"],
+      default: "Pending",
     },
 
-    marksObtained: {
+    // Grading information
+    maxMarks: {
+      type: Number,
+      default: 50,
+      min: 0,
+    },
+
+    marks: {
       type: Number,
       default: null,
       min: 0,
+    },
+
+    // Evaluation result
+    result: {
+      type: String,
+      enum: ["Pending", "Graded", "Needs revision"],
+      default: "Pending",
     },
 
     feedback: {
@@ -48,10 +88,9 @@ const assignmentSubmissionSchema = new mongoose.Schema(
       default: "",
     },
 
-    gradedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
+    submittedAt: {
+      type: Date,
+      default: Date.now,
     },
 
     gradedAt: {
@@ -64,18 +103,27 @@ const assignmentSubmissionSchema = new mongoose.Schema(
   }
 );
 
+// One submission per student per assignment
 assignmentSubmissionSchema.index(
   {
-    assignment: 1,
     student: 1,
+    assignment: 1,
   },
   {
     unique: true,
   }
 );
 
-const AssignmentSubmission =
-  mongoose.models.AssignmentSubmission ||
-  mongoose.model("AssignmentSubmission", assignmentSubmissionSchema);
+// Trainer can quickly find submissions
+assignmentSubmissionSchema.index({
+  trainer: 1,
+  batch: 1,
+  assignment: 1,
+});
+
+const AssignmentSubmission = mongoose.model(
+  "AssignmentSubmission",
+  assignmentSubmissionSchema
+);
 
 export default AssignmentSubmission;

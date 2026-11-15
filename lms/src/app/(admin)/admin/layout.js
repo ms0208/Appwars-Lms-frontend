@@ -30,7 +30,7 @@ const navigation = [
   { name: "Dashboard", href: "/admin", icon: LayoutDashboard },
   { name: "Students", href: "/admin/students", icon: Users },
   { name: "Trainers", href: "/admin/trainers", icon: GraduationCap },
-  { name: "Courses", href: "/admin/courses", icon: BookOpen },
+  // { name: "Courses", href: "/admin/courses", icon: BookOpen },
   { name: "Batches", href: "/admin/batches", icon: BookOpen },
   { name: "Attendance", href: "/admin/attendance", icon: CalendarCheck },
   { name: "Results", href: "/admin/results", icon: CalendarCheck },
