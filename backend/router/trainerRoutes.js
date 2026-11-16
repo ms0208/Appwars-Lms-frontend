@@ -28,6 +28,11 @@ import {
   getOpenDoubts,
   replyToDoubt,
   updateStudentAssignmentStatus,
+  assignStudentRank,
+  updateStudentRank,
+  deleteStudentRank,
+  getBatchStudentRanks,
+  getStudentRank
 } from "../controllers/trainercontroller.js";
 import {
   getResults,
@@ -62,6 +67,41 @@ router.put("/profile", updateTrainerProfile);
 router.get("/batches", getAssignedBatches);
 router.get("/batches/:batchId", getBatchDetails);
 router.get("/batches/:batchId/students", getBatchStudents);
+
+// Assign a rank to a student (only if they do not already have one)
+router.post(
+  "/batches/:batchId/students/:studentId/rank",
+  protect,
+  assignStudentRank
+);
+
+// Update an existing rank, or set a rank if currently unassigned
+router.put(
+  "/batches/:batchId/students/:studentId/rank",
+  protect,
+  updateStudentRank
+);
+
+// Remove a student's rank
+router.delete(
+  "/batches/:batchId/students/:studentId/rank",
+  protect,
+  deleteStudentRank
+);
+
+// Get all students and their ranks in a batch
+router.get(
+  "/batches/:batchId/ranks",
+  protect,
+  getBatchStudentRanks
+);
+
+// Get one student's rank
+router.get(
+  "/batches/:batchId/students/:studentId/rank",
+  protect,
+  getStudentRank
+);
 
 // ==========================================
 // ASSIGNMENTS

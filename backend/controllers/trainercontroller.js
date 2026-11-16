@@ -2024,3 +2024,534 @@ export const updateStudentAssignmentStatus = async (req, res) => {
     });
   }
 };
+
+// ==========================================
+// HELPER: VALIDATE TRAINER BATCH
+// ==========================================
+const getOwnedBatch = async (batchId, trainerId) => {
+  if (!mongoose.isValidObjectId(batchId)) {
+    return null;
+  }
+
+  return Batch.findOne({
+    _id: batchId,
+    trainer: trainerId,
+    isActive: true,
+  });
+};
+
+// ==========================================
+// HELPER: VALIDATE RANK
+// ==========================================
+const validateRank = (rank) => {
+  const numericRank = Number(rank);
+
+  if (
+    rank === undefined ||
+    rank === null ||
+    rank === "" ||
+    !Number.isInteger(numericRank) ||
+    numericRank < 1
+  ) {
+    return null;
+  }
+
+  return numericRank;
+};
+
+// ==========================================
+// HELPER: CHECK IF RANK IS ALREADY USED
+// ==========================================
+const findRankConflict = async (batchName, rank, studentId) => {
+  return User.findOne({
+    _id: { $ne: studentId },
+    role: "Student",
+    isActive: true,
+    batch: batchName,
+    rank,
+  }).select("name userId rank");
+};
+
+// ==========================================
+// 1. ASSIGN RANK TO STUDENT
+// POST /api/trainer/batches/:batchId/students/:studentId/rank
+// ==========================================
+export const assignStudentRank = async (req, res) => {
+  try {
+    const trainerId = req.user.id || req.user._id;
+    const { batchId, studentId } = req.params;
+
+    const numericRank = validateRank(req.body.rank);
+
+    if (
+      !mongoose.isValidObjectId(batchId) ||
+      !mongoose.isValidObjectId(studentId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid batch ID or student ID.",
+      });
+    }
+
+    if (!numericRank) {
+      return res.status(400).json({
+        success: false,
+        message: "Rank must be a positive whole number.",
+      });
+    }
+
+    const batch = await getOwnedBatch(batchId, trainerId);
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: "Batch not found or not assigned to you.",
+      });
+    }
+
+    const student = await User.findOne({
+      _id: studentId,
+      role: "Student",
+      isActive: true,
+      batch: batch.batch,
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found in your assigned batch.",
+      });
+    }
+
+    if (student.rank !== null && student.rank !== undefined) {
+      return res.status(409).json({
+        success: false,
+        message: `This student already has rank ${student.rank}. Use the update API to change it.`,
+        currentRank: student.rank,
+      });
+    }
+
+    const totalStudents = await User.countDocuments({
+      role: "Student",
+      isActive: true,
+      batch: batch.batch,
+    });
+
+    if (numericRank > totalStudents) {
+      return res.status(400).json({
+        success: false,
+        message: `Rank cannot exceed the total number of students (${totalStudents}).`,
+      });
+    }
+
+    const existingRank = await findRankConflict(
+      batch.batch,
+      numericRank,
+      studentId
+    );
+
+    if (existingRank) {
+      return res.status(409).json({
+        success: false,
+        message: `Rank ${numericRank} is already assigned to ${existingRank.name}.`,
+        existingStudent: existingRank,
+      });
+    }
+
+    student.rank = numericRank;
+    student.rankAssignedBy = trainerId;
+    student.rankAssignedAt = new Date();
+
+    await student.save();
+
+    await student.populate("rankAssignedBy", "name userId email");
+
+    return res.status(200).json({
+      success: true,
+      message: "Student rank assigned successfully.",
+      student: {
+        id: student._id,
+        name: student.name,
+        userId: student.userId,
+        email: student.email,
+        batch: student.batch,
+        rank: student.rank,
+        rankAssignedBy: student.rankAssignedBy,
+        rankAssignedAt: student.rankAssignedAt,
+      },
+      totalStudents,
+    });
+  } catch (error) {
+    console.error("Assign Student Rank Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to assign student rank.",
+      error: error.message,
+    });
+  }
+};
+
+// ==========================================
+// 2. UPDATE EXISTING STUDENT RANK
+// PUT /api/trainer/batches/:batchId/students/:studentId/rank
+// ==========================================
+export const updateStudentRank = async (req, res) => {
+  try {
+    const trainerId = req.user.id || req.user._id;
+    const { batchId, studentId } = req.params;
+
+    const numericRank = validateRank(req.body.rank);
+
+    if (
+      !mongoose.isValidObjectId(batchId) ||
+      !mongoose.isValidObjectId(studentId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid batch ID or student ID.",
+      });
+    }
+
+    if (!numericRank) {
+      return res.status(400).json({
+        success: false,
+        message: "Rank must be a positive whole number.",
+      });
+    }
+
+    const batch = await getOwnedBatch(batchId, trainerId);
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: "Batch not found or not assigned to you.",
+      });
+    }
+
+    const student = await User.findOne({
+      _id: studentId,
+      role: "Student",
+      isActive: true,
+      batch: batch.batch,
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found in your assigned batch.",
+      });
+    }
+
+    const totalStudents = await User.countDocuments({
+      role: "Student",
+      isActive: true,
+      batch: batch.batch,
+    });
+
+    if (numericRank > totalStudents) {
+      return res.status(400).json({
+        success: false,
+        message: `Rank cannot exceed the total number of students (${totalStudents}).`,
+      });
+    }
+
+    const existingRank = await findRankConflict(
+      batch.batch,
+      numericRank,
+      studentId
+    );
+
+    if (existingRank) {
+      return res.status(409).json({
+        success: false,
+        message: `Rank ${numericRank} is already assigned to ${existingRank.name}.`,
+        existingStudent: existingRank,
+      });
+    }
+
+    const previousRank = student.rank ?? null;
+
+    student.rank = numericRank;
+    student.rankAssignedBy = trainerId;
+    student.rankAssignedAt = new Date();
+
+    await student.save();
+    await student.populate("rankAssignedBy", "name userId email");
+
+    return res.status(200).json({
+      success: true,
+      message: "Student rank updated successfully.",
+      previousRank,
+      student: {
+        id: student._id,
+        name: student.name,
+        userId: student.userId,
+        email: student.email,
+        batch: student.batch,
+        rank: student.rank,
+        rankAssignedBy: student.rankAssignedBy,
+        rankAssignedAt: student.rankAssignedAt,
+      },
+      totalStudents,
+    });
+  } catch (error) {
+    console.error("Update Student Rank Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update student rank.",
+      error: error.message,
+    });
+  }
+};
+
+// ==========================================
+// 3. DELETE / REMOVE STUDENT RANK
+// DELETE /api/trainer/batches/:batchId/students/:studentId/rank
+// ==========================================
+export const deleteStudentRank = async (req, res) => {
+  try {
+    const trainerId = req.user.id || req.user._id;
+    const { batchId, studentId } = req.params;
+
+    if (
+      !mongoose.isValidObjectId(batchId) ||
+      !mongoose.isValidObjectId(studentId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid batch ID or student ID.",
+      });
+    }
+
+    const batch = await getOwnedBatch(batchId, trainerId);
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: "Batch not found or not assigned to you.",
+      });
+    }
+
+    const student = await User.findOne({
+      _id: studentId,
+      role: "Student",
+      isActive: true,
+      batch: batch.batch,
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found in your assigned batch.",
+      });
+    }
+
+    if (student.rank === null || student.rank === undefined) {
+      return res.status(404).json({
+        success: false,
+        message: "This student does not have an assigned rank.",
+      });
+    }
+
+    const deletedRank = student.rank;
+
+    student.rank = null;
+    student.rankAssignedBy = null;
+    student.rankAssignedAt = null;
+
+    await student.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Student rank removed successfully.",
+      student: {
+        id: student._id,
+        name: student.name,
+        userId: student.userId,
+        batch: student.batch,
+        previousRank: deletedRank,
+        rank: null,
+      },
+    });
+  } catch (error) {
+    console.error("Delete Student Rank Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to remove student rank.",
+      error: error.message,
+    });
+  }
+};
+
+// ==========================================
+// 4. GET ALL STUDENTS WITH THEIR RANKS
+// GET /api/trainer/batches/:batchId/ranks
+// ==========================================
+export const getBatchStudentRanks = async (req, res) => {
+  try {
+    const trainerId = req.user.id || req.user._id;
+    const { batchId } = req.params;
+
+    if (!mongoose.isValidObjectId(batchId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid batch ID.",
+      });
+    }
+
+    const batch = await getOwnedBatch(batchId, trainerId);
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: "Batch not found or not assigned to you.",
+      });
+    }
+
+    const students = await User.find({
+      role: "Student",
+      isActive: true,
+      batch: batch.batch,
+    })
+      .select(
+        "name userId email batch rank rankAssignedBy rankAssignedAt"
+      )
+      .populate("rankAssignedBy", "name userId")
+      .sort({ rank: 1, name: 1 });
+
+    const totalStudents = students.length;
+
+    const rankedStudents = students.filter(
+      (student) => student.rank !== null && student.rank !== undefined
+    );
+
+    const unrankedStudents = students.filter(
+      (student) => student.rank === null || student.rank === undefined
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Batch student ranks fetched successfully.",
+      batch: {
+        id: batch._id,
+        name: batch.batch,
+      },
+      statistics: {
+        totalStudents,
+        rankedStudents: rankedStudents.length,
+        unrankedStudents: unrankedStudents.length,
+      },
+      students: students.map((student) => ({
+        id: student._id,
+        name: student.name,
+        userId: student.userId,
+        email: student.email,
+        batch: student.batch,
+        rank: student.rank ?? null,
+        rankAssignedBy: student.rankAssignedBy
+          ? {
+              id: student.rankAssignedBy._id,
+              name: student.rankAssignedBy.name,
+              userId: student.rankAssignedBy.userId,
+            }
+          : null,
+        rankAssignedAt: student.rankAssignedAt || null,
+      })),
+    });
+  } catch (error) {
+    console.error("Get Batch Student Ranks Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch batch student ranks.",
+      error: error.message,
+    });
+  }
+};
+
+// ==========================================
+// 5. GET ONE STUDENT'S RANK
+// GET /api/trainer/batches/:batchId/students/:studentId/rank
+// ==========================================
+export const getStudentRank = async (req, res) => {
+  try {
+    const trainerId = req.user.id || req.user._id;
+    const { batchId, studentId } = req.params;
+
+    if (
+      !mongoose.isValidObjectId(batchId) ||
+      !mongoose.isValidObjectId(studentId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid batch ID or student ID.",
+      });
+    }
+
+    const batch = await getOwnedBatch(batchId, trainerId);
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: "Batch not found or not assigned to you.",
+      });
+    }
+
+    const student = await User.findOne({
+      _id: studentId,
+      role: "Student",
+      isActive: true,
+      batch: batch.batch,
+    })
+      .select(
+        "name userId email batch rank rankAssignedBy rankAssignedAt"
+      )
+      .populate("rankAssignedBy", "name userId");
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found in your assigned batch.",
+      });
+    }
+
+    const totalStudents = await User.countDocuments({
+      role: "Student",
+      isActive: true,
+      batch: batch.batch,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Student rank fetched successfully.",
+      student: {
+        id: student._id,
+        name: student.name,
+        userId: student.userId,
+        email: student.email,
+        batch: student.batch,
+        rank: student.rank ?? null,
+        rankAssignedBy: student.rankAssignedBy
+          ? {
+              id: student.rankAssignedBy._id,
+              name: student.rankAssignedBy.name,
+              userId: student.rankAssignedBy.userId,
+            }
+          : null,
+        rankAssignedAt: student.rankAssignedAt || null,
+      },
+      totalStudents,
+    });
+  } catch (error) {
+    console.error("Get Student Rank Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch student rank.",
+      error: error.message,
+    });
+  }
+};

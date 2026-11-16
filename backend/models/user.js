@@ -222,6 +222,26 @@ const userSchema = new mongoose.Schema(
       default: "",
     },
     // ======================================
+    // TRAINER-ASSIGNED STUDENT RANK
+    // ======================================
+
+    rank: {
+      type: Number,
+      min: 1,
+      default: null,
+    },
+
+    rankAssignedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    rankAssignedAt: {
+      type: Date,
+      default: null,
+    },
+    // ======================================
     // STUDENT REFERRAL DETAILS
     // ======================================
 

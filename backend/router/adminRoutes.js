@@ -35,7 +35,6 @@ import {
   updatePayment,
   deletePayment,
   getPaymentReport,
-
   // Settings
   getSettings,
   updateSettings,
@@ -374,5 +373,6 @@ router.delete(
   protect,
   deleteCounsellorAttendance
 );
+
 
 export default router;

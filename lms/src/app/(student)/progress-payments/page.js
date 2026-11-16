@@ -657,7 +657,7 @@ export default function ProgressPaymentsPage() {
               title="Batch Rank"
               value={
                 rank !== null && rank !== ""
-                  ? `#${rank}${
+                  ? `${rank}${
                       totalStudents !== null &&
                       totalStudents !== ""
                         ? ` / ${totalStudents}`

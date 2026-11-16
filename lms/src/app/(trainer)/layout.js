@@ -38,6 +38,11 @@ export default function TrainerLayout({ children }) {
       icon: ClipboardList,
     },
     {
+      name:"Student Rank",
+      href:"/student-rank",
+      icon: ClipboardList
+    },
+    {
       name:"Trainer Profile",
       href:"/trainer-profile",
       icon:ClipboardList

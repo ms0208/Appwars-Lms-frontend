@@ -28,10 +28,13 @@ import {
 // CONFIGURATION
 // ======================================================
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
+const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
+).replace(/\/$/, "");
 
 const STATUS_OPTIONS = ["Pending", "Complete", "Not Access"];
+const ASSIGNMENT_STATUS_OPTIONS = ["Draft", "Published", "Closed"];
+const SUBMISSION_TYPES = ["text", "url"];
 
 // ======================================================
 // HELPERS
@@ -59,7 +62,8 @@ const getHeaders = (isFormData = false) => {
 };
 
 async function apiRequest(endpoint, options = {}) {
-  const isFormData = options.body instanceof FormData;
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
 
   const response = await fetch(`${API_URL}${endpoint}`, {
     ...options,
@@ -83,22 +87,15 @@ async function apiRequest(endpoint, options = {}) {
 function getList(data, resourceName) {
   if (Array.isArray(data)) return data;
 
-  if (Array.isArray(data?.[resourceName])) {
-    return data[resourceName];
-  }
+  const candidates = [
+    data?.[resourceName],
+    data?.items,
+    data?.data,
+    data?.data?.[resourceName],
+    data?.data?.items,
+  ];
 
-  if (Array.isArray(data?.items)) return data.items;
-  if (Array.isArray(data?.data)) return data.data;
-
-  if (Array.isArray(data?.data?.[resourceName])) {
-    return data.data[resourceName];
-  }
-
-  if (Array.isArray(data?.data?.items)) {
-    return data.data.items;
-  }
-
-  return [];
+  return candidates.find(Array.isArray) || [];
 }
 
 function getId(value) {
@@ -110,7 +107,6 @@ function getId(value) {
 
 function getName(value) {
   if (!value) return "Unknown";
-
   if (typeof value === "string") return value;
 
   return (
@@ -124,7 +120,6 @@ function getName(value) {
 
 function getBatchName(value) {
   if (!value) return "No batch assigned";
-
   if (typeof value === "string") return value;
 
   return value.batch || value.batchName || value.name || "No batch assigned";
@@ -156,8 +151,8 @@ function getInitialStatus(student) {
 
 function getAttachmentUrl(assignment) {
   return (
-    assignment?.attachment?.url ||
     assignment?.attachmentUrl ||
+    assignment?.attachment?.url ||
     assignment?.fileUrl ||
     assignment?.document ||
     ""
@@ -168,7 +163,6 @@ function getAssignmentBatchId(assignment) {
   return (
     getId(assignment?.batch) ||
     assignment?.batchId ||
-    assignment?.batch?._id ||
     ""
   );
 }
@@ -179,11 +173,22 @@ function normalizeAssignment(item) {
     id: getId(item),
     title: item.title || "",
     description: item.description || "",
+    instructions: item.instructions || "",
     batchId: getAssignmentBatchId(item),
     batchName: getBatchName(item.batch),
-    dueDate: item.dueDate
-      ? String(item.dueDate).slice(0, 10)
-      : "",
+    courseId: getId(item.course) || item.course || "",
+    courseName:
+      item.course?.courseName ||
+      item.course?.title ||
+      item.course?.code ||
+      "",
+    dueDate: item.dueDate ? String(item.dueDate).slice(0, 10) : "",
+    totalMarks: item.totalMarks ?? 100,
+    allowedSubmissionTypes: Array.isArray(item.allowedSubmissionTypes)
+      ? item.allowedSubmissionTypes
+      : ["text", "url"],
+    status: item.status || "Draft",
+    isPublished: Boolean(item.isPublished),
     attachmentUrl: getAttachmentUrl(item),
   };
 }
@@ -219,6 +224,24 @@ function StatusBadge({ status }) {
   );
 }
 
+function AssignmentStatusBadge({ status }) {
+  const styles = {
+    Draft: "bg-slate-100 text-slate-700",
+    Published: "bg-green-100 text-green-700",
+    Closed: "bg-red-100 text-red-700",
+  };
+
+  return (
+    <span
+      className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+        styles[status] || styles.Draft
+      }`}
+    >
+      {status || "Draft"}
+    </span>
+  );
+}
+
 // ======================================================
 // MAIN PAGE
 // ======================================================
@@ -235,29 +258,33 @@ export default function AssignmentsPage() {
   const [search, setSearch] = useState("");
   const [filterBatch, setFilterBatch] = useState("All");
 
-  // Assignment modal
   const [showForm, setShowForm] = useState(false);
   const [editingAssignment, setEditingAssignment] = useState(null);
   const [viewAssignment, setViewAssignment] = useState(null);
 
-  // Student status modal
   const [showStudents, setShowStudents] = useState(false);
   const [selectedAssignment, setSelectedAssignment] = useState(null);
   const [students, setStudents] = useState([]);
   const [studentsLoading, setStudentsLoading] = useState(false);
 
-  // Student status state:
-  // { studentId: "Pending" | "Complete" | "Not Access" }
   const [studentStatuses, setStudentStatuses] = useState({});
   const [savingStudent, setSavingStudent] = useState("");
 
-  const [form, setForm] = useState({
+  const initialForm = {
     title: "",
     description: "",
+    instructions: "",
     batchId: "",
+    course: "",
     dueDate: "",
+    totalMarks: "100",
+    allowedSubmissionTypes: ["text", "url"],
+    status: "Published",
+    isPublished: true,
     attachment: null,
-  });
+  };
+
+  const [form, setForm] = useState(initialForm);
 
   // ======================================================
   // FETCH ASSIGNMENTS
@@ -265,15 +292,11 @@ export default function AssignmentsPage() {
 
   const fetchAssignments = useCallback(async () => {
     try {
-      setError("");
-
       const result = await apiRequest("/trainer/assignments");
 
-      const list = getList(result, "assignments").map(
-        normalizeAssignment
+      setAssignments(
+        getList(result, "assignments").map(normalizeAssignment)
       );
-
-      setAssignments(list);
     } catch (err) {
       console.error("Fetch assignments:", err);
       setError(err.message || "Unable to fetch assignments");
@@ -287,10 +310,10 @@ export default function AssignmentsPage() {
   const fetchBatches = useCallback(async () => {
     try {
       const result = await apiRequest("/trainer/batches");
-
       setBatches(getList(result, "batches"));
     } catch (err) {
       console.error("Fetch batches:", err);
+      setError(err.message || "Unable to fetch batches");
     }
   }, []);
 
@@ -300,6 +323,7 @@ export default function AssignmentsPage() {
 
   const loadPage = useCallback(async () => {
     setLoading(true);
+    setError("");
 
     await Promise.all([fetchAssignments(), fetchBatches()]);
 
@@ -316,11 +340,8 @@ export default function AssignmentsPage() {
 
   const resetForm = () => {
     setForm({
-      title: "",
-      description: "",
-      batchId: "",
-      dueDate: "",
-      attachment: null,
+      ...initialForm,
+      allowedSubmissionTypes: ["text", "url"],
     });
 
     setEditingAssignment(null);
@@ -328,6 +349,7 @@ export default function AssignmentsPage() {
 
   const openCreateForm = () => {
     resetForm();
+    setError("");
     setShowForm(true);
   };
 
@@ -337,11 +359,21 @@ export default function AssignmentsPage() {
     setForm({
       title: assignment.title || "",
       description: assignment.description || "",
+      instructions: assignment.instructions || "",
       batchId: assignment.batchId || "",
+      course: assignment.courseId || "",
       dueDate: assignment.dueDate || "",
+      totalMarks: String(assignment.totalMarks ?? 100),
+      allowedSubmissionTypes:
+        assignment.allowedSubmissionTypes?.length > 0
+          ? assignment.allowedSubmissionTypes
+          : ["text", "url"],
+      status: assignment.status || "Draft",
+      isPublished: Boolean(assignment.isPublished),
       attachment: null,
     });
 
+    setError("");
     setShowForm(true);
   };
 
@@ -353,30 +385,77 @@ export default function AssignmentsPage() {
         ...prev,
         attachment: files?.[0] || null,
       }));
-
       return;
     }
 
     setForm((prev) => ({
       ...prev,
       [name]: value,
+      ...(name === "status"
+        ? { isPublished: value === "Published" }
+        : {}),
     }));
+  };
+
+  const handleSubmissionTypeChange = (type) => {
+    setForm((prev) => {
+      const exists = prev.allowedSubmissionTypes.includes(type);
+
+      return {
+        ...prev,
+        allowedSubmissionTypes: exists
+          ? prev.allowedSubmissionTypes.filter((item) => item !== type)
+          : [...prev.allowedSubmissionTypes, type],
+      };
+    });
   };
 
   // ======================================================
   // CREATE / UPDATE ASSIGNMENT
+  // Backend fields:
+  // title, description, instructions, batchId, course,
+  // dueDate, totalMarks, allowedSubmissionTypes,
+  // status, isPublished, attachment
   // ======================================================
 
   const handleSubmit = async (event) => {
     event.preventDefault();
 
     if (!form.title.trim()) {
-      setError("Please enter assignment title");
+      setError("Please enter assignment title.");
+      return;
+    }
+
+    if (!form.description.trim()) {
+      setError("Please enter assignment description.");
       return;
     }
 
     if (!form.batchId) {
-      setError("Please select a batch");
+      setError("Please select a batch.");
+      return;
+    }
+
+    if (!form.dueDate) {
+      setError("Please select assignment due date.");
+      return;
+    }
+
+    if (Number(form.totalMarks) < 1) {
+      setError("Total marks must be at least 1.");
+      return;
+    }
+
+    if (form.allowedSubmissionTypes.length === 0) {
+      setError("Select at least one submission type.");
+      return;
+    }
+
+    if (
+      form.attachment &&
+      form.attachment.type !== "application/pdf"
+    ) {
+      setError("Only PDF files are allowed.");
       return;
     }
 
@@ -388,10 +467,25 @@ export default function AssignmentsPage() {
       const formData = new FormData();
 
       formData.append("title", form.title.trim());
-      formData.append("description", form.description);
-      formData.append("batch", form.batchId);
+      formData.append("description", form.description.trim());
+      formData.append("instructions", form.instructions.trim());
       formData.append("batchId", form.batchId);
       formData.append("dueDate", form.dueDate);
+      formData.append("totalMarks", String(Number(form.totalMarks)));
+
+      // The backend accepts a JSON string or an array.
+      formData.append(
+        "allowedSubmissionTypes",
+        JSON.stringify(form.allowedSubmissionTypes)
+      );
+
+      formData.append("status", form.status);
+      formData.append("isPublished", String(form.isPublished));
+
+      // Course is optional in the supplied update controller.
+      if (form.course.trim()) {
+        formData.append("course", form.course.trim());
+      }
 
       if (form.attachment) {
         formData.append("attachment", form.attachment);
@@ -406,14 +500,14 @@ export default function AssignmentsPage() {
           }
         );
 
-        setSuccess("Assignment updated successfully");
+        setSuccess("Assignment updated successfully.");
       } else {
         await apiRequest("/trainer/assignments", {
           method: "POST",
           body: formData,
         });
 
-        setSuccess("Assignment created successfully");
+        setSuccess("Assignment created successfully.");
       }
 
       setShowForm(false);
@@ -422,7 +516,7 @@ export default function AssignmentsPage() {
       await fetchAssignments();
     } catch (err) {
       console.error("Save assignment:", err);
-      setError(err.message || "Unable to save assignment");
+      setError(err.message || "Unable to save assignment.");
     } finally {
       setSaving(false);
     }
@@ -430,6 +524,7 @@ export default function AssignmentsPage() {
 
   // ======================================================
   // DELETE ASSIGNMENT
+  // DELETE /trainer/assignments/:assignmentId
   // ======================================================
 
   const handleDelete = async (assignment) => {
@@ -447,14 +542,14 @@ export default function AssignmentsPage() {
         method: "DELETE",
       });
 
-      setSuccess("Assignment deleted successfully");
+      setSuccess("Assignment deleted successfully.");
 
       setAssignments((prev) =>
         prev.filter((item) => item.id !== assignment.id)
       );
     } catch (err) {
       console.error("Delete assignment:", err);
-      setError(err.message || "Unable to delete assignment");
+      setError(err.message || "Unable to delete assignment.");
     }
   };
 
@@ -466,7 +561,7 @@ export default function AssignmentsPage() {
     const batchId = assignment.batchId;
 
     if (!batchId) {
-      setError("Batch ID is missing for this assignment");
+      setError("Batch ID is missing for this assignment.");
       return;
     }
 
@@ -499,7 +594,7 @@ export default function AssignmentsPage() {
       setStudentStatuses(initialStatuses);
     } catch (err) {
       console.error("Fetch batch students:", err);
-      setError(err.message || "Unable to fetch batch students");
+      setError(err.message || "Unable to fetch batch students.");
     } finally {
       setStudentsLoading(false);
     }
@@ -518,6 +613,8 @@ export default function AssignmentsPage() {
 
   // ======================================================
   // UPDATE INDIVIDUAL STUDENT ASSIGNMENT STATUS
+  //
+  // Keep this URL only if your backend has this route:
   // PUT /trainer/assignments/:assignmentId/students/:studentId/status
   // ======================================================
 
@@ -529,12 +626,12 @@ export default function AssignmentsPage() {
     const status = studentStatuses[studentId];
 
     if (!studentId) {
-      setError("Student ID is missing");
+      setError("Student ID is missing.");
       return;
     }
 
     if (!STATUS_OPTIONS.includes(status)) {
-      setError("Please select a valid status");
+      setError("Please select a valid student status.");
       return;
     }
 
@@ -551,18 +648,17 @@ export default function AssignmentsPage() {
         }
       );
 
-      // Update local status only after successful backend response.
       setStudentStatuses((prev) => ({
         ...prev,
         [studentId]: result?.progress?.status || status,
       }));
 
       setSuccess(
-        `${getName(student)}'s assignment status updated successfully`
+        `${getName(student)}'s assignment status updated successfully.`
       );
     } catch (err) {
       console.error("Update student assignment status:", err);
-      setError(err.message || "Unable to update student status");
+      setError(err.message || "Unable to update student status.");
     } finally {
       setSavingStudent("");
     }
@@ -572,13 +668,39 @@ export default function AssignmentsPage() {
   // CSV EXPORT
   // ======================================================
 
+  const filteredAssignments = useMemo(() => {
+    return assignments.filter((assignment) => {
+      const searchText = search.toLowerCase();
+
+      const matchesSearch =
+        assignment.title.toLowerCase().includes(searchText) ||
+        assignment.description.toLowerCase().includes(searchText) ||
+        assignment.batchName.toLowerCase().includes(searchText);
+
+      const matchesBatch =
+        filterBatch === "All" ||
+        assignment.batchId === filterBatch;
+
+      return matchesSearch && matchesBatch;
+    });
+  }, [assignments, search, filterBatch]);
+
   const exportCSV = () => {
     const rows = [
-      ["Assignment", "Batch", "Due Date", "Description"],
+      [
+        "Assignment",
+        "Batch",
+        "Due Date",
+        "Total Marks",
+        "Status",
+        "Description",
+      ],
       ...filteredAssignments.map((item) => [
         item.title,
         item.batchName,
         item.dueDate,
+        item.totalMarks,
+        item.status,
         item.description,
       ]),
     ];
@@ -606,27 +728,6 @@ export default function AssignmentsPage() {
   };
 
   // ======================================================
-  // FILTER ASSIGNMENTS
-  // ======================================================
-
-  const filteredAssignments = useMemo(() => {
-    return assignments.filter((assignment) => {
-      const searchText = search.toLowerCase();
-
-      const matchesSearch =
-        assignment.title.toLowerCase().includes(searchText) ||
-        assignment.description.toLowerCase().includes(searchText) ||
-        assignment.batchName.toLowerCase().includes(searchText);
-
-      const matchesBatch =
-        filterBatch === "All" ||
-        assignment.batchId === filterBatch;
-
-      return matchesSearch && matchesBatch;
-    });
-  }, [assignments, search, filterBatch]);
-
-  // ======================================================
   // DASHBOARD COUNTS
   // ======================================================
 
@@ -639,7 +740,8 @@ export default function AssignmentsPage() {
   const upcomingAssignments = assignments.filter((item) => {
     if (!item.dueDate) return false;
 
-    return new Date(item.dueDate) >= new Date();
+    const dueDate = new Date(`${item.dueDate}T23:59:59`);
+    return dueDate >= new Date();
   }).length;
 
   // ======================================================
@@ -697,7 +799,6 @@ export default function AssignmentsPage() {
         {error && (
           <div className="flex items-start justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             <span>{error}</span>
-
             <button onClick={() => setError("")}>
               <X size={17} />
             </button>
@@ -707,7 +808,6 @@ export default function AssignmentsPage() {
         {success && (
           <div className="flex items-start justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
             <span>{success}</span>
-
             <button onClick={() => setSuccess("")}>
               <X size={17} />
             </button>
@@ -717,57 +817,33 @@ export default function AssignmentsPage() {
         {/* STATS */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-500">
-                  Total Assignments
-                </p>
-
-                <h2 className="mt-2 text-3xl font-bold text-slate-900">
-                  {totalAssignments}
-                </h2>
-              </div>
-
-              <div className="rounded-xl bg-blue-50 p-3 text-blue-700">
-                <FileText size={23} />
-              </div>
-            </div>
+            <p className="text-sm font-medium text-slate-500">
+              Total Assignments
+            </p>
+            <h2 className="mt-2 text-3xl font-bold text-slate-900">
+              {totalAssignments}
+            </h2>
+            <FileText className="mt-3 text-blue-700" size={23} />
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-500">
-                  Assigned Batches
-                </p>
-
-                <h2 className="mt-2 text-3xl font-bold text-slate-900">
-                  {totalBatches}
-                </h2>
-              </div>
-
-              <div className="rounded-xl bg-purple-50 p-3 text-purple-700">
-                <Users size={23} />
-              </div>
-            </div>
+            <p className="text-sm font-medium text-slate-500">
+              Assigned Batches
+            </p>
+            <h2 className="mt-2 text-3xl font-bold text-slate-900">
+              {totalBatches}
+            </h2>
+            <Users className="mt-3 text-purple-700" size={23} />
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-500">
-                  Upcoming Deadlines
-                </p>
-
-                <h2 className="mt-2 text-3xl font-bold text-slate-900">
-                  {upcomingAssignments}
-                </h2>
-              </div>
-
-              <div className="rounded-xl bg-amber-50 p-3 text-amber-700">
-                <CalendarDays size={23} />
-              </div>
-            </div>
+            <p className="text-sm font-medium text-slate-500">
+              Upcoming Deadlines
+            </p>
+            <h2 className="mt-2 text-3xl font-bold text-slate-900">
+              {upcomingAssignments}
+            </h2>
+            <CalendarDays className="mt-3 text-amber-700" size={23} />
           </div>
         </div>
 
@@ -817,22 +893,16 @@ export default function AssignmentsPage() {
               size={28}
               className="mx-auto animate-spin text-[#102e60]"
             />
-
             <p className="mt-3 text-sm text-slate-500">
               Loading assignments...
             </p>
           </div>
         ) : filteredAssignments.length === 0 ? (
           <div className="rounded-xl border border-slate-200 bg-white px-5 py-16 text-center">
-            <FileText
-              size={40}
-              className="mx-auto text-slate-300"
-            />
-
+            <FileText size={40} className="mx-auto text-slate-300" />
             <h3 className="mt-3 font-semibold text-slate-800">
               No assignments found
             </h3>
-
             <p className="mt-1 text-sm text-slate-500">
               Create an assignment or change your search filters.
             </p>
@@ -866,14 +936,20 @@ export default function AssignmentsPage() {
                       </div>
                     </div>
 
-                    <span className="shrink-0 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700">
-                      Assignment
-                    </span>
+                    <AssignmentStatusBadge status={assignment.status} />
                   </div>
 
                   <p className="mt-4 line-clamp-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">
                     {assignment.description || "No description provided."}
                   </p>
+
+                  <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-500">
+                    <span>Total Marks: {assignment.totalMarks}</span>
+                    <span>
+                      Submission:{" "}
+                      {assignment.allowedSubmissionTypes.join(", ") || "—"}
+                    </span>
+                  </div>
 
                   {assignment.attachmentUrl && (
                     <a
@@ -936,17 +1012,14 @@ export default function AssignmentsPage() {
 
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4">
-          <div className="my-auto w-full max-w-xl rounded-2xl bg-white shadow-2xl">
+          <div className="my-auto w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">
-                  {editingAssignment
-                    ? "Edit Assignment"
-                    : "Create Assignment"}
+                  {editingAssignment ? "Edit Assignment" : "Create Assignment"}
                 </h2>
-
                 <p className="mt-1 text-xs text-slate-500">
-                  Enter assignment information below.
+                  Enter the assignment details below.
                 </p>
               </div>
 
@@ -961,12 +1034,15 @@ export default function AssignmentsPage() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4 p-6">
+            <form
+              onSubmit={handleSubmit}
+              className="max-h-[75vh] space-y-4 overflow-y-auto p-6"
+            >
+              {/* TITLE */}
               <div>
                 <label className="mb-1.5 block text-sm font-semibold text-slate-700">
                   Assignment Title *
                 </label>
-
                 <input
                   name="title"
                   value={form.title}
@@ -977,11 +1053,11 @@ export default function AssignmentsPage() {
                 />
               </div>
 
+              {/* BATCH */}
               <div>
                 <label className="mb-1.5 block text-sm font-semibold text-slate-700">
                   Select Batch *
                 </label>
-
                 <select
                   name="batchId"
                   value={form.batchId}
@@ -990,7 +1066,6 @@ export default function AssignmentsPage() {
                   className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-[#102e60]"
                 >
                   <option value="">Select batch</option>
-
                   {batches.map((batch) => (
                     <option key={getId(batch)} value={getId(batch)}>
                       {getBatchName(batch)}
@@ -999,35 +1074,135 @@ export default function AssignmentsPage() {
                 </select>
               </div>
 
+              {/* COURSE ID - OPTIONAL */}
               <div>
                 <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                  Description
+                  Course ID (Optional)
                 </label>
+                <input
+                  name="course"
+                  value={form.course}
+                  onChange={handleFormChange}
+                  placeholder="Enter MongoDB Course ID if required"
+                  className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#102e60]"
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  Leave blank if the assignment does not need a separate course reference.
+                </p>
+              </div>
 
+              {/* DESCRIPTION */}
+              <div>
+                <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+                  Description *
+                </label>
                 <textarea
                   name="description"
                   value={form.description}
                   onChange={handleFormChange}
-                  rows={4}
-                  placeholder="Enter assignment instructions..."
+                  rows={3}
+                  required
+                  placeholder="Enter assignment description..."
                   className="w-full resize-y rounded-lg border border-slate-300 px-4 py-3 text-sm outline-none focus:border-[#102e60]"
                 />
               </div>
 
+              {/* INSTRUCTIONS */}
               <div>
                 <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                  Due Date
+                  Instructions
                 </label>
-
-                <input
-                  type="date"
-                  name="dueDate"
-                  value={form.dueDate}
+                <textarea
+                  name="instructions"
+                  value={form.instructions}
                   onChange={handleFormChange}
-                  className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#102e60]"
+                  rows={3}
+                  placeholder="Enter instructions for students..."
+                  className="w-full resize-y rounded-lg border border-slate-300 px-4 py-3 text-sm outline-none focus:border-[#102e60]"
                 />
               </div>
 
+              {/* DUE DATE AND MARKS */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+                    Due Date *
+                  </label>
+                  <input
+                    type="date"
+                    name="dueDate"
+                    value={form.dueDate}
+                    onChange={handleFormChange}
+                    required
+                    className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#102e60]"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+                    Total Marks *
+                  </label>
+                  <input
+                    type="number"
+                    name="totalMarks"
+                    value={form.totalMarks}
+                    onChange={handleFormChange}
+                    min="1"
+                    required
+                    className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm outline-none focus:border-[#102e60]"
+                  />
+                </div>
+              </div>
+
+              {/* SUBMISSION TYPES */}
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Allowed Submission Types *
+                </label>
+
+                <div className="flex flex-wrap gap-4 rounded-lg border border-slate-200 p-3">
+                  {SUBMISSION_TYPES.map((type) => (
+                    <label
+                      key={type}
+                      className="flex cursor-pointer items-center gap-2 text-sm text-slate-700"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={form.allowedSubmissionTypes.includes(type)}
+                        onChange={() => handleSubmissionTypeChange(type)}
+                        className="h-4 w-4 accent-[#102e60]"
+                      />
+                      {type === "text" ? "Text Submission" : "URL Submission"}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* ASSIGNMENT STATUS */}
+              <div>
+                <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+                  Assignment Status
+                </label>
+
+                <select
+                  name="status"
+                  value={form.status}
+                  onChange={handleFormChange}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm outline-none focus:border-[#102e60]"
+                >
+                  {ASSIGNMENT_STATUS_OPTIONS.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  Published assignments can be made available to students.
+                </p>
+              </div>
+
+              {/* PDF ATTACHMENT */}
               <div>
                 <label className="mb-1.5 block text-sm font-semibold text-slate-700">
                   Upload PDF Attachment
@@ -1042,9 +1217,8 @@ export default function AssignmentsPage() {
                         ? form.attachment.name
                         : "Choose a PDF file"}
                     </p>
-
                     <p className="text-xs text-slate-500">
-                      Select a PDF attachment
+                      Only PDF documents are accepted.
                     </p>
                   </div>
 
@@ -1070,6 +1244,7 @@ export default function AssignmentsPage() {
                 )}
               </div>
 
+              {/* FORM BUTTONS */}
               <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
                 <button
                   type="button"
@@ -1130,7 +1305,6 @@ export default function AssignmentsPage() {
                 <p className="text-xs font-semibold uppercase text-slate-400">
                   Title
                 </p>
-
                 <p className="mt-1 text-base font-bold text-slate-900">
                   {viewAssignment.title}
                 </p>
@@ -1140,7 +1314,6 @@ export default function AssignmentsPage() {
                 <p className="text-xs font-semibold uppercase text-slate-400">
                   Batch
                 </p>
-
                 <p className="mt-1 text-sm text-slate-800">
                   {viewAssignment.batchName}
                 </p>
@@ -1150,7 +1323,6 @@ export default function AssignmentsPage() {
                 <p className="text-xs font-semibold uppercase text-slate-400">
                   Due Date
                 </p>
-
                 <p className="mt-1 text-sm text-slate-800">
                   {getDate(viewAssignment.dueDate) || "Not specified"}
                 </p>
@@ -1158,11 +1330,48 @@ export default function AssignmentsPage() {
 
               <div>
                 <p className="text-xs font-semibold uppercase text-slate-400">
+                  Total Marks
+                </p>
+                <p className="mt-1 text-sm text-slate-800">
+                  {viewAssignment.totalMarks}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase text-slate-400">
+                  Status
+                </p>
+                <div className="mt-2">
+                  <AssignmentStatusBadge status={viewAssignment.status} />
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold uppercase text-slate-400">
                   Description
                 </p>
-
                 <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
                   {viewAssignment.description || "No description provided."}
+                </p>
+              </div>
+
+              {viewAssignment.instructions && (
+                <div>
+                  <p className="text-xs font-semibold uppercase text-slate-400">
+                    Instructions
+                  </p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                    {viewAssignment.instructions}
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <p className="text-xs font-semibold uppercase text-slate-400">
+                  Allowed Submission Types
+                </p>
+                <p className="mt-1 text-sm text-slate-700">
+                  {viewAssignment.allowedSubmissionTypes.join(", ")}
                 </p>
               </div>
 
@@ -1199,18 +1408,14 @@ export default function AssignmentsPage() {
       {showStudents && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-3 sm:p-5">
           <div className="my-auto flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-
-            {/* MODAL HEADER */}
             <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 sm:px-6">
               <div className="min-w-0">
                 <h2 className="text-lg font-bold text-slate-900">
                   Student Assignment Status
                 </h2>
-
                 <p className="mt-1 truncate text-sm text-slate-500">
                   {selectedAssignment?.title}
                 </p>
-
                 <p className="mt-1 text-xs text-slate-500">
                   Batch: {selectedAssignment?.batchName}
                 </p>
@@ -1229,14 +1434,12 @@ export default function AssignmentsPage() {
               </button>
             </div>
 
-            {/* STATUS LEGEND */}
             <div className="flex flex-wrap gap-2 border-b border-slate-100 bg-slate-50 px-5 py-3 sm:px-6">
               <StatusBadge status="Pending" />
               <StatusBadge status="Complete" />
               <StatusBadge status="Not Access" />
             </div>
 
-            {/* STUDENT LIST */}
             <div className="flex-1 overflow-y-auto p-4 sm:p-6">
               {studentsLoading ? (
                 <div className="py-14 text-center">
@@ -1244,22 +1447,16 @@ export default function AssignmentsPage() {
                     size={28}
                     className="mx-auto animate-spin text-[#102e60]"
                   />
-
                   <p className="mt-3 text-sm text-slate-500">
                     Loading students...
                   </p>
                 </div>
               ) : students.length === 0 ? (
                 <div className="py-14 text-center">
-                  <Users
-                    size={38}
-                    className="mx-auto text-slate-300"
-                  />
-
+                  <Users size={38} className="mx-auto text-slate-300" />
                   <h3 className="mt-3 font-semibold text-slate-800">
                     No students found
                   </h3>
-
                   <p className="mt-1 text-sm text-slate-500">
                     No students are available in this assignment batch.
                   </p>
@@ -1270,7 +1467,6 @@ export default function AssignmentsPage() {
                     const studentId = getId(student);
                     const currentStatus =
                       studentStatuses[studentId] || "Pending";
-
                     const isSaving = savingStudent === studentId;
 
                     return (
@@ -1279,24 +1475,18 @@ export default function AssignmentsPage() {
                         className="rounded-xl border border-slate-200 bg-white p-4"
                       >
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-
-                          {/* STUDENT INFORMATION */}
                           <div className="flex min-w-0 items-center gap-3">
                             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-50 font-bold text-[#102e60]">
-                              {getName(student)
-                                .charAt(0)
-                                .toUpperCase()}
+                              {getName(student).charAt(0).toUpperCase()}
                             </div>
 
                             <div className="min-w-0">
                               <h3 className="truncate text-sm font-bold text-slate-900">
                                 {getName(student)}
                               </h3>
-
                               <p className="mt-1 text-xs text-slate-500">
                                 ID: {student.userId || studentId}
                               </p>
-
                               {student.email && (
                                 <p className="mt-1 truncate text-xs text-slate-500">
                                   {student.email}
@@ -1305,7 +1495,6 @@ export default function AssignmentsPage() {
                             </div>
                           </div>
 
-                          {/* STATUS AND SAVE */}
                           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                             <div className="min-w-0 sm:w-40">
                               <select
@@ -1345,7 +1534,6 @@ export default function AssignmentsPage() {
                                 ) : (
                                   <Save size={15} />
                                 )}
-
                                 {isSaving ? "Saving" : "Save"}
                               </button>
                             </div>
@@ -1358,7 +1546,6 @@ export default function AssignmentsPage() {
               )}
             </div>
 
-            {/* MODAL FOOTER */}
             <div className="flex flex-col justify-between gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4 sm:flex-row sm:items-center sm:px-6">
               <p className="text-xs text-slate-500">
                 Total Students: {students.length}

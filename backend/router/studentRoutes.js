@@ -25,7 +25,8 @@ import {
   mockInterviewAction,
   getAssignments,
   getJobs,
-  submitAssignment
+  submitAssignment,
+  getPendingAssignmentsCount,
 } from "../controllers/studentController.js";
 
 const router = Router();
@@ -79,6 +80,7 @@ router.patch("/notifications/:id/read", markNotificationRead);
 router.get("/progress", getProgress);
 router.get("/rank", getRank);
 router.get("/payments", getPayments);
+router.get("/pending-assignments",protect,getPendingAssignmentsCount);
 
 router.get("/career", getCareer);
 router.get("/resume", getResume);

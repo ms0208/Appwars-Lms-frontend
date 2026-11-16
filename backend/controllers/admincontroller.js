@@ -1,7 +1,7 @@
 
 import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
-
+import Result from "../models/result.js";
 import User from "../models/user.js";
 
 import {
@@ -648,6 +648,84 @@ export const createUser = async (req, res, next) => {
 // GET /api/admin/users
 // --------------------------------------------------
 
+const getStudentRankMap = async () => {
+  const results = await Result.aggregate([
+    {
+      $match: {
+        published: true,
+      },
+    },
+    {
+      $group: {
+        _id: "$student",
+        totalObtained: {
+          $sum: { $ifNull: ["$obtained", 0] },
+        },
+        totalMarks: {
+          $sum: { $ifNull: ["$total", 0] },
+        },
+        examsAttempted: {
+          $sum: 1,
+        },
+      },
+    },
+    {
+      $match: {
+        totalMarks: { $gt: 0 },
+      },
+    },
+    {
+      $addFields: {
+        percentage: {
+          $round: [
+            {
+              $multiply: [
+                {
+                  $divide: [
+                    "$totalObtained",
+                    "$totalMarks",
+                  ],
+                },
+                100,
+              ],
+            },
+            2,
+          ],
+        },
+      },
+    },
+    {
+      $sort: {
+        percentage: -1,
+        totalObtained: -1,
+      },
+    },
+  ]);
+
+  const rankMap = new Map();
+
+  let currentRank = 0;
+  let previousPercentage = null;
+
+  results.forEach((result, index) => {
+    if (result.percentage !== previousPercentage) {
+      currentRank = index + 1;
+    }
+
+    rankMap.set(String(result._id), {
+      rank: currentRank,
+      totalObtained: result.totalObtained,
+      totalMarks: result.totalMarks,
+      percentage: result.percentage,
+      examsAttempted: result.examsAttempted,
+    });
+
+    previousPercentage = result.percentage;
+  });
+
+  return rankMap;
+};
+
 
 export const getAllUsers = async (req, res, next) => {
   try {
@@ -676,7 +754,9 @@ export const getAllUsers = async (req, res, next) => {
     if (active === "false") filter.isActive = false;
 
     if (typeof search === "string" && search.trim()) {
-      const pattern = escapeRegex(search.trim().slice(0, 100));
+      const pattern = escapeRegex(
+        search.trim().slice(0, 100)
+      );
 
       filter.$or = [
         { userId: { $regex: pattern, $options: "i" } },
@@ -685,30 +765,66 @@ export const getAllUsers = async (req, res, next) => {
       ];
     }
 
-    const currentPage = Math.max(1, Number(page) || 1);
-    const pageSize = Math.min(100, Math.max(1, Number(limit) || 50));
+    const currentPage = Math.max(
+      1,
+      Number(page) || 1
+    );
 
-    const [users, total] = await Promise.all([
+    const pageSize = Math.min(
+      100,
+      Math.max(1, Number(limit) || 50)
+    );
+
+    const [users, total, rankMap] = await Promise.all([
       User.find(filter)
         .select("-password")
-        .populate("referredBy.counsellor", "name userId email")
+        .populate(
+          "referredBy.counsellor",
+          "name userId email"
+        )
         .sort({ createdAt: -1 })
         .skip((currentPage - 1) * pageSize)
         .limit(pageSize)
         .lean(),
 
       User.countDocuments(filter),
+
+      getStudentRankMap(),
     ]);
 
-    res.json({
-      success: true,
+    const formattedUsers = users.map((user) => {
+      const studentPerformance =
+        user.role === "Student"
+          ? rankMap.get(String(user._id))
+          : null;
 
-      users: users.map((user) => ({
+      return {
         ...user,
-        status: user.isActive ? "Active" : "Inactive",
-      })),
 
-      count: users.length,
+        status: user.isActive ? "Active" : "Inactive",
+
+        rank: studentPerformance?.rank ?? null,
+
+        performance: {
+          totalObtained:
+            studentPerformance?.totalObtained ?? 0,
+
+          totalMarks:
+            studentPerformance?.totalMarks ?? 0,
+
+          percentage:
+            studentPerformance?.percentage ?? 0,
+
+          examsAttempted:
+            studentPerformance?.examsAttempted ?? 0,
+        },
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      users: formattedUsers,
+      count: formattedUsers.length,
       total,
       page: currentPage,
       pages: Math.ceil(total / pageSize),
@@ -717,6 +833,7 @@ export const getAllUsers = async (req, res, next) => {
     next(error);
   }
 };
+
 
 
 // --------------------------------------------------

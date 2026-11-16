@@ -335,15 +335,74 @@ export const markNotificationRead = asyncHandler(async (req, res) => {
 });
 
 /* Progress and rank */
-export const getRank = asyncHandler(async (req, res) => {
-  const [totalStudents, completedCourses] = await Promise.all([
-    User.countDocuments({ role: "student", isActive: { $ne: false } }),
-    StudentProgress.countDocuments({ student: req.user._id, progressPercent: { $gte: 100 } })
-  ]);
+// ==========================================
+// GET STUDENT TRAINER-ASSIGNED RANK
+// GET /api/student/rank
+// ==========================================
 
-  // Placeholder rank until your LMS defines a scoring/ranking policy.
-  // This is intentionally not presented as a real rank.
-  res.json({ rank: null, totalStudents, completedCourses, message: "Student rank requires a defined scoring policy." });
+export const getRank = asyncHandler(async (req, res) => {
+  const studentId = req.user._id || req.user.id;
+
+  // Get student and trainer who assigned rank
+  const student = await User.findOne({
+    _id: studentId,
+    role: "Student",
+  })
+    .select("name userId batch rank rankAssignedBy rankAssignedAt")
+    .populate("rankAssignedBy", "name userId");
+
+  if (!student) {
+    return res.status(404).json({
+      success: false,
+      message: "Student not found",
+    });
+  }
+
+  // Count students in the same batch
+  const totalStudents = student.batch
+    ? await User.countDocuments({
+        role: "Student",
+        batch: student.batch,
+        isActive: { $ne: false },
+      })
+    : 0;
+
+  // Completed courses
+  const completedCourses = await StudentProgress.countDocuments({
+    student: studentId,
+    progressPercent: { $gte: 100 },
+  });
+
+  return res.status(200).json({
+    success: true,
+
+    student: {
+      id: student._id,
+      name: student.name,
+      userId: student.userId,
+      batch: student.batch,
+    },
+
+    rank: student.rank ?? null,
+
+    totalStudents,
+
+    completedCourses,
+
+    rankAssignedBy: student.rankAssignedBy
+      ? {
+          id: student.rankAssignedBy._id,
+          name: student.rankAssignedBy.name,
+          userId: student.rankAssignedBy.userId,
+        }
+      : null,
+
+    rankAssignedAt: student.rankAssignedAt || null,
+
+    message: student.rank
+      ? "Trainer-assigned rank fetched successfully"
+      : "Your trainer has not assigned your rank yet",
+  });
 });
 
 // ==========================================
@@ -974,3 +1033,128 @@ export const submitAssignment = async (req, res) => {
   //   });
   // }
 };
+
+
+// ==========================================
+// GET LOGGED-IN STUDENT PENDING ASSIGNMENTS COUNT
+// GET /api/student/pending-assignments
+// ==========================================
+
+export const getPendingAssignmentsCount = asyncHandler(
+  async (req, res) => {
+    const studentId = req.user._id || req.user.id;
+
+    // Find student
+    const student = await User.findById(studentId)
+      .select("_id batch batchId")
+      .lean();
+
+    if (!student) {
+      throw new ApiError(404, "Student not found.");
+    }
+
+    // Resolve student's batch
+    let batchDetails = null;
+
+    if (
+      student.batchId &&
+      mongoose.isValidObjectId(student.batchId)
+    ) {
+      batchDetails = await Batch.findById(student.batchId).lean();
+    }
+
+    // Fallback using batch name
+    if (!batchDetails && student.batch) {
+      batchDetails = await Batch.findOne({
+        batch: String(student.batch).trim(),
+        isActive: true,
+      }).lean();
+    }
+
+    if (!batchDetails) {
+      return res.status(200).json({
+        success: true,
+        pendingAssignments: 0,
+        assignments: {
+          total: 0,
+          pending: 0,
+          completed: 0,
+        },
+        message: "No batch assigned to this student.",
+      });
+    }
+
+    // Fetch published assignments assigned to student's batch
+    const assignments = await Assignment.find({
+      batch: batchDetails._id,
+      status: "Published",
+    })
+      .select("_id")
+      .lean();
+
+    const assignmentIds = assignments.map(
+      (assignment) => assignment._id
+    );
+
+    const totalAssignments = assignmentIds.length;
+
+    // If no published assignments
+    if (totalAssignments === 0) {
+      return res.status(200).json({
+        success: true,
+        pendingAssignments: 0,
+        assignments: {
+          total: 0,
+          pending: 0,
+          completed: 0,
+        },
+      });
+    }
+
+    // Fetch progress of this particular student only
+    const progressRecords = await AssignmentProgress.find({
+      student: student._id,
+      assignment: { $in: assignmentIds },
+    })
+      .select("assignment status")
+      .lean();
+
+    // Map assignment ID to status
+    const progressMap = new Map(
+      progressRecords.map((progress) => [
+        String(progress.assignment),
+        progress.status,
+      ])
+    );
+
+    let pendingCount = 0;
+    let completedCount = 0;
+
+    // Count each published assignment
+    assignments.forEach((assignment) => {
+      const status =
+        progressMap.get(String(assignment._id)) || "Not Access";
+
+      if (status === "Complete") {
+        completedCount++;
+      } else {
+        // Pending and Not Access both count as pending
+        pendingCount++;
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+
+      studentId: student._id,
+
+      pendingAssignments: pendingCount,
+
+      assignments: {
+        total: totalAssignments,
+        pending: pendingCount,
+        completed: completedCount,
+      },
+    });
+  }
+);

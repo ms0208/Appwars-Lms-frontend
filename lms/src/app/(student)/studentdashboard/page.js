@@ -215,6 +215,18 @@ const defaultAttendance = {
 };
 
 // ==========================================
+// DEFAULT RANK DATA
+// ==========================================
+
+const defaultRank = {
+  rank: null,
+  totalStudents: 0,
+  rankAssignedBy: null,
+  rankAssignedAt: null,
+  message: "",
+};
+
+// ==========================================
 // MAIN STUDENT DASHBOARD
 // ==========================================
 
@@ -227,7 +239,18 @@ export default function DashboardPage() {
     defaultAttendance
   );
 
+  // ==========================================
+  // STUDENT RANK
+  // ==========================================
+
+  const [rankData, setRankData] = useState(defaultRank);
+  const [rankLoading, setRankLoading] = useState(false);
+  const [rankError, setRankError] = useState("");
+
+  // ==========================================
   // STUDENT RESULTS
+  // ==========================================
+
   const [results, setResults] = useState([]);
   const [resultsLoading, setResultsLoading] = useState(false);
   const [resultsError, setResultsError] = useState("");
@@ -241,6 +264,90 @@ export default function DashboardPage() {
   const [attendanceError, setAttendanceError] = useState("");
 
   const [notice, setNotice] = useState("");
+
+  // ==========================================
+  // LOAD STUDENT RANK
+  // GET /api/student/rank
+  // ==========================================
+
+  const loadStudentRank = useCallback(async (headers) => {
+    setRankLoading(true);
+    setRankError("");
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/student/rank`,
+        {
+          method: "GET",
+          headers,
+          cache: "no-store",
+        }
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.message ||
+            data.error ||
+            "Unable to fetch your batch rank."
+        );
+      }
+
+      // Supports the controller response:
+      // {
+      //   success: true,
+      //   student: {},
+      //   rank: 4,
+      //   totalStudents: 32,
+      //   rankAssignedBy: {},
+      //   rankAssignedAt: ""
+      // }
+
+      const rank = data?.rank ?? data?.data?.rank ?? null;
+
+      const totalStudents =
+        data?.totalStudents ??
+        data?.data?.totalStudents ??
+        0;
+
+      const rankAssignedBy =
+        data?.rankAssignedBy ??
+        data?.data?.rankAssignedBy ??
+        null;
+
+      const rankAssignedAt =
+        data?.rankAssignedAt ??
+        data?.data?.rankAssignedAt ??
+        null;
+
+      setRankData({
+        rank:
+          rank !== null && rank !== undefined
+            ? Number(rank)
+            : null,
+
+        totalStudents: Number(totalStudents) || 0,
+
+        rankAssignedBy,
+        rankAssignedAt,
+
+        message: data?.message || "",
+      });
+
+      console.log("STUDENT RANK RESPONSE:", data);
+    } catch (err) {
+      console.error("Student rank error:", err);
+
+      setRankData(defaultRank);
+
+      setRankError(
+        err.message || "Unable to load your rank."
+      );
+    } finally {
+      setRankLoading(false);
+    }
+  }, []);
 
   // ==========================================
   // LOAD STUDENT PROFILE, DASHBOARD,
@@ -257,6 +364,7 @@ export default function DashboardPage() {
     setError("");
     setAttendanceError("");
     setResultsError("");
+    setRankError("");
 
     try {
       // ==========================================
@@ -342,6 +450,7 @@ export default function DashboardPage() {
 
       // ==========================================
       // FETCH DASHBOARD DATA
+      // GET /api/student/profile
       // ==========================================
 
       const dashboardResponse = await fetch(
@@ -377,7 +486,89 @@ export default function DashboardPage() {
         );
       }
 
-      const dashboardResult = getDashboard(dashboardData);
+      // ==========================================
+      // EXTRACT DASHBOARD DATA
+      // ==========================================
+
+      let dashboardResult = getDashboard(dashboardData);
+
+      // ==========================================
+      // FETCH STUDENT PENDING ASSIGNMENTS COUNT
+      // GET /api/student/pending-assignments
+      // ==========================================
+
+      try {
+        const pendingAssignmentsResponse = await fetch(
+          `${API_URL}/api/student/pending-assignments`,
+          {
+            method: "GET",
+            headers,
+            cache: "no-store",
+          }
+        );
+
+        const pendingAssignmentsData =
+          await pendingAssignmentsResponse
+            .json()
+            .catch(() => ({}));
+
+        if (!pendingAssignmentsResponse.ok) {
+          throw new Error(
+            pendingAssignmentsData.message ||
+              pendingAssignmentsData.error ||
+              "Unable to fetch pending assignments count."
+          );
+        }
+
+        const pendingCount =
+          pendingAssignmentsData?.pendingAssignments ??
+          pendingAssignmentsData?.data?.pendingAssignments ??
+          pendingAssignmentsData?.assignments?.pending ??
+          pendingAssignmentsData?.data?.assignments?.pending ??
+          0;
+
+        const completedCount =
+          pendingAssignmentsData?.assignments?.completed ??
+          pendingAssignmentsData?.data?.assignments?.completed ??
+          0;
+
+        const totalCount =
+          pendingAssignmentsData?.assignments?.total ??
+          pendingAssignmentsData?.data?.assignments?.total ??
+          Number(pendingCount) + Number(completedCount);
+
+        dashboardResult = {
+          ...dashboardResult,
+
+          pendingAssignments: Number(pendingCount),
+
+          assignments: {
+            ...(dashboardResult?.assignments || {}),
+            total: Number(totalCount),
+            pending: Number(pendingCount),
+            completed: Number(completedCount),
+          },
+        };
+
+        console.log(
+          "STUDENT PENDING ASSIGNMENTS RESPONSE:",
+          pendingAssignmentsData
+        );
+
+        console.log(
+          "STUDENT PENDING ASSIGNMENTS COUNT:",
+          Number(pendingCount)
+        );
+      } catch (pendingAssignmentsError) {
+        console.error(
+          "Student pending assignments error:",
+          pendingAssignmentsError
+        );
+
+        dashboardResult = {
+          ...dashboardResult,
+        };
+      }
 
       // ==========================================
       // EXTRACT COMPLETE BATCH OBJECT
@@ -419,6 +610,13 @@ export default function DashboardPage() {
         ...dashboardResult,
         batchDetails: completeBatch,
       });
+
+      // ==========================================
+      // FETCH STUDENT RANK
+      // GET /api/student/rank
+      // ==========================================
+
+      await loadStudentRank(headers);
 
       // ==========================================
       // FETCH STUDENT ATTENDANCE
@@ -580,7 +778,7 @@ export default function DashboardPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [loadStudentRank]);
 
   // ==========================================
   // INITIAL LOAD
@@ -718,7 +916,7 @@ export default function DashboardPage() {
         : "Batch progress not available",
       progress: safeCourseProgress,
     },
-       {
+    {
       title: "Batch Progress",
       value: hasCourseProgress
         ? `${safeCourseProgress}%`
@@ -794,6 +992,20 @@ export default function DashboardPage() {
   const batchUpdatedAt =
     batchDetails.updatedAt ||
     dashboard?.batchUpdatedAt;
+
+  // ==========================================
+  // RANK DISPLAY VALUES
+  // ==========================================
+
+  const assignedRank = rankData.rank;
+
+  const totalBatchStudents = rankData.totalStudents;
+
+  const hasAssignedRank =
+    assignedRank !== null &&
+    assignedRank !== undefined &&
+    Number.isFinite(Number(assignedRank)) &&
+    Number(assignedRank) > 0;
 
   // ==========================================
   // RENDER
@@ -915,7 +1127,7 @@ export default function DashboardPage() {
       )}
 
       {/* ==========================================
-          STATISTICS CARDS
+          STATISTICS CARDS + STUDENT RANK
       ========================================== */}
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
@@ -927,10 +1139,156 @@ export default function DashboardPage() {
           />
         ))}
 
+        {/* TRAINER ASSIGNED STUDENT RANK */}
+
         <RankCard
-          rank={dashboard?.rank ?? "—"}
-          total={dashboard?.rankTotal ?? 0}
+          rank={
+            rankLoading
+              ? "..."
+              : hasAssignedRank
+                ? assignedRank
+                : "Not Assigned"
+          }
+          total={totalBatchStudents}
         />
+
+      </section>
+
+      {/* ==========================================
+          RANK INFORMATION
+      ========================================== */}
+
+      <section className="mt-5 rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
+
+        <div className="flex flex-wrap items-start justify-between gap-4">
+
+          <div className="flex items-start gap-3">
+
+            <div className="rounded-lg bg-blue-50 p-3 text-blue-700">
+              <Users size={23} />
+            </div>
+
+            <div>
+              <h2 className="text-lg font-bold text-[#102e60]">
+                My Batch Rank
+              </h2>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Your performance rank assigned by your trainer.
+              </p>
+            </div>
+
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              const token =
+                sessionStorage.getItem("token") ||
+                localStorage.getItem("appwars_token") ||
+                localStorage.getItem("token");
+
+              if (token) {
+                loadStudentRank({
+                  Authorization: `Bearer ${token}`,
+                  "Content-Type": "application/json",
+                });
+              }
+            }}
+            disabled={rankLoading}
+            className="inline-flex items-center gap-2 rounded-lg border border-blue-100 px-3 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 disabled:opacity-50"
+          >
+            <RefreshCw
+              size={15}
+              className={rankLoading ? "animate-spin" : ""}
+            />
+            Refresh Rank
+          </button>
+
+        </div>
+
+        {rankLoading ? (
+          <div className="mt-5 flex items-center gap-2 rounded-lg bg-blue-50 p-4 text-sm text-blue-700">
+            <RefreshCw size={17} className="animate-spin" />
+            Fetching your batch rank...
+          </div>
+        ) : rankError ? (
+          <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4">
+
+            <p className="text-sm font-semibold text-red-700">
+              Unable to load your rank
+            </p>
+
+            <p className="mt-1 text-sm text-red-600">
+              {rankError}
+            </p>
+
+          </div>
+        ) : (
+          <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+
+            {/* ASSIGNED RANK */}
+
+            <div className="rounded-xl border border-blue-100 bg-blue-50 p-5">
+
+              <p className="text-sm font-medium text-slate-600">
+                Your Rank
+              </p>
+
+              <p className="mt-2 text-3xl font-extrabold text-[#102e60]">
+                {hasAssignedRank
+                  ? `#${assignedRank}`
+                  : "Not Assigned"}
+              </p>
+
+              <p className="mt-1 text-xs text-slate-500">
+                {hasAssignedRank
+                  ? "Your position in the batch"
+                  : "Your trainer has not assigned your rank yet"}
+              </p>
+
+            </div>
+
+            {/* TOTAL STUDENTS */}
+
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-5">
+
+              <p className="text-sm font-medium text-slate-600">
+                Total Batch Students
+              </p>
+
+              <p className="mt-2 text-3xl font-extrabold text-indigo-700">
+                {totalBatchStudents}
+              </p>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Active students in {batchName}
+              </p>
+
+            </div>
+
+            {/* RANK ASSIGNED BY */}
+
+            <div className="rounded-xl border border-green-100 bg-green-50 p-5">
+
+              <p className="text-sm font-medium text-slate-600">
+                Rank Assigned By
+              </p>
+
+              <p className="mt-2 break-words text-lg font-bold text-green-700">
+                {rankData.rankAssignedBy?.name || "Not assigned"}
+              </p>
+
+              <p className="mt-1 text-xs text-slate-500">
+                {rankData.rankAssignedAt
+                  ? `Assigned on ${formatDate(rankData.rankAssignedAt)}`
+                  : "Trainer assignment details"}
+              </p>
+
+            </div>
+
+          </div>
+        )}
 
       </section>
 
@@ -1138,8 +1496,6 @@ export default function DashboardPage() {
 
       <section className="mt-6 overflow-hidden rounded-xl border border-blue-100 bg-white shadow-sm">
 
-        {/* RESULTS HEADER */}
-
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 p-5">
 
           <div>
@@ -1301,17 +1657,10 @@ export default function DashboardPage() {
       </section>
 
       {/* ==========================================
-          LIVE CLASS AND ANNOUNCEMENTS
-      ========================================== */}
-
-
-      {/* ==========================================
           COMPLETE BATCH INFORMATION
       ========================================== */}
 
       <section className="mt-8 rounded-xl border border-blue-100 bg-white p-5 shadow-sm sm:p-6">
-
-        {/* SECTION HEADER */}
 
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
 
