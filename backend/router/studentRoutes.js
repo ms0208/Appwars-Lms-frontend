@@ -16,7 +16,7 @@ import {
   getNotifications,
   markNotificationRead,
   getRank,
-  getProgress,
+  getMarks,
   getPayments,
   getCareer,
   getResume,
@@ -77,7 +77,7 @@ router.post("/doubts", createDoubt);
 router.get("/notifications", getNotifications);
 router.patch("/notifications/:id/read", markNotificationRead);
 
-router.get("/progress", getProgress);
+router.get("/marks", getMarks);
 router.get("/rank", getRank);
 router.get("/payments", getPayments);
 router.get("/pending-assignments",protect,getPendingAssignmentsCount);

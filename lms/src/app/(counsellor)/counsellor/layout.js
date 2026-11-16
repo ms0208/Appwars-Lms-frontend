@@ -205,8 +205,6 @@ export default function CounsellorLayout({ children }) {
               title="Notifications"
               className="relative rounded-full p-2 text-slate-500 hover:bg-slate-100"
             >
-              <Bell size={20} />
-              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500" />
             </button>
 
             <div className="hidden h-8 w-px bg-slate-200 sm:block" />

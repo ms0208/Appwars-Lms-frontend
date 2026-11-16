@@ -43,6 +43,11 @@ export default function TrainerLayout({ children }) {
       icon: ClipboardList
     },
     {
+      name:"Batch Progress",
+      href:"/batch-progress",
+      icon:ClipboardList
+    },
+    {
       name:"Trainer Profile",
       href:"/trainer-profile",
       icon:ClipboardList

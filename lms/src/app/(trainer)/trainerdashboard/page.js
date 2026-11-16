@@ -490,13 +490,13 @@ export default function TrainerDashboard() {
               color="bg-emerald-50 text-emerald-700"
             />
 
-            <StatCard
+            {/* <StatCard
               title="Pending Reviews"
               value={pendingReviews}
               description="Assignments awaiting review"
               icon={Clock}
               color="bg-amber-50 text-amber-700"
-            />
+            /> */}
           </div>
         </section>
 

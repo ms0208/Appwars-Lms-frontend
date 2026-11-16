@@ -20,6 +20,7 @@ const menuItems = [
   { label: "Learning Resources", href: "/resources", icon: BookOpen },
   { label: "Assignments & Tests", href: "/assignments", icon: ClipboardList },
   { label: "Progress & Payments", href: "/progress-payments", icon: Wallet },
+  {label: "Batch Progress" , href:"/batchProgress", icon:ClipboardList},
   {
     label: "Career & Placement",
     href: "/career-placement",

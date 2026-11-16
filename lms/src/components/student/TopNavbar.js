@@ -79,8 +79,6 @@ export default function TopNavbar({ studentName = "Aarav" }) {
           aria-label="Notifications"
           className="relative rounded-lg p-2 text-slate-600 hover:bg-blue-50"
         >
-          <Bell size={19} />
-          <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500" />
         </button>
 
         <button
@@ -101,11 +99,6 @@ export default function TopNavbar({ studentName = "Aarav" }) {
               {profile.role}
             </span>
           </span>
-
-          <ChevronDown
-            size={14}
-            className="hidden text-slate-500 sm:block"
-          />
         </button>
       </div>
     </header>

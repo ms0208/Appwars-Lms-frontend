@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -12,40 +11,42 @@ import {
   BookOpen,
   CheckCircle2,
   FileText,
+  GraduationCap,
+  TrendingUp,
 } from "lucide-react";
 
 import StatCard from "@/src/components/student/StatCard";
 import RankCard from "@/src/components/student/RankCard";
-import LiveClassSchedule from "@/src/components/student/LiveClassSchedule";
-import Announcements from "@/src/components/student/Announcements";
 
 const API_URL = (
   process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000"
 ).replace(/\/$/, "");
 
 // ==========================================
-// RESPONSE HELPERS
+// DEFAULT DATA
 // ==========================================
 
-function getUser(data) {
-  return (
-    data?.user ||
-    data?.data?.user ||
-    data?.data?.data?.user ||
-    data?.data ||
-    data
-  );
-}
+const defaultAttendance = {
+  statistics: {
+    totalClasses: 0,
+    present: 0,
+    absent: 0,
+    attendancePercentage: 0,
+  },
+  attendance: [],
+};
 
-function getDashboard(data) {
-  return (
-    data?.dashboard ||
-    data?.data?.dashboard ||
-    data?.data?.data?.dashboard ||
-    data?.data ||
-    data
-  );
-}
+const defaultRank = {
+  rank: null,
+  totalStudents: 0,
+  rankAssignedBy: null,
+  rankAssignedAt: null,
+  message: "",
+};
+
+// ==========================================
+// RESPONSE HELPERS
+// ==========================================
 
 function isObject(value) {
   return (
@@ -55,9 +56,45 @@ function isObject(value) {
   );
 }
 
-// ==========================================
-// EXTRACT BATCH DETAILS
-// ==========================================
+function getUser(data) {
+  return (
+    data?.user ||
+    data?.data?.user ||
+    data?.data?.data?.user ||
+    data?.data ||
+    data ||
+    {}
+  );
+}
+
+function getDashboard(data) {
+  return (
+    data?.dashboard ||
+    data?.data?.dashboard ||
+    data?.data?.data?.dashboard ||
+    data?.data ||
+    data ||
+    {}
+  );
+}
+
+function getArray(...candidates) {
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
+  }
+
+  return [];
+}
+
+function getTopics(data) {
+  return getArray(
+    data?.topics,
+    data?.data?.topics,
+    data?.data?.data?.topics,
+    data?.progress?.topics,
+    data?.batchProgress?.topics
+  );
+}
 
 function getBatchDetails(...responses) {
   for (const response of responses) {
@@ -69,49 +106,47 @@ function getBatchDetails(...responses) {
     const candidates = [
       response.batchDetails,
       response.data?.batchDetails,
-      response.data?.data?.batchDetails,
-
-      response.dashboard?.batchDetails,
-      response.data?.dashboard?.batchDetails,
-      response.data?.data?.dashboard?.batchDetails,
-
       response.user?.batchDetails,
       response.data?.user?.batchDetails,
-      response.data?.data?.user?.batchDetails,
-
+      response.dashboard?.batchDetails,
       dashboard?.batchDetails,
       dashboard?.batch,
       dashboard?.student?.batch,
-
       user?.batchDetails,
       user?.batch,
       user?.student?.batch,
-
       response.batch,
       response.data?.batch,
-      response.data?.data?.batch,
     ];
 
     for (const candidate of candidates) {
-      if (isObject(candidate)) {
-        if (isObject(candidate.batch)) {
-          return {
-            ...candidate,
-            ...candidate.batch,
-          };
-        }
+      if (!isObject(candidate)) continue;
 
-        return candidate;
+      if (isObject(candidate.batch)) {
+        return {
+          ...candidate,
+          ...candidate.batch,
+          _id: candidate._id || candidate.batch._id,
+        };
       }
+
+      return candidate;
     }
   }
 
   return {};
 }
 
-// ==========================================
-// DATE FORMATTER
-// ==========================================
+function getBatchId(batchDetails, user) {
+  return (
+    batchDetails?._id ||
+    batchDetails?.id ||
+    user?.batchDetails?._id ||
+    user?.batch?._id ||
+    user?.batchId ||
+    null
+  );
+}
 
 function formatDate(date) {
   if (!date) return "Not available";
@@ -129,36 +164,94 @@ function formatDate(date) {
   });
 }
 
-// ==========================================
-// STATUS STYLING
-// ==========================================
-
 function getStatusClass(status) {
   const normalizedStatus = String(status || "").toLowerCase();
 
   if (
     normalizedStatus === "running" ||
-    normalizedStatus === "active"
+    normalizedStatus === "active" ||
+    normalizedStatus === "present" ||
+    normalizedStatus === "confident" ||
+    normalizedStatus === "completed"
   ) {
     return "bg-green-100 text-green-700";
   }
 
-  if (normalizedStatus === "completed") {
-    return "bg-blue-100 text-blue-700";
-  }
-
-  if (normalizedStatus === "upcoming") {
+  if (
+    normalizedStatus === "upcoming" ||
+    normalizedStatus === "learning" ||
+    normalizedStatus === "in progress"
+  ) {
     return "bg-orange-100 text-orange-700";
   }
 
   if (
     normalizedStatus === "inactive" ||
-    normalizedStatus === "cancelled"
+    normalizedStatus === "cancelled" ||
+    normalizedStatus === "absent"
   ) {
     return "bg-red-100 text-red-700";
   }
 
   return "bg-slate-100 text-slate-700";
+}
+
+function getPercentage(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) return 0;
+
+  return Math.min(100, Math.max(0, number));
+}
+
+function getProgressValue(topic, type) {
+  if (type === "trainer") {
+    return getPercentage(
+      topic?.completionPercentage ??
+      topic?.progressPercentage ??
+      topic?.progress ??
+      topic?.percentage ??
+      0
+    );
+  }
+
+  return getPercentage(
+    topic?.knowledgePercentage ??
+    topic?.studentProgress ??
+    topic?.progressPercentage ??
+    0
+  );
+}
+
+function calculateAverage(topics, type) {
+  if (!topics.length) return 0;
+
+  const total = topics.reduce(
+    (sum, topic) => sum + getProgressValue(topic, type),
+    0
+  );
+
+  return Math.round(total / topics.length);
+}
+
+function getTopicName(topic) {
+  return String(
+    topic?.topicName ||
+    topic?.name ||
+    topic?.title ||
+    ""
+  ).trim();
+}
+
+function getTopicReference(topic) {
+  return (
+    topic?.topicId?._id ||
+    topic?.topicId ||
+    topic?.syllabusTopicId?._id ||
+    topic?.syllabusTopicId ||
+    topic?._id ||
+    null
+  );
 }
 
 // ==========================================
@@ -201,30 +294,37 @@ function BatchInfoCard({
 }
 
 // ==========================================
-// ATTENDANCE DEFAULT DATA
+// PROGRESS BAR
 // ==========================================
 
-const defaultAttendance = {
-  statistics: {
-    totalClasses: 0,
-    present: 0,
-    absent: 0,
-    attendancePercentage: 0,
-  },
-  attendance: [],
-};
+function ProgressBar({
+  label,
+  percentage,
+  color = "bg-blue-600",
+}) {
+  const safePercentage = getPercentage(percentage);
 
-// ==========================================
-// DEFAULT RANK DATA
-// ==========================================
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+        <span className="font-medium text-slate-600">
+          {label}
+        </span>
 
-const defaultRank = {
-  rank: null,
-  totalStudents: 0,
-  rankAssignedBy: null,
-  rankAssignedAt: null,
-  message: "",
-};
+        <span className="font-bold text-slate-800">
+          {safePercentage}%
+        </span>
+      </div>
+
+      <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${color}`}
+          style={{ width: `${safePercentage}%` }}
+        />
+      </div>
+    </div>
+  );
+}
 
 // ==========================================
 // MAIN STUDENT DASHBOARD
@@ -232,38 +332,74 @@ const defaultRank = {
 
 export default function DashboardPage() {
   const [student, setStudent] = useState(null);
-
   const [dashboard, setDashboard] = useState(null);
 
   const [attendanceData, setAttendanceData] = useState(
     defaultAttendance
   );
 
-  // ==========================================
-  // STUDENT RANK
-  // ==========================================
-
   const [rankData, setRankData] = useState(defaultRank);
-  const [rankLoading, setRankLoading] = useState(false);
-  const [rankError, setRankError] = useState("");
-
-  // ==========================================
-  // STUDENT RESULTS
-  // ==========================================
 
   const [results, setResults] = useState([]);
-  const [resultsLoading, setResultsLoading] = useState(false);
-  const [resultsError, setResultsError] = useState("");
+
+  // ==========================================
+  // BATCH PROGRESS STATES
+  // ==========================================
+
+  const [studentBatchProgress, setStudentBatchProgress] =
+    useState(null);
+
+  const [trainerBatchProgress, setTrainerBatchProgress] =
+    useState(null);
+
+  const [batchProgressLoading, setBatchProgressLoading] =
+    useState(false);
+
+  const [batchProgressError, setBatchProgressError] =
+    useState("");
+
+  // ==========================================
+  // LOADING STATES
+  // ==========================================
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [attendanceLoading, setAttendanceLoading] =
+    useState(false);
+
+  const [rankLoading, setRankLoading] = useState(false);
+
+  const [resultsLoading, setResultsLoading] = useState(false);
+
+  const [resultsError, setResultsError] = useState("");
+  const [attendanceError, setAttendanceError] = useState("");
+  const [rankError, setRankError] = useState("");
 
   const [error, setError] = useState("");
-  const [attendanceError, setAttendanceError] = useState("");
-
   const [notice, setNotice] = useState("");
+
+  // ==========================================
+  // AUTHENTICATION HEADERS
+  // ==========================================
+
+  const getAuthHeaders = useCallback(() => {
+    const token =
+      sessionStorage.getItem("token") ||
+      localStorage.getItem("appwars_token") ||
+      localStorage.getItem("token");
+
+    if (!token) {
+      throw new Error(
+        "You are not logged in. Please sign in again."
+      );
+    }
+
+    return {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
+  }, []);
 
   // ==========================================
   // LOAD STUDENT RANK
@@ -289,37 +425,20 @@ export default function DashboardPage() {
       if (!response.ok) {
         throw new Error(
           data.message ||
-            data.error ||
-            "Unable to fetch your batch rank."
+          data.error ||
+          "Unable to fetch your batch rank."
         );
       }
 
-      // Supports the controller response:
-      // {
-      //   success: true,
-      //   student: {},
-      //   rank: 4,
-      //   totalStudents: 32,
-      //   rankAssignedBy: {},
-      //   rankAssignedAt: ""
-      // }
-
-      const rank = data?.rank ?? data?.data?.rank ?? null;
+      const rank =
+        data?.rank ??
+        data?.data?.rank ??
+        null;
 
       const totalStudents =
         data?.totalStudents ??
         data?.data?.totalStudents ??
         0;
-
-      const rankAssignedBy =
-        data?.rankAssignedBy ??
-        data?.data?.rankAssignedBy ??
-        null;
-
-      const rankAssignedAt =
-        data?.rankAssignedAt ??
-        data?.data?.rankAssignedAt ??
-        null;
 
       setRankData({
         rank:
@@ -329,18 +448,23 @@ export default function DashboardPage() {
 
         totalStudents: Number(totalStudents) || 0,
 
-        rankAssignedBy,
-        rankAssignedAt,
+        rankAssignedBy:
+          data?.rankAssignedBy ??
+          data?.data?.rankAssignedBy ??
+          null,
+
+        rankAssignedAt:
+          data?.rankAssignedAt ??
+          data?.data?.rankAssignedAt ??
+          null,
 
         message: data?.message || "",
       });
 
-      console.log("STUDENT RANK RESPONSE:", data);
     } catch (err) {
       console.error("Student rank error:", err);
 
       setRankData(defaultRank);
-
       setRankError(
         err.message || "Unable to load your rank."
       );
@@ -350,435 +474,438 @@ export default function DashboardPage() {
   }, []);
 
   // ==========================================
-  // LOAD STUDENT PROFILE, DASHBOARD,
-  // ATTENDANCE AND RESULTS
+  // LOAD STUDENT + TRAINER BATCH PROGRESS
+  //
+  // GET /api/progress/student/:batchId
+  // GET /api/progress/trainer/:batchId
   // ==========================================
 
-  const loadDashboard = useCallback(async (isRefresh = false) => {
-    if (isRefresh) {
-      setRefreshing(true);
-    } else {
-      setLoading(true);
-    }
-
-    setError("");
-    setAttendanceError("");
-    setResultsError("");
-    setRankError("");
-
-    try {
-      // ==========================================
-      // GET AUTHENTICATION TOKEN
-      // ==========================================
-
-      const token =
-        typeof window !== "undefined"
-          ? sessionStorage.getItem("token") ||
-            localStorage.getItem("appwars_token") ||
-            localStorage.getItem("token")
-          : null;
-
-      if (!token) {
-        throw new Error(
-          "You are not logged in. Please sign in again."
+  const loadBatchProgress = useCallback(
+    async (batchId, headers) => {
+      if (!batchId) {
+        setBatchProgressError(
+          "Your batch ID is not available. Please contact your administrator."
         );
+
+        setStudentBatchProgress(null);
+        setTrainerBatchProgress(null);
+        return;
       }
 
-      const headers = {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      };
-
-      // ==========================================
-      // FETCH STUDENT PROFILE
-      // GET /api/student/profile
-      // ==========================================
-
-      const profileResponse = await fetch(
-        `${API_URL}/api/student/profile`,
-        {
-          method: "GET",
-          headers,
-          cache: "no-store",
-        }
-      );
-
-      const profileData = await profileResponse
-        .json()
-        .catch(() => ({}));
-
-      if (!profileResponse.ok) {
-        if (profileResponse.status === 401) {
-          throw new Error(
-            "Your session has expired. Please sign in again."
-          );
-        }
-
-        if (profileResponse.status === 403) {
-          throw new Error(
-            "You do not have permission to access this dashboard."
-          );
-        }
-
-        throw new Error(
-          profileData.message ||
-            profileData.error ||
-            "Unable to load your student profile."
-        );
-      }
-
-      const user = getUser(profileData);
-
-      if (
-        !user ||
-        typeof user !== "object" ||
-        !user.name
-      ) {
-        throw new Error(
-          "The server did not return valid student profile data."
-        );
-      }
-
-      if (
-        user.role &&
-        String(user.role).toLowerCase() !== "student"
-      ) {
-        throw new Error(
-          "This dashboard is available only to student accounts."
-        );
-      }
-
-      // ==========================================
-      // FETCH DASHBOARD DATA
-      // GET /api/student/profile
-      // ==========================================
-
-      const dashboardResponse = await fetch(
-        `${API_URL}/api/student/profile`,
-        {
-          method: "GET",
-          headers,
-          cache: "no-store",
-        }
-      );
-
-      const dashboardData = await dashboardResponse
-        .json()
-        .catch(() => ({}));
-
-      if (!dashboardResponse.ok) {
-        if (dashboardResponse.status === 401) {
-          throw new Error(
-            "Your session has expired. Please sign in again."
-          );
-        }
-
-        if (dashboardResponse.status === 403) {
-          throw new Error(
-            "You do not have permission to access this dashboard."
-          );
-        }
-
-        throw new Error(
-          dashboardData.message ||
-            dashboardData.error ||
-            "Unable to fetch student dashboard data."
-        );
-      }
-
-      // ==========================================
-      // EXTRACT DASHBOARD DATA
-      // ==========================================
-
-      let dashboardResult = getDashboard(dashboardData);
-
-      // ==========================================
-      // FETCH STUDENT PENDING ASSIGNMENTS COUNT
-      // GET /api/student/pending-assignments
-      // ==========================================
+      setBatchProgressLoading(true);
+      setBatchProgressError("");
 
       try {
-        const pendingAssignmentsResponse = await fetch(
+        const [studentResponse, trainerResponse] =
+          await Promise.all([
+            fetch(
+              `${API_URL}/api/progress/student/${batchId}`,
+              {
+                method: "GET",
+                headers,
+                cache: "no-store",
+              }
+            ),
+
+            fetch(
+              `${API_URL}/api/progress/student/${batchId}/trainer`,
+              {
+                method: "GET",
+                headers,
+                cache: "no-store",
+              }
+            ),
+          ]);
+
+        const [studentData, trainerData] = await Promise.all([
+          studentResponse.json().catch(() => ({})),
+          trainerResponse.json().catch(() => ({})),
+        ]);
+
+        if (!studentResponse.ok) {
+          throw new Error(
+            studentData.message ||
+            studentData.error ||
+            "Unable to fetch student learning progress."
+          );
+        }
+
+        setStudentBatchProgress(studentData);
+
+        if (!trainerResponse.ok) {
+          setTrainerBatchProgress(null);
+
+          setBatchProgressError(
+            trainerData.message ||
+            trainerData.error ||
+            "Student progress loaded, but trainer batch progress could not be loaded."
+          );
+        } else {
+          setTrainerBatchProgress(trainerData);
+        }
+
+        console.log(
+          "STUDENT BATCH PROGRESS:",
+          studentData
+        );
+
+        console.log(
+          "TRAINER BATCH PROGRESS:",
+          trainerData
+        );
+
+      } catch (err) {
+        console.error("Batch progress error:", err);
+
+        setBatchProgressError(
+          err.message || "Unable to load batch progress."
+        );
+      } finally {
+        setBatchProgressLoading(false);
+      }
+    },
+    []
+  );
+
+  // ==========================================
+  // LOAD STUDENT ATTENDANCE
+  // GET /api/student/attendance
+  // ==========================================
+
+  const loadAttendance = useCallback(async (headers) => {
+    setAttendanceLoading(true);
+    setAttendanceError("");
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/student/attendance`,
+        {
+          method: "GET",
+          headers,
+          cache: "no-store",
+        }
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.message ||
+          data.error ||
+          "Unable to fetch student attendance."
+        );
+      }
+
+      const statistics = data.statistics || {};
+
+      const records = getArray(
+        data.attendance,
+        data.data?.attendance,
+        data.records
+      );
+
+      setAttendanceData({
+        statistics: {
+          totalClasses: Number(statistics.totalClasses) || 0,
+          present: Number(statistics.present) || 0,
+          absent: Number(statistics.absent) || 0,
+          attendancePercentage:
+            Number(statistics.attendancePercentage) || 0,
+        },
+        attendance: records,
+      });
+
+    } catch (err) {
+      console.error("Student attendance error:", err);
+
+      setAttendanceError(
+        err.message || "Unable to load attendance."
+      );
+
+      setAttendanceData(defaultAttendance);
+    } finally {
+      setAttendanceLoading(false);
+    }
+  }, []);
+
+  // ==========================================
+  // LOAD STUDENT RESULTS
+  // GET /api/student/marks
+  // ==========================================
+
+  const loadResults = useCallback(async (headers) => {
+    setResultsLoading(true);
+    setResultsError("");
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/student/marks`,
+        {
+          method: "GET",
+          headers,
+          cache: "no-store",
+        }
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.message ||
+          data.error ||
+          "Unable to fetch student results."
+        );
+      }
+
+      setResults(
+        getArray(
+          data.results,
+          data.data?.results,
+          data.data?.data?.results
+        )
+      );
+
+    } catch (err) {
+      console.error("Student results error:", err);
+
+      setResults([]);
+      setResultsError(
+        err.message || "Unable to load results."
+      );
+    } finally {
+      setResultsLoading(false);
+    }
+  }, []);
+
+  // ==========================================
+  // LOAD STUDENT DASHBOARD
+  //
+  // GET /api/student/me
+  // ==========================================
+
+  const loadDashboard = useCallback(
+    async (isRefresh = false) => {
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      setError("");
+      setNotice("");
+
+      try {
+        const headers = getAuthHeaders();
+
+        // ==========================================
+        // FETCH STUDENT PROFILE
+        // ==========================================
+
+        const profileResponse = await fetch(
+          `${API_URL}/api/student/profile`,
+          {
+            method: "GET",
+            headers,
+            cache: "no-store",
+          }
+        );
+
+        const profileData = await profileResponse
+          .json()
+          .catch(() => ({}));
+
+        if (!profileResponse.ok) {
+          if (profileResponse.status === 401) {
+            throw new Error(
+              "Your session has expired. Please sign in again."
+            );
+          }
+
+          if (profileResponse.status === 403) {
+            throw new Error(
+              "You do not have permission to access this dashboard."
+            );
+          }
+
+          throw new Error(
+            profileData.message ||
+            profileData.error ||
+            "Unable to load your student profile."
+          );
+        }
+
+        const user = getUser(profileData);
+
+        if (!isObject(user) || !user.name) {
+          throw new Error(
+            "The server did not return valid student profile data."
+          );
+        }
+
+        if (
+          user.role &&
+          String(user.role).toLowerCase() !== "student"
+        ) {
+          throw new Error(
+            "This dashboard is available only to student accounts."
+          );
+        }
+
+        // ==========================================
+        // EXTRACT BATCH DETAILS
+        // ==========================================
+
+        const completeBatch = getBatchDetails(
+          profileData,
+          user
+        );
+
+        const batchId = getBatchId(
+          completeBatch,
+          user
+        );
+
+        const studentBatch = isObject(user.batch)
+          ? user.batch.batch ||
+            user.batch.name ||
+            user.batch.batchName
+          : user.batch;
+
+        const batchName =
+          completeBatch.batch ||
+          completeBatch.name ||
+          completeBatch.batchName ||
+          studentBatch ||
+          "Not assigned";
+
+        // ==========================================
+        // SET STUDENT
+        // ==========================================
+
+        setStudent({
+          id:
+            user.userId ||
+            user.id ||
+            user._id ||
+            "",
+
+          name: user.name || "Student",
+          email: user.email || "",
+          role: user.role || "Student",
+          batch: batchName,
+          batchId,
+        });
+
+        // ==========================================
+        // INITIAL DASHBOARD DATA
+        // ==========================================
+
+        setDashboard({
+          ...getDashboard(profileData),
+          batchDetails: completeBatch,
+          batchId,
+        });
+
+        console.log("STUDENT PROFILE RESPONSE:", profileData);
+        console.log("EXTRACTED BATCH DETAILS:", completeBatch);
+        console.log("STUDENT BATCH ID:", batchId);
+
+        // ==========================================
+        // FETCH OPTIONAL DASHBOARD DATA
+        // ==========================================
+
+        const pendingPromise = fetch(
           `${API_URL}/api/student/pending-assignments`,
           {
             method: "GET",
             headers,
             cache: "no-store",
           }
-        );
-
-        const pendingAssignmentsData =
-          await pendingAssignmentsResponse
-            .json()
-            .catch(() => ({}));
-
-        if (!pendingAssignmentsResponse.ok) {
-          throw new Error(
-            pendingAssignmentsData.message ||
-              pendingAssignmentsData.error ||
-              "Unable to fetch pending assignments count."
-          );
-        }
-
-        const pendingCount =
-          pendingAssignmentsData?.pendingAssignments ??
-          pendingAssignmentsData?.data?.pendingAssignments ??
-          pendingAssignmentsData?.assignments?.pending ??
-          pendingAssignmentsData?.data?.assignments?.pending ??
-          0;
-
-        const completedCount =
-          pendingAssignmentsData?.assignments?.completed ??
-          pendingAssignmentsData?.data?.assignments?.completed ??
-          0;
-
-        const totalCount =
-          pendingAssignmentsData?.assignments?.total ??
-          pendingAssignmentsData?.data?.assignments?.total ??
-          Number(pendingCount) + Number(completedCount);
-
-        dashboardResult = {
-          ...dashboardResult,
-
-          pendingAssignments: Number(pendingCount),
-
-          assignments: {
-            ...(dashboardResult?.assignments || {}),
-            total: Number(totalCount),
-            pending: Number(pendingCount),
-            completed: Number(completedCount),
-          },
-        };
-
-        console.log(
-          "STUDENT PENDING ASSIGNMENTS RESPONSE:",
-          pendingAssignmentsData
-        );
-
-        console.log(
-          "STUDENT PENDING ASSIGNMENTS COUNT:",
-          Number(pendingCount)
-        );
-      } catch (pendingAssignmentsError) {
-        console.error(
-          "Student pending assignments error:",
-          pendingAssignmentsError
-        );
-
-        dashboardResult = {
-          ...dashboardResult,
-        };
-      }
-
-      // ==========================================
-      // EXTRACT COMPLETE BATCH OBJECT
-      // ==========================================
-
-      const completeBatch = getBatchDetails(
-        profileData,
-        dashboardData,
-        user,
-        dashboardResult
-      );
-
-      const studentBatch = isObject(user.batch)
-        ? user.batch.batch || user.batch.name
-        : user.batch;
-
-      // ==========================================
-      // SET STUDENT PROFILE
-      // ==========================================
-
-      setStudent({
-        id: user.userId || user.id || user._id || "",
-        name: user.name || "Student",
-        email: user.email || "",
-        role: user.role || "Student",
-
-        batch:
-          completeBatch.batch ||
-          completeBatch.name ||
-          studentBatch ||
-          "Not assigned",
-      });
-
-      // ==========================================
-      // SET DASHBOARD DATA
-      // ==========================================
-
-      setDashboard({
-        ...dashboardResult,
-        batchDetails: completeBatch,
-      });
-
-      // ==========================================
-      // FETCH STUDENT RANK
-      // GET /api/student/rank
-      // ==========================================
-
-      await loadStudentRank(headers);
-
-      // ==========================================
-      // FETCH STUDENT ATTENDANCE
-      // GET /api/student/attendance
-      // ==========================================
-
-      setAttendanceLoading(true);
-
-      try {
-        const attendanceResponse = await fetch(
-          `${API_URL}/api/student/attendance`,
-          {
-            method: "GET",
-            headers,
-            cache: "no-store",
-          }
-        );
-
-        const attendanceResult = await attendanceResponse
-          .json()
-          .catch(() => ({}));
-
-        if (!attendanceResponse.ok) {
-          if (attendanceResponse.status === 401) {
-            throw new Error(
-              "Your session has expired. Please sign in again."
-            );
-          }
-
-          if (attendanceResponse.status === 403) {
-            throw new Error(
-              "You are not authorized to access attendance."
-            );
-          }
-
-          throw new Error(
-            attendanceResult.message ||
-              attendanceResult.error ||
-              "Unable to fetch student attendance."
-          );
-        }
-
-        const statistics = attendanceResult.statistics || {};
-
-        const attendanceRecords = Array.isArray(
-          attendanceResult.attendance
         )
-          ? attendanceResult.attendance
-          : [];
+          .then(async (response) => {
+            const data = await response.json().catch(() => ({}));
 
-        setAttendanceData({
-          statistics: {
-            totalClasses: Number(statistics.totalClasses) || 0,
-            present: Number(statistics.present) || 0,
-            absent: Number(statistics.absent) || 0,
-            attendancePercentage:
-              Number(statistics.attendancePercentage) || 0,
-          },
+            if (!response.ok) {
+              throw new Error(
+                data.message ||
+                "Unable to fetch pending assignments."
+              );
+            }
 
-          attendance: attendanceRecords,
-        });
+            return data;
+          })
+          .catch((err) => {
+            console.error("Pending assignments error:", err);
+            return null;
+          });
 
-        console.log(
-          "STUDENT ATTENDANCE RESPONSE:",
-          attendanceResult
-        );
-      } catch (attendanceErr) {
-        console.error(
-          "Student attendance error:",
-          attendanceErr
-        );
+        // ==========================================
+        // FETCH ALL DASHBOARD SECTIONS
+        // ==========================================
 
-        setAttendanceError(
-          attendanceErr.message || "Unable to load attendance."
-        );
+        await Promise.all([
+          loadStudentRank(headers),
+          loadAttendance(headers),
+          loadResults(headers),
+          loadBatchProgress(batchId, headers),
+        ]);
 
-        setAttendanceData(defaultAttendance);
-      } finally {
-        setAttendanceLoading(false);
-      }
+        // ==========================================
+        // PENDING ASSIGNMENTS
+        // ==========================================
 
-      // ==========================================
-      // FETCH STUDENT RESULTS
-      // GET /api/student/progress
-      // ==========================================
+        const pendingData = await pendingPromise;
 
-      setResultsLoading(true);
+        if (pendingData) {
+          const pendingCount =
+            pendingData.pendingAssignments ??
+            pendingData.data?.pendingAssignments ??
+            pendingData.assignments?.pending ??
+            pendingData.data?.assignments?.pending ??
+            0;
 
-      try {
-        const resultsResponse = await fetch(
-          `${API_URL}/api/student/progress`,
-          {
-            method: "GET",
-            headers,
-            cache: "no-store",
-          }
-        );
+          const completedCount =
+            pendingData.assignments?.completed ??
+            pendingData.data?.assignments?.completed ??
+            0;
 
-        const resultsData = await resultsResponse
-          .json()
-          .catch(() => ({}));
+          const totalCount =
+            pendingData.assignments?.total ??
+            pendingData.data?.assignments?.total ??
+            Number(pendingCount) + Number(completedCount);
 
-        if (!resultsResponse.ok) {
-          throw new Error(
-            resultsData.message ||
-              resultsData.error ||
-              "Unable to fetch student results."
-          );
+          setDashboard((previous) => ({
+            ...(previous || {}),
+            pendingAssignments: Number(pendingCount),
+            assignments: {
+              ...(previous?.assignments || {}),
+              total: Number(totalCount),
+              pending: Number(pendingCount),
+              completed: Number(completedCount),
+            },
+          }));
         }
 
-        const studentResults = Array.isArray(resultsData.results)
-          ? resultsData.results
-          : [];
+      } catch (err) {
+        console.error("Student dashboard error:", err);
 
-        setResults(studentResults);
-
-        console.log(
-          "STUDENT RESULTS RESPONSE:",
-          resultsData
-        );
-      } catch (resultError) {
-        console.error("Student results error:", resultError);
-
-        setResults([]);
-
-        setResultsError(
-          resultError.message || "Unable to load results."
+        setError(
+          err.message ||
+          "Unable to connect to the backend. Check your API URL and server."
         );
       } finally {
-        setResultsLoading(false);
+        setLoading(false);
+        setRefreshing(false);
       }
-
-      // ==========================================
-      // DEBUG LOGS
-      // ==========================================
-
-      console.log(
-        "STUDENT PROFILE RESPONSE:",
-        profileData
-      );
-
-      console.log(
-        "STUDENT DASHBOARD RESPONSE:",
-        dashboardData
-      );
-
-      console.log(
-        "EXTRACTED BATCH DETAILS:",
-        completeBatch
-      );
-    } catch (err) {
-      console.error("Student dashboard error:", err);
-
-      setError(
-        err.message ||
-          "Unable to connect to the backend. Check your API URL and server."
-      );
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [loadStudentRank]);
+    },
+    [
+      getAuthHeaders,
+      loadStudentRank,
+      loadAttendance,
+      loadResults,
+      loadBatchProgress,
+    ]
+  );
 
   // ==========================================
   // INITIAL LOAD
@@ -787,6 +914,38 @@ export default function DashboardPage() {
   useEffect(() => {
     loadDashboard();
   }, [loadDashboard]);
+
+  // ==========================================
+  // REFRESH RANK
+  // ==========================================
+
+  const handleRefreshRank = () => {
+    try {
+      const headers = getAuthHeaders();
+      loadStudentRank(headers);
+    } catch (err) {
+      setRankError(err.message);
+    }
+  };
+
+  // ==========================================
+  // REFRESH BATCH PROGRESS
+  // ==========================================
+
+  const handleRefreshBatchProgress = () => {
+    try {
+      const headers = getAuthHeaders();
+
+      const batchId =
+        student?.batchId ||
+        dashboard?.batchId ||
+        dashboard?.batchDetails?._id;
+
+      loadBatchProgress(batchId, headers);
+    } catch (err) {
+      setBatchProgressError(err.message);
+    }
+  };
 
   // ==========================================
   // JOIN LIVE CLASS
@@ -803,7 +962,6 @@ export default function DashboardPage() {
       setNotice(
         `${className}: the meeting link is not available yet. Please contact your trainer.`
       );
-
       return;
     }
 
@@ -827,7 +985,7 @@ export default function DashboardPage() {
   };
 
   // ==========================================
-  // OVERALL PROGRESS FROM EXAM RESULTS
+  // EXAM RESULTS CALCULATION
   // ==========================================
 
   const totalObtained = results.reduce(
@@ -846,11 +1004,13 @@ export default function DashboardPage() {
     results.length > 0 && totalMaximum > 0;
 
   const overallProgress = hasResults
-    ? Math.round((totalObtained / totalMaximum) * 100)
+    ? Math.round(
+        (totalObtained / totalMaximum) * 100
+      )
     : 0;
 
   // ==========================================
-  // COURSE PROGRESS FROM PROFILE API
+  // PROFILE COURSE PROGRESS
   // ==========================================
 
   const rawCourseProgress =
@@ -858,20 +1018,18 @@ export default function DashboardPage() {
     dashboard?.progress ??
     null;
 
-  const courseProgress = Number(rawCourseProgress);
-
   const hasCourseProgress =
     rawCourseProgress !== null &&
     rawCourseProgress !== undefined &&
     rawCourseProgress !== "" &&
-    Number.isFinite(courseProgress);
+    Number.isFinite(Number(rawCourseProgress));
 
   const safeCourseProgress = hasCourseProgress
-    ? Math.min(100, Math.max(0, courseProgress))
+    ? getPercentage(rawCourseProgress)
     : 0;
 
   // ==========================================
-  // DASHBOARD STATISTICS
+  // ATTENDANCE STATISTICS
   // ==========================================
 
   const attendancePercentage = Number(
@@ -887,66 +1045,17 @@ export default function DashboardPage() {
   const attendanceAbsent =
     attendanceData?.statistics?.absent ?? 0;
 
+  // ==========================================
+  // ASSIGNMENT STATISTICS
+  // ==========================================
+
   const pendingAssignments =
     dashboard?.pendingAssignments ??
-    dashboard?.assignments?.pending;
-
-  const nextLiveClass = dashboard?.nextLiveClass;
-
-  const stats = [
-    {
-      title: "Overall Results",
-      value: resultsLoading
-        ? "Loading..."
-        : hasResults
-          ? `${overallProgress}%`
-          : "—",
-      subtitle: hasResults
-        ? "Based on exam results"
-        : "No exam results available",
-      progress: overallProgress,
-    },
-    {
-      title: "Student Batch Progress",
-      value: hasCourseProgress
-        ? `${safeCourseProgress}%`
-        : "—",
-      subtitle: hasCourseProgress
-        ? "Batch completion"
-        : "Batch progress not available",
-      progress: safeCourseProgress,
-    },
-    {
-      title: "Batch Progress",
-      value: hasCourseProgress
-        ? `${safeCourseProgress}%`
-        : "—",
-      subtitle: hasCourseProgress
-        ? "Batch completion"
-        : "Batch progress not available",
-      progress: safeCourseProgress,
-    },
-    {
-      title: "Attendance",
-      value: attendanceLoading
-        ? "Loading..."
-        : `${attendancePercentage}%`,
-      subtitle: attendanceLoading
-        ? "Fetching attendance"
-        : `${attendanceAttended} of ${attendanceTotal} classes`,
-    },
-    {
-      title: "Pending assignments",
-      value:
-        pendingAssignments != null
-          ? String(pendingAssignments)
-          : "—",
-      subtitle: "Assignments awaiting submission",
-    },
-  ];
+    dashboard?.assignments?.pending ??
+    null;
 
   // ==========================================
-  // COMPLETE BATCH INFORMATION
+  // BATCH DETAILS
   // ==========================================
 
   const batchDetails = dashboard?.batchDetails || {};
@@ -954,8 +1063,15 @@ export default function DashboardPage() {
   const batchName =
     batchDetails.batch ||
     batchDetails.name ||
+    batchDetails.batchName ||
     student?.batch ||
     "Not assigned";
+
+  const batchId =
+    student?.batchId ||
+    batchDetails._id ||
+    dashboard?.batchId ||
+    "Not available";
 
   const trainerName =
     batchDetails.trainer?.name ||
@@ -985,16 +1101,8 @@ export default function DashboardPage() {
     batchDetails.isActive ??
     dashboard?.batchIsActive;
 
-  const batchCreatedAt =
-    batchDetails.createdAt ||
-    dashboard?.batchCreatedAt;
-
-  const batchUpdatedAt =
-    batchDetails.updatedAt ||
-    dashboard?.batchUpdatedAt;
-
   // ==========================================
-  // RANK DISPLAY VALUES
+  // RANK VALUES
   // ==========================================
 
   const assignedRank = rankData.rank;
@@ -1008,18 +1116,134 @@ export default function DashboardPage() {
     Number(assignedRank) > 0;
 
   // ==========================================
+  // TRAINER PROGRESS TOPICS
+  // ==========================================
+
+  const trainerTopics = getTopics(trainerBatchProgress);
+
+  const studentTopics = getTopics(studentBatchProgress);
+
+  const trainerOverallProgress = getPercentage(
+    trainerBatchProgress?.overallProgress ??
+    trainerBatchProgress?.batchProgress ??
+    trainerBatchProgress?.progress ??
+    trainerBatchProgress?.data?.overallProgress ??
+    calculateAverage(trainerTopics, "trainer")
+  );
+
+  const studentOverallProgress = getPercentage(
+    studentBatchProgress?.overallProgress ??
+    studentBatchProgress?.data?.overallProgress ??
+    studentBatchProgress?.progress ??
+    calculateAverage(studentTopics, "student")
+  );
+
+  // Merge the trainer's syllabus with student self-assessment.
+  // The trainer topic ID remains the canonical topic ID.
+  const mergedTopics = trainerTopics.length
+    ? trainerTopics.map((trainerTopic) => {
+        const trainerTopicId = getTopicReference(trainerTopic);
+
+        const matchingStudentTopic = studentTopics.find(
+          (studentTopic) => {
+            const studentTopicId =
+              getTopicReference(studentTopic);
+
+            const sameId =
+              trainerTopicId &&
+              studentTopicId &&
+              String(trainerTopicId) === String(studentTopicId);
+
+            const sameName =
+              getTopicName(trainerTopic) &&
+              getTopicName(studentTopic) &&
+              getTopicName(trainerTopic).toLowerCase() ===
+                getTopicName(studentTopic).toLowerCase();
+
+            return sameId || sameName;
+          }
+        );
+
+        return {
+          ...trainerTopic,
+          studentTopic: matchingStudentTopic || null,
+          canonicalTopicId: trainerTopicId,
+        };
+      })
+    : studentTopics.map((studentTopic) => ({
+        ...studentTopic,
+        studentTopic,
+        canonicalTopicId: null,
+      }));
+
+  // ==========================================
+  // DASHBOARD STATISTICS CARDS
+  // ==========================================
+
+  const stats = [
+    {
+      title: "Overall Results",
+      value: resultsLoading
+        ? "Loading..."
+        : hasResults
+          ? `${overallProgress}%`
+          : "—",
+      subtitle: hasResults
+        ? "Based on exam results"
+        : "No exam results available",
+      progress: overallProgress,
+    },
+    {
+      title: "Student Batch Progress",
+      value: batchProgressLoading
+        ? "Loading..."
+        : studentBatchProgress
+          ? `${studentOverallProgress}%`
+          : "—",
+      subtitle: "Your learning progress",
+      progress: studentOverallProgress,
+    },
+    {
+      title: "Trainer Batch Progress",
+      value: batchProgressLoading
+        ? "Loading..."
+        : trainerBatchProgress
+          ? `${trainerOverallProgress}%`
+          : "—",
+      subtitle: "Trainer syllabus completion",
+      progress: trainerOverallProgress,
+    },
+    {
+      title: "Attendance",
+      value: attendanceLoading
+        ? "Loading..."
+        : `${attendancePercentage}%`,
+      subtitle: attendanceLoading
+        ? "Fetching attendance"
+        : `${attendanceAttended} of ${attendanceTotal} classes`,
+    },
+    {
+      title: "Pending Assignments",
+      value:
+        pendingAssignments != null
+          ? String(pendingAssignments)
+          : "—",
+      subtitle: "Assignments awaiting submission",
+    },
+  ];
+
+  // ==========================================
   // RENDER
   // ==========================================
 
   return (
-    <main className="px-4 py-6 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-slate-50 px-4 py-6 sm:px-6 lg:px-8">
 
       {/* ==========================================
           DASHBOARD HEADER
       ========================================== */}
 
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
-
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-[#102e60] sm:text-3xl">
             {loading
@@ -1041,26 +1265,20 @@ export default function DashboardPage() {
           )}
         </div>
 
-        <div className="flex flex-wrap gap-2">
-
-          <button
-            type="button"
-            onClick={() => loadDashboard(true)}
-            disabled={loading || refreshing}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
-          >
-            <RefreshCw
-              size={17}
-              className={
-                refreshing || loading
-                  ? "animate-spin"
-                  : ""
-              }
-            />
-
-            Refresh
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => loadDashboard(true)}
+          disabled={loading || refreshing}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+        >
+          <RefreshCw
+            size={17}
+            className={
+              refreshing || loading ? "animate-spin" : ""
+            }
+          />
+          Refresh Dashboard
+        </button>
       </header>
 
       {/* ==========================================
@@ -1090,7 +1308,6 @@ export default function DashboardPage() {
             <p className="font-semibold">
               Unable to load dashboard
             </p>
-
             <p className="mt-1">{error}</p>
           </div>
 
@@ -1111,7 +1328,7 @@ export default function DashboardPage() {
       {notice && (
         <div
           role="status"
-          className="mb-5 flex items-start justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 sm:text-base"
+          className="mb-5 flex items-start justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900"
         >
           <p>{notice}</p>
 
@@ -1127,19 +1344,16 @@ export default function DashboardPage() {
       )}
 
       {/* ==========================================
-          STATISTICS CARDS + STUDENT RANK
+          DASHBOARD STATISTICS + RANK
       ========================================== */}
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-
         {stats.map((stat) => (
           <StatCard
             key={stat.title}
             {...stat}
           />
         ))}
-
-        {/* TRAINER ASSIGNED STUDENT RANK */}
 
         <RankCard
           rank={
@@ -1151,19 +1365,276 @@ export default function DashboardPage() {
           }
           total={totalBatchStudents}
         />
-
       </section>
 
       {/* ==========================================
-          RANK INFORMATION
+          STUDENT + TRAINER BATCH PROGRESS
       ========================================== */}
 
-      <section className="mt-5 rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
+      <section className="mt-6 rounded-xl border border-blue-100 bg-white p-5 shadow-sm sm:p-6">
 
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <GraduationCap
+                size={24}
+                className="text-blue-700"
+              />
+
+              <h2 className="text-xl font-bold text-[#102e60]">
+                My Learning Progress
+              </h2>
+            </div>
+
+            <p className="mt-1 text-sm text-slate-500">
+              Track your learning progress against your trainer's syllabus.
+            </p>
+
+            <p className="mt-1 text-xs text-slate-400">
+              Batch: {batchName} · ID: {batchId}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleRefreshBatchProgress}
+            disabled={batchProgressLoading}
+            className="inline-flex items-center gap-2 rounded-lg border border-blue-100 px-3 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 disabled:opacity-50"
+          >
+            <RefreshCw
+              size={15}
+              className={
+                batchProgressLoading ? "animate-spin" : ""
+              }
+            />
+            Refresh Progress
+          </button>
+        </div>
+
+        {batchProgressLoading ? (
+          <div className="flex items-center justify-center gap-2 rounded-lg bg-blue-50 p-10 text-blue-700">
+            <RefreshCw size={18} className="animate-spin" />
+            Loading student and trainer progress...
+          </div>
+        ) : (
+          <>
+            {batchProgressError && (
+              <div className="mb-5 rounded-lg border border-orange-200 bg-orange-50 p-4 text-sm text-orange-800">
+                {batchProgressError}
+              </div>
+            )}
+
+            {/* OVERALL PROGRESS CARDS */}
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+
+              {/* TRAINER PROGRESS */}
+
+              <div className="rounded-xl border border-blue-100 bg-blue-50 p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-600">
+                      Trainer Batch Progress
+                    </p>
+
+                    <p className="mt-1 text-xs text-slate-500">
+                      Syllabus completion
+                    </p>
+                  </div>
+
+                  <div className="rounded-lg bg-white p-3 text-blue-700">
+                    <BookOpen size={23} />
+                  </div>
+                </div>
+
+                <p className="mt-4 text-3xl font-extrabold text-[#102e60]">
+                  {trainerBatchProgress
+                    ? `${trainerOverallProgress}%`
+                    : "—"}
+                </p>
+
+                <div className="mt-4">
+                  <ProgressBar
+                    label="Trainer completion"
+                    percentage={trainerOverallProgress}
+                    color="bg-blue-600"
+                  />
+                </div>
+
+                <p className="mt-3 text-xs text-slate-500">
+                  {trainerTopics.length} syllabus topics
+                </p>
+              </div>
+
+              {/* STUDENT PROGRESS */}
+
+              <div className="rounded-xl border border-green-100 bg-green-50 p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-600">
+                      Your Learning Progress
+                    </p>
+
+                    <p className="mt-1 text-xs text-slate-500">
+                      Your self-assessed knowledge
+                    </p>
+                  </div>
+
+                  <div className="rounded-lg bg-white p-3 text-green-700">
+                    <TrendingUp size={23} />
+                  </div>
+                </div>
+
+                <p className="mt-4 text-3xl font-extrabold text-green-700">
+                  {studentBatchProgress
+                    ? `${studentOverallProgress}%`
+                    : "—"}
+                </p>
+
+                <div className="mt-4">
+                  <ProgressBar
+                    label="Your knowledge"
+                    percentage={studentOverallProgress}
+                    color="bg-green-600"
+                  />
+                </div>
+
+                <p className="mt-3 text-xs text-slate-500">
+                  {studentTopics.length} assessed topics
+                </p>
+              </div>
+            </div>
+
+            {/* TOPIC-WISE PROGRESS */}
+
+            <div className="mt-7">
+              <div className="mb-4">
+                <h3 className="text-lg font-bold text-[#102e60]">
+                  Topic-wise Progress
+                </h3>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  Compare trainer completion with your understanding of each topic.
+                </p>
+              </div>
+
+              {mergedTopics.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+                  <BookOpen
+                    size={35}
+                    className="mx-auto mb-3 text-slate-300"
+                  />
+
+                  <p className="font-semibold text-slate-700">
+                    No topic progress available
+                  </p>
+
+                  <p className="mt-1 text-sm text-slate-500">
+                    Your trainer's syllabus and your learning progress will appear here once topics are added.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {mergedTopics.map((topic, index) => {
+                    const studentTopic = topic.studentTopic;
+
+                    const trainerPercentage =
+                      trainerTopics.length
+                        ? getProgressValue(topic, "trainer")
+                        : 0;
+
+                    const studentPercentage =
+                      studentTopic
+                        ? getProgressValue(studentTopic, "student")
+                        : 0;
+
+                    const topicStatus =
+                      studentTopic?.status ||
+                      topic.status ||
+                      "Not Started";
+
+                    return (
+                      <div
+                        key={
+                          topic.canonicalTopicId ||
+                          topic._id ||
+                          getTopicName(topic) ||
+                          index
+                        }
+                        className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5"
+                      >
+                        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
+                              <BookOpen size={20} />
+                            </div>
+
+                            <div>
+                              <h4 className="font-bold text-slate-800">
+                                {getTopicName(topic) ||
+                                  "Untitled Topic"}
+                              </h4>
+
+                              <p className="mt-1 text-xs text-slate-500">
+                                Topic {index + 1}
+                              </p>
+                            </div>
+                          </div>
+
+                          <span
+                            className={`rounded-full px-3 py-1.5 text-xs font-bold ${getStatusClass(
+                              topicStatus
+                            )}`}
+                          >
+                            {topicStatus}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+
+                          <div className="rounded-lg bg-blue-50 p-4">
+                            <ProgressBar
+                              label="Trainer Completion"
+                              percentage={trainerPercentage}
+                              color="bg-blue-600"
+                            />
+
+                            <p className="mt-3 text-xs text-slate-500">
+                              Progress updated by your trainer.
+                            </p>
+                          </div>
+
+                          <div className="rounded-lg bg-green-50 p-4">
+                            <ProgressBar
+                              label="Your Knowledge"
+                              percentage={studentPercentage}
+                              color="bg-green-600"
+                            />
+
+                            <p className="mt-3 text-xs text-slate-500">
+                              {studentTopic
+                                ? "Your self-assessed knowledge."
+                                : "You have not assessed this topic yet."}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </section>
+
+      {/* ==========================================
+          BATCH RANK INFORMATION
+      ========================================== */}
+
+      <section className="mt-6 rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
-
           <div className="flex items-start gap-3">
-
             <div className="rounded-lg bg-blue-50 p-3 text-blue-700">
               <Users size={23} />
             </div>
@@ -1177,24 +1648,11 @@ export default function DashboardPage() {
                 Your performance rank assigned by your trainer.
               </p>
             </div>
-
           </div>
 
           <button
             type="button"
-            onClick={() => {
-              const token =
-                sessionStorage.getItem("token") ||
-                localStorage.getItem("appwars_token") ||
-                localStorage.getItem("token");
-
-              if (token) {
-                loadStudentRank({
-                  Authorization: `Bearer ${token}`,
-                  "Content-Type": "application/json",
-                });
-              }
-            }}
+            onClick={handleRefreshRank}
             disabled={rankLoading}
             className="inline-flex items-center gap-2 rounded-lg border border-blue-100 px-3 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 disabled:opacity-50"
           >
@@ -1204,7 +1662,6 @@ export default function DashboardPage() {
             />
             Refresh Rank
           </button>
-
         </div>
 
         {rankLoading ? (
@@ -1214,7 +1671,6 @@ export default function DashboardPage() {
           </div>
         ) : rankError ? (
           <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4">
-
             <p className="text-sm font-semibold text-red-700">
               Unable to load your rank
             </p>
@@ -1222,15 +1678,11 @@ export default function DashboardPage() {
             <p className="mt-1 text-sm text-red-600">
               {rankError}
             </p>
-
           </div>
         ) : (
           <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
 
-            {/* ASSIGNED RANK */}
-
             <div className="rounded-xl border border-blue-100 bg-blue-50 p-5">
-
               <p className="text-sm font-medium text-slate-600">
                 Your Rank
               </p>
@@ -1246,13 +1698,9 @@ export default function DashboardPage() {
                   ? "Your position in the batch"
                   : "Your trainer has not assigned your rank yet"}
               </p>
-
             </div>
 
-            {/* TOTAL STUDENTS */}
-
             <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-5">
-
               <p className="text-sm font-medium text-slate-600">
                 Total Batch Students
               </p>
@@ -1262,44 +1710,39 @@ export default function DashboardPage() {
               </p>
 
               <p className="mt-1 text-xs text-slate-500">
-                Active students in {batchName}
+                Students in {batchName}
               </p>
-
             </div>
 
-            {/* RANK ASSIGNED BY */}
-
             <div className="rounded-xl border border-green-100 bg-green-50 p-5">
-
               <p className="text-sm font-medium text-slate-600">
                 Rank Assigned By
               </p>
 
               <p className="mt-2 break-words text-lg font-bold text-green-700">
-                {rankData.rankAssignedBy?.name || "Not assigned"}
+                {rankData.rankAssignedBy?.name ||
+                  "Not assigned"}
               </p>
 
               <p className="mt-1 text-xs text-slate-500">
                 {rankData.rankAssignedAt
-                  ? `Assigned on ${formatDate(rankData.rankAssignedAt)}`
+                  ? `Assigned on ${formatDate(
+                      rankData.rankAssignedAt
+                    )}`
                   : "Trainer assignment details"}
               </p>
-
             </div>
-
           </div>
         )}
-
       </section>
 
       {/* ==========================================
-          STUDENT ATTENDANCE HISTORY
+          STUDENT ATTENDANCE
       ========================================== */}
 
       <section className="mt-6 overflow-hidden rounded-xl border border-blue-100 bg-white shadow-sm">
 
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 p-5">
-
           <div>
             <h2 className="text-xl font-bold text-[#102e60]">
               My Attendance
@@ -1315,13 +1758,11 @@ export default function DashboardPage() {
               ? "Loading..."
               : `${attendancePercentage}% Attendance`}
           </div>
-
         </div>
 
         {/* ATTENDANCE SUMMARY */}
 
         <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-3">
-
           <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
             <p className="text-sm font-medium text-slate-600">
               Total Classes
@@ -1351,39 +1792,36 @@ export default function DashboardPage() {
               {attendanceLoading ? "..." : attendanceAbsent}
             </p>
           </div>
-
         </div>
-
-        {/* ATTENDANCE ERROR */}
 
         {attendanceError && (
           <div className="mx-5 mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-
             <p className="font-semibold">
               Unable to load attendance
             </p>
 
-            <p className="mt-1">
-              {attendanceError}
-            </p>
+            <p className="mt-1">{attendanceError}</p>
 
             <button
               type="button"
-              onClick={() => loadDashboard(true)}
+              onClick={() => {
+                try {
+                  loadAttendance(getAuthHeaders());
+                } catch (err) {
+                  setAttendanceError(err.message);
+                }
+              }}
               className="mt-3 rounded-md bg-red-100 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-200"
             >
               Retry Attendance
             </button>
-
           </div>
         )}
 
         {/* ATTENDANCE TABLE */}
 
         <div className="overflow-x-auto">
-
           <table className="w-full min-w-[700px] text-left">
-
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-5 py-4 font-semibold">Date</th>
@@ -1395,7 +1833,6 @@ export default function DashboardPage() {
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-
               {attendanceLoading && (
                 <tr>
                   <td colSpan={5} className="px-5 py-10 text-center">
@@ -1418,7 +1855,6 @@ export default function DashboardPage() {
                 attendanceData.attendance.length === 0 && (
                   <tr>
                     <td colSpan={5} className="px-5 py-10 text-center">
-
                       <CalendarDays
                         size={35}
                         className="mx-auto mb-3 text-slate-300"
@@ -1431,18 +1867,16 @@ export default function DashboardPage() {
                       <p className="mt-1 text-sm text-slate-500">
                         Your attendance will appear here once your trainer marks it.
                       </p>
-
                     </td>
                   </tr>
                 )}
 
               {!attendanceLoading &&
-                attendanceData.attendance.map((record) => (
+                attendanceData.attendance.map((record, index) => (
                   <tr
-                    key={record._id}
+                    key={record._id || index}
                     className="transition hover:bg-slate-50"
                   >
-
                     <td className="whitespace-nowrap px-5 py-4 text-sm font-medium text-slate-700">
                       {formatDate(record.date)}
                     </td>
@@ -1451,20 +1885,18 @@ export default function DashboardPage() {
                       {record.batch?.name ||
                         record.batch?.batchName ||
                         record.batch?.code ||
-                        "Not available"}
+                        batchName}
                     </td>
 
                     <td className="px-5 py-4 text-sm text-slate-700">
-                      {record.trainer?.name || "Not assigned"}
+                      {record.trainer?.name || trainerName}
                     </td>
 
                     <td className="px-5 py-4">
                       <span
-                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${
-                          record.status === "Present"
-                            ? "bg-green-100 text-green-700"
-                            : "bg-red-100 text-red-700"
-                        }`}
+                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${getStatusClass(
+                          record.status
+                        )}`}
                       >
                         {record.status === "Present" ? (
                           <CheckCircle2 size={14} />
@@ -1472,32 +1904,27 @@ export default function DashboardPage() {
                           <X size={14} />
                         )}
 
-                        {record.status}
+                        {record.status || "Not available"}
                       </span>
                     </td>
 
                     <td className="max-w-[250px] px-5 py-4 text-sm text-slate-500">
                       {record.remarks || "—"}
                     </td>
-
                   </tr>
                 ))}
-
             </tbody>
           </table>
-
         </div>
-
       </section>
 
       {/* ==========================================
-          STUDENT RESULTS
+          STUDENT EXAM RESULTS
       ========================================== */}
 
       <section className="mt-6 overflow-hidden rounded-xl border border-blue-100 bg-white shadow-sm">
 
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 p-5">
-
           <div>
             <h2 className="text-xl font-bold text-[#102e60]">
               My Exam Results
@@ -1515,10 +1942,7 @@ export default function DashboardPage() {
                   results.length === 1 ? "Result" : "Results"
                 }`}
           </div>
-
         </div>
-
-        {/* RESULTS LOADING */}
 
         {resultsLoading && (
           <div className="flex items-center justify-center gap-2 p-10 text-blue-700">
@@ -1533,37 +1957,34 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* RESULTS ERROR */}
-
         {!resultsLoading && resultsError && (
           <div className="m-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-
             <p className="font-semibold">
               Unable to load results
             </p>
 
-            <p className="mt-1">
-              {resultsError}
-            </p>
+            <p className="mt-1">{resultsError}</p>
 
             <button
               type="button"
-              onClick={() => loadDashboard(true)}
+              onClick={() => {
+                try {
+                  loadResults(getAuthHeaders());
+                } catch (err) {
+                  setResultsError(err.message);
+                }
+              }}
               className="mt-3 rounded-md bg-red-100 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-200"
             >
               Retry Results
             </button>
-
           </div>
         )}
-
-        {/* NO RESULTS */}
 
         {!resultsLoading &&
           !resultsError &&
           results.length === 0 && (
             <div className="p-10 text-center">
-
               <FileText
                 size={38}
                 className="mx-auto mb-3 text-slate-300"
@@ -1576,19 +1997,14 @@ export default function DashboardPage() {
               <p className="mt-1 text-sm text-slate-500">
                 Your published exam results will appear here.
               </p>
-
             </div>
           )}
-
-        {/* RESULTS TABLE */}
 
         {!resultsLoading &&
           !resultsError &&
           results.length > 0 && (
             <div className="overflow-x-auto">
-
-              <table className="w-full min-w-[650px] text-left">
-
+              <table className="w-full min-w-[750px] text-left">
                 <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-5 py-4 font-semibold">
@@ -1614,13 +2030,11 @@ export default function DashboardPage() {
                 </thead>
 
                 <tbody className="divide-y divide-slate-100">
-
                   {results.map((result, index) => (
                     <tr
                       key={result.resultId || result._id || index}
                       className="transition hover:bg-slate-50"
                     >
-
                       <td className="px-5 py-4 text-sm font-semibold text-slate-800">
                         {result.exam || "Assessment"}
                       </td>
@@ -1643,17 +2057,12 @@ export default function DashboardPage() {
                       <td className="max-w-[250px] px-5 py-4 text-sm text-slate-500">
                         {result.remarks || "—"}
                       </td>
-
                     </tr>
                   ))}
-
                 </tbody>
-
               </table>
-
             </div>
           )}
-
       </section>
 
       {/* ==========================================
@@ -1663,7 +2072,6 @@ export default function DashboardPage() {
       <section className="mt-8 rounded-xl border border-blue-100 bg-white p-5 shadow-sm sm:p-6">
 
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-
           <div>
             <h2 className="text-xl font-bold text-[#102e60] sm:text-2xl">
               Batch Information
@@ -1677,14 +2085,11 @@ export default function DashboardPage() {
           <span className="rounded-full bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700">
             {batchName}
           </span>
-
         </div>
 
-        {/* BATCH DETAILS GRID */}
+        {/* BATCH DETAILS */}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-
-          {/* BATCH DURATION */}
 
           <BatchInfoCard
             icon={CalendarDays}
@@ -1699,8 +2104,6 @@ export default function DashboardPage() {
             iconColor="text-blue-600"
           />
 
-          {/* START DATE */}
-
           <BatchInfoCard
             icon={CalendarDays}
             title="Start Date"
@@ -1710,16 +2113,12 @@ export default function DashboardPage() {
             iconColor="text-green-600"
           />
 
-          {/* BATCH STATUS */}
-
           <div className="flex min-w-0 items-start gap-4 rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
-
             <div className="shrink-0 rounded-lg bg-indigo-50 p-3 text-indigo-600">
               <Clock3 size={25} />
             </div>
 
             <div className="min-w-0">
-
               <p className="text-sm font-semibold text-slate-700 sm:text-base">
                 Batch Status
               </p>
@@ -1735,21 +2134,15 @@ export default function DashboardPage() {
               <p className="mt-2 text-xs text-slate-500">
                 Current batch status
               </p>
-
             </div>
-
           </div>
 
-          {/* ACTIVE STATUS */}
-
           <div className="flex min-w-0 items-start gap-4 rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
-
             <div className="shrink-0 rounded-lg bg-emerald-50 p-3 text-emerald-600">
               <CheckCircle2 size={25} />
             </div>
 
             <div className="min-w-0">
-
               <p className="text-sm font-semibold text-slate-700 sm:text-base">
                 Batch Availability
               </p>
@@ -1773,19 +2166,32 @@ export default function DashboardPage() {
               <p className="mt-2 text-xs text-slate-500">
                 Batch active status
               </p>
-
             </div>
-
           </div>
 
+          <BatchInfoCard
+            icon={GraduationCap}
+            title="Trainer"
+            value={trainerName}
+            subtitle="Assigned batch trainer"
+            iconBackground="bg-purple-50"
+            iconColor="text-purple-600"
+          />
+{/* 
+          <BatchInfoCard
+            icon={Users}
+            title="Batch ID"
+            value={batchId}
+            subtitle="Unique MongoDB batch ID"
+            iconBackground="bg-orange-50"
+            iconColor="text-orange-600"
+          /> */}
         </div>
 
         {/* TRAINER INFORMATION */}
 
         <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50 p-5">
-
           <div className="flex items-center gap-3">
-
             <div className="rounded-lg bg-blue-100 p-3 text-blue-700">
               <Users size={22} />
             </div>
@@ -1798,18 +2204,20 @@ export default function DashboardPage() {
               <p className="mt-1 font-bold text-[#102e60]">
                 {trainerName}
               </p>
+
+              {batchDetails.trainer?.email && (
+                <p className="mt-1 text-sm text-slate-500">
+                  {batchDetails.trainer.email}
+                </p>
+              )}
             </div>
-
           </div>
-
         </div>
 
         {/* BATCH DESCRIPTION */}
 
         <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-5">
-
           <div className="mb-3 flex items-center gap-2">
-
             <BookOpen
               size={20}
               className="text-blue-700"
@@ -1818,17 +2226,13 @@ export default function DashboardPage() {
             <h3 className="font-bold text-[#102e60]">
               Batch Description
             </h3>
-
           </div>
 
           <p className="text-sm leading-7 text-slate-700">
             {batchDescription}
           </p>
-
         </div>
-
       </section>
-
     </main>
   );
 }

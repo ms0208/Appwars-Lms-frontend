@@ -16,6 +16,9 @@ import scheduleRoutes from "./router/scheduleRoutes.js";
 import studentAssessmentRoutes from "./router/studentAssessmentRoutes.js";
 import studentAttendanceRoutes from "./router/studentAttendanceRoutes.js";
 
+import progressRoutes from "./router/progressRoutes.js";
+
+
 const app = express();
 
 const PORT = process.env.PORT || 5000;
@@ -82,6 +85,10 @@ app.use("/api/trainer", trainerRoutes)
 // Counsellor Routes 
 app.use("/api/counsellor", counsellorRoutes);
 app.use("/api/counsellor/schedule", scheduleRoutes);
+
+
+app.use("/api/progress", progressRoutes);
+
 // Handle unknown API routes
 app.use((req, res) => {
   res.status(404).json({

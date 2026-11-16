@@ -410,7 +410,7 @@ export const getRank = asyncHandler(async (req, res) => {
 // GET /api/student/progress
 // ==========================================
 
-export const getProgress = asyncHandler(async (req, res) => {
+export const getMarks = asyncHandler(async (req, res) => {
   // ==========================================
   // GET STUDENT WITH ASSIGNED BATCH
   // ==========================================
@@ -1158,3 +1158,4 @@ export const getPendingAssignmentsCount = asyncHandler(
     });
   }
 );
+
