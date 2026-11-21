@@ -2,6 +2,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+
 import {
   CheckCircle2,
   CreditCard,
@@ -15,31 +16,57 @@ import {
   BookOpen,
   CalendarDays,
   UserRound,
+  Users,
+  GraduationCap,
 } from "lucide-react";
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000"
+).replace(/\/$/, "");
 
-// --------------------------------------------------
+// ======================================================
+// AUTHENTICATION
+// ======================================================
+
+function getToken() {
+  if (typeof window === "undefined") return null;
+
+  return (
+    sessionStorage.getItem("token") ||
+    sessionStorage.getItem("appwars_token") ||
+    localStorage.getItem("appwars_token") ||
+    localStorage.getItem("token")
+  );
+}
+
+function getAuthHeaders() {
+  const token = getToken();
+
+  if (!token) {
+    throw new Error(
+      "Please sign in to view your progress and payment records."
+    );
+  }
+
+  return {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+}
+
+// ======================================================
 // API REQUEST
-// --------------------------------------------------
+// ======================================================
 
 async function apiRequest(endpoint) {
-  const token =
-    typeof window !== "undefined"
-      ? sessionStorage.getItem("appwars_token") ||
-        sessionStorage.getItem("token")
-      : null;
-
   const response = await fetch(`${API_URL}${endpoint}`, {
     method: "GET",
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: getAuthHeaders(),
     cache: "no-store",
   });
 
-  const contentType = response.headers.get("content-type") || "";
+  const contentType =
+    response.headers.get("content-type") || "";
 
   const data = contentType.includes("application/json")
     ? await response.json()
@@ -59,14 +86,34 @@ async function apiRequest(endpoint) {
   return data;
 }
 
-// --------------------------------------------------
+// ======================================================
 // RESPONSE HELPERS
-// --------------------------------------------------
+// ======================================================
 
-function extractArray(response, keys) {
-  if (Array.isArray(response)) return response;
+function isObject(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  );
+}
 
-  if (!response || typeof response !== "object") {
+function getArray(...candidates) {
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return [];
+}
+
+function extractArray(response, keys = []) {
+  if (Array.isArray(response)) {
+    return response;
+  }
+
+  if (!isObject(response)) {
     return [];
   }
 
@@ -80,7 +127,7 @@ function extractArray(response, keys) {
     return response.data;
   }
 
-  if (response.data && typeof response.data === "object") {
+  if (isObject(response.data)) {
     for (const key of keys) {
       if (Array.isArray(response.data[key])) {
         return response.data[key];
@@ -97,96 +144,243 @@ function getNumber(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
-// --------------------------------------------------
-// COURSE PROGRESS HELPERS
-// --------------------------------------------------
+function getPercentage(value) {
+  return Math.max(0, Math.min(100, getNumber(value)));
+}
 
-function getProgress(course) {
+// ======================================================
+// STUDENT PROFILE HELPERS
+// Same extraction logic as Student Dashboard
+// ======================================================
+
+function getUser(data) {
+  return (
+    data?.user ||
+    data?.data?.user ||
+    data?.data?.data?.user ||
+    data?.data ||
+    data ||
+    {}
+  );
+}
+
+function getDashboard(data) {
+  return (
+    data?.dashboard ||
+    data?.data?.dashboard ||
+    data?.data?.data?.dashboard ||
+    data?.data ||
+    data ||
+    {}
+  );
+}
+
+// ======================================================
+// BATCH DETAILS EXTRACTION
+// ======================================================
+
+function getBatchDetails(...responses) {
+  for (const response of responses) {
+    if (!isObject(response)) continue;
+
+    const user = getUser(response);
+    const dashboard = getDashboard(response);
+
+    const candidates = [
+      response.batchDetails,
+      response.data?.batchDetails,
+      response.user?.batchDetails,
+      response.data?.user?.batchDetails,
+      response.dashboard?.batchDetails,
+      dashboard?.batchDetails,
+      dashboard?.batch,
+      dashboard?.student?.batch,
+      user?.batchDetails,
+      user?.batch,
+      user?.student?.batch,
+      response.batch,
+      response.data?.batch,
+    ];
+
+    for (const candidate of candidates) {
+      if (!isObject(candidate)) continue;
+
+      if (isObject(candidate.batch)) {
+        return {
+          ...candidate,
+          ...candidate.batch,
+          _id:
+            candidate._id ||
+            candidate.batch._id ||
+            candidate.batch.id,
+        };
+      }
+
+      return candidate;
+    }
+  }
+
+  return {};
+}
+
+function getBatchId(batchDetails, user) {
+  const batch = user?.batch;
+
+  return (
+    batchDetails?._id ||
+    batchDetails?.id ||
+    batchDetails?.batchId ||
+    user?.batchDetails?._id ||
+    user?.batchDetails?.id ||
+    (isObject(batch)
+      ? batch._id || batch.id || batch.batchId
+      : null) ||
+    user?.batchId ||
+    user?.assignedBatch?._id ||
+    user?.assignedBatch?.id ||
+    (typeof batch === "string" ? batch : null) ||
+    null
+  );
+}
+
+function getBatchName(batchDetails, user) {
+  const batch = user?.batch;
+
+  return (
+    batchDetails?.batch ||
+    batchDetails?.name ||
+    batchDetails?.batchName ||
+    batchDetails?.code ||
+    (isObject(batch)
+      ? batch.batch ||
+        batch.name ||
+        batch.batchName ||
+        batch.code
+      : batch) ||
+    "Not assigned"
+  );
+}
+
+// ======================================================
+// TRAINER PROGRESS HELPERS
+// ======================================================
+
+function extractBatchProgress(response) {
+  if (!isObject(response)) {
+    return null;
+  }
+
+  const candidates = [
+    response.batchProgress,
+    response.data?.batchProgress,
+    response.data?.data?.batchProgress,
+    response.progress,
+    response.data?.progress,
+    response.data,
+    response,
+  ];
+
+  for (const candidate of candidates) {
+    if (isObject(candidate)) {
+      if (
+        Array.isArray(candidate.topics) ||
+        candidate.overallProgress !== undefined ||
+        candidate.totalTopics !== undefined
+      ) {
+        return candidate;
+      }
+    }
+  }
+
+  return null;
+}
+
+function getTopics(response) {
+  return getArray(
+    response?.topics,
+    response?.data?.topics,
+    response?.data?.data?.topics,
+    response?.progress?.topics,
+    response?.batchProgress?.topics
+  );
+}
+
+function getTopicName(topic, index) {
+  return (
+    topic?.topicName ||
+    topic?.name ||
+    topic?.title ||
+    topic?.topic ||
+    `Topic ${index + 1}`
+  );
+}
+
+function getTopicProgress(topic) {
+  return getPercentage(
+    topic?.completionPercentage ??
+      topic?.progressPercentage ??
+      topic?.progress ??
+      topic?.percentage ??
+      0
+  );
+}
+
+function getTopicStatus(topic, progress) {
+  if (topic?.status) {
+    return String(topic.status);
+  }
+
+  if (progress >= 100) {
+    return "Completed";
+  }
+
+  if (progress > 0) {
+    return "In Progress";
+  }
+
+  return "Pending";
+}
+
+function getTopicStatusClass(status, progress) {
+  const normalized = String(status).toLowerCase();
+
   if (
-    course.progress !== undefined &&
-    course.progress !== null &&
-    course.progress !== ""
+    normalized.includes("complete") ||
+    progress >= 100
   ) {
-    return Math.max(
-      0,
-      Math.min(100, getNumber(course.progress))
-    );
+    return "bg-green-100 text-green-700";
   }
 
-  const completed = getNumber(
-    course.completedLessons ??
-      course.lessonsCompleted ??
-      course.completed ??
-      0
-  );
-
-  const total = getNumber(
-    course.totalLessons ??
-      course.lessonsCount ??
-      course.total ??
-      0
-  );
-
-  if (total > 0) {
-    return Math.max(
-      0,
-      Math.min(100, (completed / total) * 100)
-    );
+  if (
+    normalized.includes("progress") ||
+    progress > 0
+  ) {
+    return "bg-blue-100 text-blue-700";
   }
 
-  return 0;
+  return "bg-slate-100 text-slate-600";
 }
 
-function getLessonLabel(course, progress) {
-  const completed = getNumber(
-    course.completedLessons ??
-      course.lessonsCompleted ??
-      course.completed ??
-      0
+function calculateAverage(topics) {
+  if (!topics.length) return 0;
+
+  const total = topics.reduce(
+    (sum, topic) => sum + getTopicProgress(topic),
+    0
   );
 
-  const total = getNumber(
-    course.totalLessons ??
-      course.lessonsCount ??
-      course.total ??
-      0
-  );
-
-  if (total > 0) {
-    return `${completed} of ${total} lessons`;
-  }
-
-  if (progress === 0) return "Not started";
-  if (progress === 100) return "Completed";
-
-  return `${Math.round(progress)}% completed`;
+  return Math.round(total / topics.length);
 }
 
-function getCourseName(course, index) {
-  const value =
-    course.name ||
-    course.courseName ||
-    course.title ||
-    course.course?.name ||
-    course.course?.title ||
-    course.course?.courseName ||
-    course.batch?.course?.title ||
-    course.batch?.course?.name;
-
-  if (typeof value === "string") return value;
-
-  return `Course ${index + 1}`;
-}
-
-// --------------------------------------------------
+// ======================================================
 // PAYMENT HELPERS
-// --------------------------------------------------
+// ======================================================
 
 function getPaymentStatus(payment) {
   return String(
-    payment.status ||
-      payment.paymentStatus ||
-      payment.transactionStatus ||
+    payment?.status ||
+      payment?.paymentStatus ||
+      payment?.transactionStatus ||
       "Unknown"
   );
 }
@@ -197,7 +391,9 @@ function isPaid(status) {
     "success",
     "successful",
     "completed",
-  ].some((value) => status.toLowerCase().includes(value));
+  ].some((value) =>
+    status.toLowerCase().includes(value)
+  );
 }
 
 function isPending(status) {
@@ -205,7 +401,9 @@ function isPending(status) {
     "pending",
     "processing",
     "initiated",
-  ].some((value) => status.toLowerCase().includes(value));
+  ].some((value) =>
+    status.toLowerCase().includes(value)
+  );
 }
 
 function isFailed(status) {
@@ -214,7 +412,9 @@ function isFailed(status) {
     "cancelled",
     "canceled",
     "rejected",
-  ].some((value) => status.toLowerCase().includes(value));
+  ].some((value) =>
+    status.toLowerCase().includes(value)
+  );
 }
 
 function isRefunded(status) {
@@ -242,11 +442,10 @@ function paymentStatusClass(status) {
 }
 
 function getPaymentTitle(payment) {
-  const batch = payment.batch;
+  const batch = payment?.batch;
 
-  // Course can be a populated object or a string.
   const course =
-    typeof batch?.course === "object" && batch?.course !== null
+    isObject(batch?.course)
       ? batch.course.title ||
         batch.course.name ||
         batch.course.courseName
@@ -255,56 +454,58 @@ function getPaymentTitle(payment) {
         : "";
 
   return (
-    payment.courseName ||
-    payment.course?.name ||
-    payment.course?.title ||
+    payment?.courseName ||
+    payment?.course?.name ||
+    payment?.course?.title ||
     course ||
     batch?.name ||
     batch?.batch ||
-    payment.description ||
-    payment.feeType ||
-    payment.purpose ||
-    payment.notes ||
+    payment?.description ||
+    payment?.feeType ||
+    payment?.purpose ||
+    payment?.notes ||
     "Course payment"
   );
 }
 
 function getPaymentReference(payment) {
   return (
-    payment.reference ||
-    payment.transactionId ||
-    payment.referenceId ||
-    payment.receiptNumber ||
+    payment?.reference ||
+    payment?.transactionId ||
+    payment?.referenceId ||
+    payment?.receiptNumber ||
     ""
   );
 }
 
 function getPaymentMethod(payment) {
   return (
-    payment.method ||
-    payment.paymentMethod ||
+    payment?.method ||
+    payment?.paymentMethod ||
     "Not specified"
   );
 }
 
 function getPaymentDate(payment) {
   return (
-    payment.paidAt ||
-    payment.paymentDate ||
-    payment.createdAt ||
-    payment.date ||
+    payment?.paidAt ||
+    payment?.paymentDate ||
+    payment?.createdAt ||
+    payment?.date ||
     null
   );
 }
 
-// --------------------------------------------------
+// ======================================================
 // FORMATTING
-// --------------------------------------------------
+// ======================================================
 
 function formatCurrency(amount, currency = "INR") {
   const value = Number(amount);
 
-  if (!Number.isFinite(value)) return "—";
+  if (!Number.isFinite(value)) {
+    return "—";
+  }
 
   try {
     return new Intl.NumberFormat("en-IN", {
@@ -318,22 +519,49 @@ function formatCurrency(amount, currency = "INR") {
 }
 
 function formatDate(value) {
-  if (!value) return "—";
+  if (!value) return "Not available";
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) return "—";
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
 
   return date.toLocaleDateString("en-IN", {
-    day: "numeric",
+    day: "2-digit",
     month: "short",
     year: "numeric",
   });
 }
 
-// --------------------------------------------------
+function getBatchStatusClass(status) {
+  const normalized = String(status || "").toLowerCase();
+
+  if (
+    normalized === "running" ||
+    normalized === "active" ||
+    normalized === "completed"
+  ) {
+    return "bg-green-100 text-green-700";
+  }
+
+  if (normalized === "upcoming") {
+    return "bg-orange-100 text-orange-700";
+  }
+
+  if (
+    normalized === "inactive" ||
+    normalized === "cancelled"
+  ) {
+    return "bg-red-100 text-red-700";
+  }
+
+  return "bg-slate-100 text-slate-700";
+}
+
+// ======================================================
 // REUSABLE SUMMARY CARD
-// --------------------------------------------------
+// ======================================================
 
 function SummaryCard({
   icon: Icon,
@@ -342,7 +570,7 @@ function SummaryCard({
   description,
 }) {
   return (
-    <div className="rounded-xl border border-blue-100 bg-white p-4">
+    <div className="rounded-xl border border-blue-100 bg-white p-4 shadow-sm">
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-slate-500">
           {title}
@@ -351,7 +579,7 @@ function SummaryCard({
         <Icon size={20} className="text-blue-600" />
       </div>
 
-      <p className="mt-3 text-2xl font-bold text-[#102e60]">
+      <p className="mt-3 break-words text-2xl font-bold text-[#102e60]">
         {value}
       </p>
 
@@ -362,31 +590,93 @@ function SummaryCard({
   );
 }
 
-// --------------------------------------------------
+// ======================================================
+// BATCH INFORMATION CARD
+// ======================================================
+
+function BatchInfoCard({
+  icon: Icon,
+  title,
+  value,
+  subtitle,
+  iconBackground = "bg-blue-50",
+  iconColor = "text-blue-600",
+}) {
+  return (
+    <div className="flex min-w-0 items-start gap-4 rounded-xl border border-blue-100 bg-white p-4">
+      <div
+        className={`shrink-0 rounded-lg ${iconBackground} ${iconColor} p-3`}
+      >
+        {Icon && <Icon size={23} />}
+      </div>
+
+      <div className="min-w-0">
+        <p className="text-xs font-semibold text-slate-600">
+          {title}
+        </p>
+
+        <p className="mt-2 break-words text-base font-bold text-[#102e60]">
+          {value ?? "Not available"}
+        </p>
+
+        {subtitle && (
+          <p className="mt-1 text-[11px] text-slate-500">
+            {subtitle}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ======================================================
+// PROGRESS BAR
+// ======================================================
+
+function ProgressBar({ percentage, color = "bg-blue-600" }) {
+  const safePercentage = getPercentage(percentage);
+
+  return (
+    <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
+      <div
+        className={`h-full rounded-full transition-all duration-500 ${color}`}
+        style={{
+          width: `${safePercentage}%`,
+        }}
+      />
+    </div>
+  );
+}
+
+// ======================================================
 // MAIN COMPONENT
-// --------------------------------------------------
+// ======================================================
 
 export default function ProgressPaymentsPage() {
-  const [courses, setCourses] = useState([]);
   const [payments, setPayments] = useState([]);
+
   const [rankData, setRankData] = useState(null);
+
   const [paymentSummary, setPaymentSummary] = useState(null);
 
+  const [batchProgress, setBatchProgress] = useState(null);
+
+  const [batchDetails, setBatchDetails] = useState(null);
+
   const [loading, setLoading] = useState(true);
+
   const [error, setError] = useState("");
 
-  // --------------------------------------------------
+  // ====================================================
   // LOAD DATA
-  // --------------------------------------------------
+  // ====================================================
 
   const loadData = useCallback(async () => {
     setLoading(true);
     setError("");
 
     try {
-      const token =
-        sessionStorage.getItem("appwars_token") ||
-        sessionStorage.getItem("token");
+      const token = getToken();
 
       if (!token) {
         throw new Error(
@@ -394,37 +684,130 @@ export default function ProgressPaymentsPage() {
         );
       }
 
-      // Verify logged-in student
-      await apiRequest("/api/student/profile");
+      // ----------------------------------------------
+      // 1. FETCH STUDENT PROFILE
+      // ----------------------------------------------
 
-      // Fetch all dashboard sections
+      const profileResponse = await fetch(
+        `${API_URL}/api/student/profile`,
+        {
+          method: "GET",
+          headers: getAuthHeaders(),
+          cache: "no-store",
+        }
+      );
+
+      const profileData = await profileResponse
+        .json()
+        .catch(() => ({}));
+
+      if (!profileResponse.ok) {
+        throw new Error(
+          profileData.message ||
+            profileData.error ||
+            "Unable to fetch student profile."
+        );
+      }
+
+      // ----------------------------------------------
+      // 2. EXTRACT STUDENT
+      // ----------------------------------------------
+
+      const student = getUser(profileData);
+
+      if (!isObject(student)) {
+        throw new Error(
+          "Invalid student profile received from server."
+        );
+      }
+
+      // ----------------------------------------------
+      // 3. EXTRACT BATCH DETAILS
+      // Same logic as Student Dashboard
+      // ----------------------------------------------
+
+      const batch = getBatchDetails(
+        profileData,
+        student
+      );
+
+      const batchId = getBatchId(batch, student);
+
+      const batchName = getBatchName(batch, student);
+
+      console.log("STUDENT PROFILE RESPONSE:", profileData);
+      console.log("EXTRACTED STUDENT:", student);
+      console.log("EXTRACTED BATCH DETAILS:", batch);
+      console.log("EXTRACTED BATCH ID:", batchId);
+
+      // ----------------------------------------------
+      // 4. SAVE COMPLETE BATCH INFORMATION
+      // ----------------------------------------------
+
+      setBatchDetails({
+        ...batch,
+        batch: batchName,
+        _id: batchId,
+      });
+
+      // ----------------------------------------------
+      // 5. FETCH DASHBOARD DATA
+      // ----------------------------------------------
+
       const results = await Promise.allSettled([
-        apiRequest("/api/student/progress"),
+        // Trainer batch progress
+        batchId
+          ? apiRequest(
+              `/api/progress/student/${batchId}/trainer`
+            )
+          : Promise.reject(
+              new Error(
+                "No batch assigned to your student account. Please check your student profile."
+              )
+            ),
+
+        // Student rank
         apiRequest("/api/student/rank"),
+
+        // Student payments
         apiRequest("/api/student/payments"),
       ]);
 
       const [
-        coursesResult,
+        progressResult,
         rankResult,
         paymentsResult,
       ] = results;
 
-      // COURSE PROGRESS
-      if (coursesResult.status === "fulfilled") {
-        const response = coursesResult.value;
+      // ----------------------------------------------
+      // 6. TRAINER BATCH PROGRESS
+      // ----------------------------------------------
 
-        setCourses(
-          extractArray(response, [
-            "courses",
-            "enrollments",
-          ])
+      if (progressResult.status === "fulfilled") {
+        const progressResponse = progressResult.value;
+
+        const progressData =
+          extractBatchProgress(progressResponse);
+
+        setBatchProgress(progressData);
+
+        console.log(
+          "TRAINER BATCH PROGRESS:",
+          progressResponse
         );
       } else {
-        setCourses([]);
+        setBatchProgress(null);
+
+        console.error(
+          "Trainer batch progress error:",
+          progressResult.reason
+        );
       }
 
-      // STUDENT RANK
+      // ----------------------------------------------
+      // 7. STUDENT RANK
+      // ----------------------------------------------
+
       if (rankResult.status === "fulfilled") {
         const response = rankResult.value;
 
@@ -436,9 +819,17 @@ export default function ProgressPaymentsPage() {
         );
       } else {
         setRankData(null);
+
+        console.error(
+          "Student rank error:",
+          rankResult.reason
+        );
       }
 
-      // STUDENT PAYMENTS
+      // ----------------------------------------------
+      // 8. STUDENT PAYMENTS
+      // ----------------------------------------------
+
       if (paymentsResult.status === "fulfilled") {
         const response = paymentsResult.value;
 
@@ -450,61 +841,74 @@ export default function ProgressPaymentsPage() {
           ])
         );
 
-        // Updated backend payment summary
         setPaymentSummary(
           response?.summary ||
             response?.data?.summary ||
+            response?.data?.data?.summary ||
             null
         );
+
+        console.log("STUDENT PAYMENTS:", response);
       } else {
         setPayments([]);
         setPaymentSummary(null);
-      }
 
-      // Show error only when all three sections fail
-      if (
-        results.every(
-          (result) => result.status === "rejected"
-        )
-      ) {
-        setError(
-          "Unable to load progress and payment information. Please check your backend routes."
+        console.error(
+          "Student payments error:",
+          paymentsResult.reason
         );
       }
+
     } catch (err) {
+      console.error(
+        "Progress and payments error:",
+        err
+      );
+
       setError(
-        err.message || "Failed to load your information."
+        err.message ||
+          "Failed to load your information."
       );
     } finally {
       setLoading(false);
     }
   }, []);
 
+  // ====================================================
+  // INITIAL LOAD
+  // ====================================================
+
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  // --------------------------------------------------
-  // COURSE CALCULATIONS
-  // --------------------------------------------------
+  // ====================================================
+  // TRAINER BATCH PROGRESS CALCULATIONS
+  // ====================================================
 
-  const progressValues = courses.map((course) =>
-    getProgress(course)
+  const trainerTopics = getTopics(batchProgress);
+
+  const overallProgress = getPercentage(
+    batchProgress?.overallProgress ??
+      batchProgress?.batchProgress ??
+      batchProgress?.progress ??
+      calculateAverage(trainerTopics)
   );
 
-  const averageProgress =
-    progressValues.length > 0
-      ? Math.round(
-          progressValues.reduce(
-            (sum, value) => sum + value,
-            0
-          ) / progressValues.length
-        )
-      : null;
+  const totalTopics = getNumber(
+    batchProgress?.totalTopics ?? trainerTopics.length
+  );
 
-  // --------------------------------------------------
+  const completedTopics = getNumber(
+    batchProgress?.completedTopics ??
+      trainerTopics.filter(
+        (topic) => getTopicProgress(topic) >= 100
+      ).length
+  );
+
+  // ====================================================
   // RANK CALCULATIONS
-  // --------------------------------------------------
+  // ====================================================
 
   const rank =
     rankData?.rank ??
@@ -518,9 +922,9 @@ export default function ProgressPaymentsPage() {
     rankData?.total ??
     null;
 
-  // --------------------------------------------------
+  // ====================================================
   // PAYMENT CALCULATIONS
-  // --------------------------------------------------
+  // ====================================================
 
   const paidPayments = payments.filter((payment) =>
     isPaid(getPaymentStatus(payment))
@@ -538,13 +942,16 @@ export default function ProgressPaymentsPage() {
     isRefunded(getPaymentStatus(payment))
   );
 
-  // Prefer backend calculated totals
-  // Fallback to frontend calculations
   const totalPaid =
     paymentSummary?.paidTotal ??
     paidPayments.reduce(
       (sum, payment) =>
-        sum + getNumber(payment.amount),
+        sum +
+        getNumber(
+          payment.amount ??
+            payment.paidAmount ??
+            payment.totalAmount
+        ),
       0
     );
 
@@ -552,42 +959,91 @@ export default function ProgressPaymentsPage() {
     paymentSummary?.pendingTotal ??
     pendingPayments.reduce(
       (sum, payment) =>
-        sum + getNumber(payment.amount),
+        sum +
+        getNumber(
+          payment.amount ??
+            payment.paidAmount ??
+            payment.totalAmount
+        ),
       0
     );
 
   const failedTotal =
     paymentSummary?.failedTotal ??
     failedPayments.reduce(
-      (sum, payment) =>
-        sum + getNumber(payment.amount),
+      (sum, payment) => sum + getNumber(payment.amount),
       0
     );
 
   const refundedTotal =
     paymentSummary?.refundedTotal ??
     refundedPayments.reduce(
-      (sum, payment) =>
-        sum + getNumber(payment.amount),
+      (sum, payment) => sum + getNumber(payment.amount),
       0
     );
 
-  // --------------------------------------------------
+  // ====================================================
+  // BATCH INFORMATION
+  // ====================================================
+
+  const batchName =
+    batchDetails?.batch ||
+    batchDetails?.name ||
+    batchDetails?.batchName ||
+    "Not assigned";
+
+  const batchId =
+    batchDetails?._id ||
+    batchDetails?.id ||
+    "Not available";
+
+  const trainerName =
+    batchDetails?.trainer?.name ||
+    batchDetails?.trainerName ||
+    (typeof batchDetails?.trainer === "string"
+      ? batchDetails.trainer
+      : "Not assigned");
+
+  const trainerEmail =
+    batchDetails?.trainer?.email ||
+    "";
+
+  const batchDuration =
+    batchDetails?.durationMonths != null
+      ? `${batchDetails.durationMonths} Months`
+      : batchDetails?.duration || "Not available";
+
+  const batchStartDate = batchDetails?.startDate;
+
+  const batchStatus =
+    batchDetails?.status || "Not available";
+
+  const batchDescription =
+    batchDetails?.description ||
+    "No description available.";
+
+  const batchIsActive = batchDetails?.isActive;
+
+  // ====================================================
   // RENDER
-  // --------------------------------------------------
+  // ====================================================
 
   return (
     <main className="min-h-screen bg-[#f5f8ff] p-4 sm:p-6 lg:p-7">
 
+      {/* ============================================== */}
       {/* HEADER */}
+      {/* ============================================== */}
+
       <header className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+
         <div>
-          <h1 className="text-xl font-bold text-[#102e60]">
+          <h1 className="text-xl font-bold text-[#102e60] sm:text-2xl">
             Progress &amp; Payments
           </h1>
 
           <p className="mt-1 text-xs text-slate-500">
-            Your learning progress, batch rank and payment overview.
+            Your trainer batch progress, rank, batch details and payment overview.
           </p>
         </div>
 
@@ -601,11 +1057,16 @@ export default function ProgressPaymentsPage() {
             size={14}
             className={loading ? "animate-spin" : ""}
           />
+
           Refresh
         </button>
+
       </header>
 
+      {/* ============================================== */}
       {/* ERROR */}
+      {/* ============================================== */}
+
       {error && (
         <div
           role="alert"
@@ -620,36 +1081,45 @@ export default function ProgressPaymentsPage() {
         </div>
       )}
 
+      {/* ============================================== */}
+      {/* LOADING */}
+      {/* ============================================== */}
+
       {loading ? (
         <div className="rounded-xl border border-blue-100 bg-white p-10 text-center">
+
           <RefreshCw
             size={26}
             className="mx-auto mb-3 animate-spin text-blue-600"
           />
 
           <p className="text-sm text-slate-500">
-            Loading your progress and payments...
+            Loading your progress, batch information and payments...
           </p>
+
         </div>
       ) : (
         <>
-          {/* ------------------------------------------ */}
+
+          {/* ========================================== */}
           {/* SUMMARY CARDS */}
-          {/* ------------------------------------------ */}
+          {/* ========================================== */}
 
           <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
 
             <SummaryCard
-              icon={CheckCircle2}
-              title="Average Course Progress"
+              icon={BookOpen}
+              title="Trainer Batch Progress"
               value={
-                averageProgress === null
-                  ? "—"
-                  : `${averageProgress}%`
+                batchProgress
+                  ? `${Math.round(overallProgress)}%`
+                  : "—"
               }
-              description={`${courses.length} enrolled course${
-                courses.length === 1 ? "" : "s"
-              }`}
+              description={
+                batchProgress
+                  ? `${completedTopics} of ${totalTopics} topics completed`
+                  : "Trainer progress unavailable"
+              }
             />
 
             <SummaryCard
@@ -692,13 +1162,174 @@ export default function ProgressPaymentsPage() {
 
           </section>
 
-          {/* ------------------------------------------ */}
+          {/* ========================================== */}
+          {/* COMPLETE BATCH INFORMATION */}
+          {/* ========================================== */}
+
+          <section className="mt-5 rounded-xl border border-blue-100 bg-white p-5 shadow-sm sm:p-6">
+
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+
+              <div className="flex items-center gap-3">
+                <div className="rounded-lg bg-blue-50 p-3 text-blue-700">
+                  <GraduationCap size={24} />
+                </div>
+
+                <div>
+                  <h2 className="text-lg font-bold text-[#102e60]">
+                    Batch Information
+                  </h2>
+
+                  <p className="mt-1 text-xs text-slate-500">
+                    Complete details about your assigned batch.
+                  </p>
+                </div>
+              </div>
+
+              <span className="rounded-full bg-blue-50 px-4 py-2 text-xs font-bold text-blue-700">
+                {batchName}
+              </span>
+
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+
+              <BatchInfoCard
+                icon={BookOpen}
+                title="Batch Name"
+                value={batchName}
+                subtitle="Your assigned batch"
+              />
+{/* 
+              <BatchInfoCard
+                icon={ReceiptText}
+                title="Batch ID"
+                value={batchId}
+                subtitle="Unique batch identifier"
+                iconBackground="bg-indigo-50"
+                iconColor="text-indigo-600"
+              /> */}
+
+              <BatchInfoCard
+                icon={UserRound}
+                title="Assigned Trainer"
+                value={trainerName}
+                subtitle={trainerEmail || "Batch trainer"}
+                iconBackground="bg-purple-50"
+                iconColor="text-purple-600"
+              />
+
+              <BatchInfoCard
+                icon={Clock}
+                title="Batch Duration"
+                value={batchDuration}
+                subtitle="Total training duration"
+                iconBackground="bg-orange-50"
+                iconColor="text-orange-600"
+              />
+
+              <BatchInfoCard
+                icon={CalendarDays}
+                title="Start Date"
+                value={formatDate(batchStartDate)}
+                subtitle="Training commencement date"
+                iconBackground="bg-green-50"
+                iconColor="text-green-600"
+              />
+
+              <div className="flex min-w-0 items-start gap-4 rounded-xl border border-blue-100 bg-white p-4">
+
+                <div className="shrink-0 rounded-lg bg-blue-50 p-3 text-blue-600">
+                  <CheckCircle2 size={23} />
+                </div>
+
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-600">
+                    Batch Status
+                  </p>
+
+                  <span
+                    className={`mt-3 inline-flex rounded-full px-3 py-1.5 text-xs font-bold ${getBatchStatusClass(
+                      batchStatus
+                    )}`}
+                  >
+                    {batchStatus}
+                  </span>
+
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    Current batch status
+                  </p>
+                </div>
+
+              </div>
+
+              <div className="flex min-w-0 items-start gap-4 rounded-xl border border-blue-100 bg-white p-4">
+
+                <div className="shrink-0 rounded-lg bg-emerald-50 p-3 text-emerald-600">
+                  <CheckCircle2 size={23} />
+                </div>
+
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-600">
+                    Batch Availability
+                  </p>
+
+                  <span
+                    className={`mt-3 inline-flex rounded-full px-3 py-1.5 text-xs font-bold ${
+                      batchIsActive === true
+                        ? "bg-green-100 text-green-700"
+                        : batchIsActive === false
+                          ? "bg-red-100 text-red-700"
+                          : "bg-slate-100 text-slate-700"
+                    }`}
+                  >
+                    {batchIsActive === true
+                      ? "Active"
+                      : batchIsActive === false
+                        ? "Inactive"
+                        : "Not available"}
+                  </span>
+
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    Batch active status
+                  </p>
+                </div>
+
+              </div>
+
+            </div>
+
+            {/* BATCH DESCRIPTION */}
+
+            <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-5">
+
+              <div className="mb-3 flex items-center gap-2">
+                <BookOpen
+                  size={19}
+                  className="text-blue-700"
+                />
+
+                <h3 className="text-sm font-bold text-[#102e60]">
+                  Batch Description
+                </h3>
+              </div>
+
+              <p className="text-xs leading-6 text-slate-600">
+                {batchDescription}
+              </p>
+
+            </div>
+
+          </section>
+
+          {/* ========================================== */}
           {/* PAYMENT SUMMARY */}
-          {/* ------------------------------------------ */}
+          {/* ========================================== */}
 
           <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
 
             <div className="rounded-xl border border-blue-100 bg-white p-4">
+
               <div className="flex items-center gap-2">
                 <XCircle
                   size={18}
@@ -718,9 +1349,11 @@ export default function ProgressPaymentsPage() {
                 {failedPayments.length} failed transaction
                 {failedPayments.length === 1 ? "" : "s"}
               </p>
+
             </div>
 
             <div className="rounded-xl border border-blue-100 bg-white p-4">
+
               <div className="flex items-center gap-2">
                 <RefreshCw
                   size={18}
@@ -740,9 +1373,11 @@ export default function ProgressPaymentsPage() {
                 {refundedPayments.length} refunded transaction
                 {refundedPayments.length === 1 ? "" : "s"}
               </p>
+
             </div>
 
             <div className="rounded-xl border border-blue-100 bg-white p-4">
+
               <div className="flex items-center gap-2">
                 <ReceiptText
                   size={18}
@@ -762,109 +1397,237 @@ export default function ProgressPaymentsPage() {
               <p className="mt-1 text-[11px] text-slate-400">
                 All payment transactions
               </p>
+
             </div>
 
           </section>
 
-          {/* ------------------------------------------ */}
-          {/* COURSE COMPLETION */}
-          {/* ------------------------------------------ */}
+          {/* ========================================== */}
+          {/* TRAINER BATCH PROGRESS */}
+          {/* ========================================== */}
 
-          <section className="mt-5 rounded-xl border border-blue-100 bg-white p-4 sm:p-5">
+          <section className="mt-5 rounded-xl border border-blue-100 bg-white p-4 shadow-sm sm:p-5">
 
-            <div className="mb-4 flex items-center gap-2">
-              <BookOpen
-                size={18}
-                className="text-blue-600"
-              />
+            <div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
 
-              <div>
-                <h2 className="text-sm font-bold text-[#17345f]">
-                  Course Completion
-                </h2>
+              <div className="flex items-center gap-2">
+                <BookOpen
+                  size={19}
+                  className="text-blue-600"
+                />
 
-                <p className="mt-1 text-xs text-slate-500">
-                  Progress based on your course enrollment and completed lessons.
-                </p>
+                <div>
+                  <h2 className="text-sm font-bold text-[#17345f]">
+                    Trainer Batch Progress
+                  </h2>
+
+                  <p className="mt-1 text-xs text-slate-500">
+                    Syllabus completion updated by your trainer.
+                  </p>
+                </div>
               </div>
+
+              <span className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-bold text-[#102e60]">
+                {batchName}
+              </span>
+
             </div>
 
-            {courses.length === 0 ? (
+            {!batchProgress ? (
               <div className="py-8 text-center">
-                <CheckCircle2
-                  size={25}
+
+                <AlertCircle
+                  size={26}
                   className="mx-auto mb-2 text-slate-400"
                 />
 
                 <p className="text-sm font-medium text-slate-600">
-                  No course progress available
+                  Trainer progress unavailable
                 </p>
 
                 <p className="mt-1 text-xs text-slate-400">
-                  Your enrolled courses will appear here when available.
+                  Your trainer's batch syllabus progress will appear here.
                 </p>
+
               </div>
             ) : (
-              <div className="space-y-5">
+              <>
 
-                {courses.map((course, index) => {
-                  const progress = getProgress(course);
+                {/* OVERALL PROGRESS */}
 
-                  const name = getCourseName(
-                    course,
-                    index
-                  );
+                <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
 
-                  return (
-                    <div
-                      key={course._id || course.id || index}
-                    >
-                      <div className="flex flex-col justify-between gap-1 sm:flex-row sm:items-center sm:gap-3">
+                  <div className="flex items-center justify-between gap-3">
 
-                        <p className="text-xs font-semibold text-[#17345f]">
-                          {name}
-                        </p>
+                    <div>
+                      <p className="text-xs font-semibold text-[#17345f]">
+                        Overall Syllabus Completion
+                      </p>
 
-                        <p className="text-[10px] text-slate-500">
-                          {getLessonLabel(course, progress)}
-                        </p>
-
-                      </div>
-
-                      <div
-                        className="mt-2 h-2 overflow-hidden rounded-full bg-sky-100"
-                        role="progressbar"
-                        aria-label={`${name} progress`}
-                        aria-valuenow={Math.round(progress)}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                      >
-                        <div
-                          className="h-full rounded-full bg-blue-600 transition-all duration-500"
-                          style={{
-                            width: `${progress}%`,
-                          }}
-                        />
-                      </div>
-
-                      <p className="mt-1 text-right text-[10px] font-semibold text-blue-700">
-                        {Math.round(progress)}%
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Trainer-updated batch progress
                       </p>
                     </div>
-                  );
-                })}
 
-              </div>
+                    <p className="text-2xl font-bold text-blue-700">
+                      {Math.round(overallProgress)}%
+                    </p>
+
+                  </div>
+
+                  <div
+                    className="mt-4 h-3 overflow-hidden rounded-full bg-blue-100"
+                    role="progressbar"
+                    aria-label="Trainer batch progress"
+                    aria-valuenow={Math.round(overallProgress)}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                  >
+                    <div
+                      className="h-full rounded-full bg-blue-600 transition-all duration-500"
+                      style={{
+                        width: `${overallProgress}%`,
+                      }}
+                    />
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between">
+                    <span className="text-[11px] text-slate-500">
+                      {completedTopics} Topics Completed
+                    </span>
+
+                    <span className="text-[11px] text-slate-500">
+                      {totalTopics} Total Topics
+                    </span>
+                  </div>
+
+                </div>
+
+                {/* TOPIC DETAILS */}
+
+                <div className="mt-5">
+
+                  <h3 className="mb-3 text-xs font-bold text-[#17345f]">
+                    Syllabus Topic Details
+                  </h3>
+
+                  {trainerTopics.length === 0 ? (
+                    <div className="py-6 text-center">
+                      <p className="text-xs text-slate-500">
+                        No syllabus topics have been added by your trainer.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+
+                      {trainerTopics.map((topic, index) => {
+                        const percentage =
+                          getTopicProgress(topic);
+
+                        const status = getTopicStatus(
+                          topic,
+                          percentage
+                        );
+
+                        const completed =
+                          percentage >= 100 ||
+                          status.toLowerCase() === "completed";
+
+                        return (
+                          <div
+                            key={
+                              topic._id ||
+                              topic.id ||
+                              index
+                            }
+                            className="rounded-lg border border-slate-100 p-3 transition hover:border-blue-200"
+                          >
+
+                            <div className="flex items-center justify-between gap-3">
+
+                              <div className="flex min-w-0 items-center gap-2">
+
+                                {completed ? (
+                                  <CheckCircle2
+                                    size={16}
+                                    className="shrink-0 text-green-600"
+                                  />
+                                ) : (
+                                  <Clock
+                                    size={16}
+                                    className="shrink-0 text-amber-500"
+                                  />
+                                )}
+
+                                <p className="break-words text-xs font-semibold text-[#17345f]">
+                                  {getTopicName(topic, index)}
+                                </p>
+
+                              </div>
+
+                              <span
+                                className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${getTopicStatusClass(
+                                  status,
+                                  percentage
+                                )}`}
+                              >
+                                {status}
+                              </span>
+
+                            </div>
+
+                            <div className="mt-3 flex items-center gap-3">
+
+                              <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+
+                                <div
+                                  className={`h-full rounded-full transition-all duration-500 ${
+                                    completed
+                                      ? "bg-green-500"
+                                      : "bg-blue-600"
+                                  }`}
+                                  style={{
+                                    width: `${percentage}%`,
+                                  }}
+                                />
+
+                              </div>
+
+                              <span className="w-10 text-right text-[10px] font-semibold text-slate-600">
+                                {Math.round(percentage)}%
+                              </span>
+
+                            </div>
+
+                            {topic.completedAt && (
+                              <p className="mt-2 text-[10px] text-slate-400">
+                                Completed on:{" "}
+                                {formatDate(topic.completedAt)}
+                              </p>
+                            )}
+
+                          </div>
+                        );
+                      })}
+
+                    </div>
+                  )}
+
+                </div>
+
+              </>
             )}
+
           </section>
 
-          {/* ------------------------------------------ */}
+          {/* ========================================== */}
           {/* PAYMENT RECORDS */}
-          {/* ------------------------------------------ */}
+          {/* ========================================== */}
 
-          <section className="mt-5 rounded-xl border border-blue-100 bg-white p-4 sm:p-5">
+          <section className="mt-5 rounded-xl border border-blue-100 bg-white p-4 shadow-sm sm:p-5">
 
             <div className="mb-4 flex items-center gap-2">
+
               <ReceiptText
                 size={18}
                 className="text-blue-600"
@@ -879,10 +1642,12 @@ export default function ProgressPaymentsPage() {
                   Your payment transactions, batch details and payment statuses.
                 </p>
               </div>
+
             </div>
 
             {payments.length === 0 ? (
               <div className="py-8 text-center">
+
                 <CreditCard
                   size={26}
                   className="mx-auto mb-2 text-slate-400"
@@ -895,6 +1660,7 @@ export default function ProgressPaymentsPage() {
                 <p className="mt-1 text-xs text-slate-400">
                   Your payment history will appear here when recorded by the administration.
                 </p>
+
               </div>
             ) : (
               <div className="space-y-3">
@@ -927,14 +1693,17 @@ export default function ProgressPaymentsPage() {
 
                   const method = getPaymentMethod(payment);
 
-                  const batch =
-                    payment.batch?.batch ||
-                    payment.batch?.name ||
-                    payment.batch?.code ||
+                  const paymentBatch = payment.batch;
+
+                  const paymentBatchName =
+                    paymentBatch?.batch ||
+                    paymentBatch?.name ||
+                    paymentBatch?.code ||
                     "";
 
-                  const trainer =
-                    payment.batch?.trainer?.name || "";
+                  const paymentTrainer =
+                    paymentBatch?.trainer?.name ||
+                    "";
 
                   const dueDate = payment.dueDate;
 
@@ -967,17 +1736,17 @@ export default function ProgressPaymentsPage() {
                                 {formatDate(date)}
                               </span>
 
-                              {batch && (
+                              {paymentBatchName && (
                                 <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
                                   <BookOpen size={12} />
-                                  {batch}
+                                  {paymentBatchName}
                                 </span>
                               )}
 
-                              {trainer && (
+                              {paymentTrainer && (
                                 <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
                                   <UserRound size={12} />
-                                  {trainer}
+                                  {paymentTrainer}
                                 </span>
                               )}
 
@@ -1006,6 +1775,7 @@ export default function ProgressPaymentsPage() {
                             )}
 
                           </div>
+
                         </div>
 
                         {/* AMOUNT AND STATUS */}
@@ -1029,6 +1799,7 @@ export default function ProgressPaymentsPage() {
                               status
                             )}`}
                           >
+
                             {isPaid(status) ? (
                               <CheckCircle2 size={12} />
                             ) : isPending(status) ? (
@@ -1038,6 +1809,7 @@ export default function ProgressPaymentsPage() {
                             ) : null}
 
                             {status}
+
                           </span>
 
                         </div>
@@ -1050,9 +1822,12 @@ export default function ProgressPaymentsPage() {
 
               </div>
             )}
+
           </section>
+
         </>
       )}
+
     </main>
   );
 }

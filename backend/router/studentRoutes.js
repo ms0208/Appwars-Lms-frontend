@@ -28,13 +28,14 @@ import {
   submitAssignment,
   getPendingAssignmentsCount,
 } from "../controllers/studentController.js";
+import { getStudent3AScorecard } from "../controllers/studentprogresscontroller.js"
 
 const router = Router();
 router.use(protect);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const uploadDir = path.resolve(__dirname, "../..", process.env.UPLOAD_DIR || "uploads/resumes");
+const uploadDir = path.resolve(__dirname, "../..", process.env.UPLOAD_DIR);
 fs.mkdirSync(uploadDir, { recursive: true });
 
 const storage = multer.diskStorage({
@@ -80,7 +81,12 @@ router.patch("/notifications/:id/read", markNotificationRead);
 router.get("/marks", getMarks);
 router.get("/rank", getRank);
 router.get("/payments", getPayments);
-router.get("/pending-assignments",protect,getPendingAssignmentsCount);
+router.get("/pending-assignments", protect, getPendingAssignmentsCount);
+router.get(
+  "/progress/3a-scorecard",
+  protect,
+  getStudent3AScorecard
+);
 
 router.get("/career", getCareer);
 router.get("/resume", getResume);

@@ -15,8 +15,12 @@ import trainerRoutes from "./router/trainerRoutes.js";
 import scheduleRoutes from "./router/scheduleRoutes.js";
 import studentAssessmentRoutes from "./router/studentAssessmentRoutes.js";
 import studentAttendanceRoutes from "./router/studentAttendanceRoutes.js";
+import assessmentTrainerRoutes from "./router/assessmentTrainerRoutes.js";
+import assessmentStudentRoutes from "./router/assessmentStudentRoutes.js";
+import learningResourceRoutes from "./router/learningResourceRoutes.js";
 
 import progressRoutes from "./router/progressRoutes.js";
+import careerRoutes from "./router/careerRoutes.js";
 
 
 const app = express();
@@ -88,7 +92,22 @@ app.use("/api/counsellor/schedule", scheduleRoutes);
 
 
 app.use("/api/progress", progressRoutes);
+// resources progress
+app.use("/api/learning-resources", learningResourceRoutes);
+// Assessment APIs
+app.use(
+  "/api/trainer/assessments",
+  assessmentTrainerRoutes
+);
 
+app.use(
+  "/api/student/assessments",
+  assessmentStudentRoutes
+);
+
+
+// Career & Placement APIs
+app.use("/api", careerRoutes);
 // Handle unknown API routes
 app.use((req, res) => {
   res.status(404).json({
@@ -142,5 +161,6 @@ async function startServer() {
     process.exit(1);
   }
 }
+
 
 startServer();

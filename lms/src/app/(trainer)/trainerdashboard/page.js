@@ -16,6 +16,7 @@ import {
   MessageCircle,
   RefreshCw,
   Send,
+  BriefcaseBusiness,
   Users,
 } from "lucide-react";
 

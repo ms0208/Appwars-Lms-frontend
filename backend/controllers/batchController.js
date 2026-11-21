@@ -1,3 +1,4 @@
+
 import mongoose from "mongoose";
 
 import Batch from "../models/Batch.js";
@@ -27,7 +28,13 @@ const calculateEndDate = (startDate, durationMonths) => {
   return endDate;
 };
 
+// ==========================================
+// GET STUDENT COUNTS BY BATCH
+// ==========================================
+
 const getStudentCounts = async (batchNames) => {
+  if (!batchNames.length) return new Map();
+
   const students = await User.aggregate([
     {
       $match: {
@@ -49,10 +56,18 @@ const getStudentCounts = async (batchNames) => {
   );
 };
 
+// ==========================================
+// GET ALL BATCHES
 // GET /api/admin/batches
+// ==========================================
+
 export const getBatches = async (req, res) => {
   try {
-    const page = Math.max(1, Number.parseInt(req.query.page || "1", 10));
+    const page = Math.max(
+      1,
+      Number.parseInt(req.query.page || "1", 10)
+    );
+
     const limit = Math.min(
       100,
       Math.max(1, Number.parseInt(req.query.limit || "20", 10))
@@ -60,6 +75,7 @@ export const getBatches = async (req, res) => {
 
     const filter = {};
 
+    // Status filter
     if (req.query.status) {
       if (!allowedStatuses.includes(req.query.status)) {
         return res.status(400).json({
@@ -71,6 +87,7 @@ export const getBatches = async (req, res) => {
       filter.status = req.query.status;
     }
 
+    // Mode filter
     if (req.query.mode) {
       if (!allowedModes.includes(req.query.mode)) {
         return res.status(400).json({
@@ -82,9 +99,16 @@ export const getBatches = async (req, res) => {
       filter.mode = req.query.mode;
     }
 
-    if (req.query.active === "true") filter.isActive = true;
-    if (req.query.active === "false") filter.isActive = false;
+    // Active filter
+    if (req.query.active === "true") {
+      filter.isActive = true;
+    }
 
+    if (req.query.active === "false") {
+      filter.isActive = false;
+    }
+
+    // Trainer filter
     if (req.query.trainerId) {
       if (!isValidId(req.query.trainerId)) {
         return res.status(400).json({
@@ -96,19 +120,31 @@ export const getBatches = async (req, res) => {
       filter.trainer = req.query.trainerId;
     }
 
+    // Search filter
     if (req.query.q || req.query.search) {
-      const search = searchRegex(req.query.q || req.query.search);
+      const search = searchRegex(
+        req.query.q || req.query.search
+      );
 
       const matchingTrainers = await User.find({
         role: "Trainer",
-        $or: [{ name: search }, { userId: search }, { email: search }],
+        $or: [
+          { name: search },
+          { userId: search },
+          { email: search },
+        ],
       }).select("_id");
 
       filter.$or = [
         { batch: search },
-        { course: search },
         { description: search },
-        { trainer: { $in: matchingTrainers.map((trainer) => trainer._id) } },
+        {
+          trainer: {
+            $in: matchingTrainers.map(
+              (trainer) => trainer._id
+            ),
+          },
+        },
       ];
     }
 
@@ -155,18 +191,28 @@ export const getBatches = async (req, res) => {
   }
 };
 
+// ==========================================
+// GET BATCH STATISTICS
 // GET /api/admin/batches/stats
+// ==========================================
+
 export const getBatchStats = async (req, res) => {
   try {
-    const [total, upcoming, running, completed, cancelled, active] =
-      await Promise.all([
-        Batch.countDocuments(),
-        Batch.countDocuments({ status: "Upcoming" }),
-        Batch.countDocuments({ status: "Running" }),
-        Batch.countDocuments({ status: "Completed" }),
-        Batch.countDocuments({ status: "Cancelled" }),
-        Batch.countDocuments({ isActive: true }),
-      ]);
+    const [
+      total,
+      upcoming,
+      running,
+      completed,
+      cancelled,
+      active,
+    ] = await Promise.all([
+      Batch.countDocuments(),
+      Batch.countDocuments({ status: "Upcoming" }),
+      Batch.countDocuments({ status: "Running" }),
+      Batch.countDocuments({ status: "Completed" }),
+      Batch.countDocuments({ status: "Cancelled" }),
+      Batch.countDocuments({ isActive: true }),
+    ]);
 
     return res.status(200).json({
       success: true,
@@ -189,7 +235,11 @@ export const getBatchStats = async (req, res) => {
   }
 };
 
+// ==========================================
+// GET SINGLE BATCH
 // GET /api/admin/batches/:id
+// ==========================================
+
 export const getBatchById = async (req, res) => {
   try {
     if (!isValidId(req.params.id)) {
@@ -236,12 +286,18 @@ export const getBatchById = async (req, res) => {
   }
 };
 
+// ==========================================
+// CREATE BATCH
 // POST /api/admin/batches
+//
+// One trainer can handle multiple batches.
+// Duplicate combination: batch + trainer.
+// ==========================================
+
 export const createBatch = async (req, res) => {
   try {
     const {
       batch,
-      course,
       trainer,
       startDate,
       durationMonths,
@@ -257,11 +313,10 @@ export const createBatch = async (req, res) => {
       endDate,
     } = req.body;
 
+    // Validate required fields
     if (
       typeof batch !== "string" ||
       !batch.trim() ||
-      typeof course !== "string" ||
-      !course.trim() ||
       !trainer ||
       !startDate ||
       durationMonths === undefined
@@ -269,10 +324,11 @@ export const createBatch = async (req, res) => {
       return res.status(400).json({
         success: false,
         message:
-          "Batch name, course, trainer, start date and duration are required.",
+          "Batch name, trainer, start date and duration are required.",
       });
     }
 
+    // Validate trainer ID
     if (!isValidId(trainer)) {
       return res.status(400).json({
         success: false,
@@ -284,6 +340,7 @@ export const createBatch = async (req, res) => {
     const parsedDuration = Number(durationMonths);
     const parsedCapacity = Number(capacity);
 
+    // Validate start date
     if (Number.isNaN(parsedStartDate.getTime())) {
       return res.status(400).json({
         success: false,
@@ -291,6 +348,7 @@ export const createBatch = async (req, res) => {
       });
     }
 
+    // Validate duration
     if (!Number.isInteger(parsedDuration) || parsedDuration < 1) {
       return res.status(400).json({
         success: false,
@@ -298,6 +356,7 @@ export const createBatch = async (req, res) => {
       });
     }
 
+    // Validate capacity
     if (!Number.isInteger(parsedCapacity) || parsedCapacity < 1) {
       return res.status(400).json({
         success: false,
@@ -305,6 +364,7 @@ export const createBatch = async (req, res) => {
       });
     }
 
+    // Validate status
     if (!allowedStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -312,13 +372,26 @@ export const createBatch = async (req, res) => {
       });
     }
 
-    if (!allowedModes.includes(mode) || !allowedBatchTypes.includes(batchType)) {
+    // Validate mode and batch type
+    if (
+      !allowedModes.includes(mode) ||
+      !allowedBatchTypes.includes(batchType)
+    ) {
       return res.status(400).json({
         success: false,
         message: "Invalid batch mode or batch type.",
       });
     }
 
+    // Validate active status
+    if (typeof isActive !== "boolean") {
+      return res.status(400).json({
+        success: false,
+        message: "isActive must be true or false.",
+      });
+    }
+
+    // Check trainer
     const trainerUser = await User.findOne({
       _id: trainer,
       role: "Trainer",
@@ -334,25 +407,34 @@ export const createBatch = async (req, res) => {
 
     const normalizedBatch = batch.trim();
 
-    // Batch names should be unique because student accounts use
-    // the batch name string to identify their assigned batch.
+    // ==========================================
+    // DUPLICATE CHECK
+    // Only block same batch name + same trainer.
+    // Trainer can handle multiple different batches.
+    // ==========================================
+
     const existingBatch = await Batch.findOne({
       batch: normalizedBatch,
+      trainer: trainerUser._id,
     }).select("_id");
 
     if (existingBatch) {
       return res.status(409).json({
         success: false,
-        message: "A batch with this name already exists.",
+        message:
+          "This trainer is already assigned to a batch with this name.",
       });
     }
 
+    // Calculate end date
     const calculatedEndDate = calculateEndDate(
       parsedStartDate,
       parsedDuration
     );
 
-    const parsedEndDate = endDate ? new Date(endDate) : calculatedEndDate;
+    const parsedEndDate = endDate
+      ? new Date(endDate)
+      : calculatedEndDate;
 
     if (
       Number.isNaN(parsedEndDate.getTime()) ||
@@ -364,9 +446,9 @@ export const createBatch = async (req, res) => {
       });
     }
 
+    // Create batch
     const createdBatch = await Batch.create({
       batch: normalizedBatch,
-      course: course.trim(),
       trainer: trainerUser._id,
       startDate: parsedStartDate,
       durationMonths: parsedDuration,
@@ -404,7 +486,8 @@ export const createBatch = async (req, res) => {
     if (error.code === 11000) {
       return res.status(409).json({
         success: false,
-        message: "A batch with this name and trainer already exists.",
+        message:
+          "This batch name is already assigned to this trainer.",
       });
     }
 
@@ -414,19 +497,17 @@ export const createBatch = async (req, res) => {
     });
   }
 };
+
 // ==========================================
-// ASSIGN TRAINER TO BATCH
+// ASSIGN / REMOVE TRAINER
+// PATCH /api/admin/batches/:id/assign-trainer
 // ==========================================
-// ==========================================
-// PATCH /api/admin/batches/:batchId/assign-trainer
-// ASSIGN OR REMOVE TRAINER FROM BATCH
-// ==========================================
+
 export const assignTrainerToBatch = async (req, res) => {
   try {
     const batchId = req.params.id;
     const { trainerId } = req.body;
 
-    // 1. Validate batch ID
     if (!isValidId(batchId)) {
       return res.status(400).json({
         success: false,
@@ -434,7 +515,6 @@ export const assignTrainerToBatch = async (req, res) => {
       });
     }
 
-    // 2. Find batch
     const batchDocument = await Batch.findById(batchId);
 
     if (!batchDocument) {
@@ -444,24 +524,14 @@ export const assignTrainerToBatch = async (req, res) => {
       });
     }
 
-    // 3. Allow trainer removal
+    // Trainer is required
     if (trainerId === null || trainerId === "") {
-      batchDocument.trainer = null;
-      batchDocument.assignedDate = null;
-
-      await batchDocument.save();
-
-      const updatedBatch = await Batch.findById(batchId)
-        .populate("trainer", "userId name email isActive trainerDetails")
-        .lean();
-
-      return res.status(200).json({
-        success: true,
-        message: "Trainer removed from batch successfully.",
-        data: updatedBatch,
+      return res.status(400).json({
+        success: false,
+        message: "Trainer is required.",
       });
     }
-    // 4. Validate trainer ID
+
     if (!isValidId(trainerId)) {
       return res.status(400).json({
         success: false,
@@ -469,7 +539,6 @@ export const assignTrainerToBatch = async (req, res) => {
       });
     }
 
-    // 5. Check whether trainer exists and is active
     const trainerUser = await User.findOne({
       _id: trainerId,
       role: "Trainer",
@@ -483,13 +552,12 @@ export const assignTrainerToBatch = async (req, res) => {
       });
     }
 
-    // 6. Assign trainer
+    // Assign trainer
     batchDocument.trainer = trainerUser._id;
     batchDocument.assignedDate = new Date();
 
     await batchDocument.save();
 
-    // 7. Fetch updated batch with trainer details
     const updatedBatch = await Batch.findById(batchId)
       .populate(
         "trainer",
@@ -497,13 +565,11 @@ export const assignTrainerToBatch = async (req, res) => {
       )
       .lean();
 
-    // 8. Success response
     return res.status(200).json({
       success: true,
       message: "Trainer assigned to batch successfully.",
       data: updatedBatch,
     });
-
   } catch (error) {
     console.error("Assign trainer error:", error);
 
@@ -514,7 +580,14 @@ export const assignTrainerToBatch = async (req, res) => {
     });
   }
 };
+
+// ==========================================
+// UPDATE BATCH
 // PUT /api/admin/batches/:id
+//
+// Duplicate validation uses batch + trainer.
+// ==========================================
+
 export const updateBatch = async (req, res) => {
   try {
     if (!isValidId(req.params.id)) {
@@ -535,7 +608,6 @@ export const updateBatch = async (req, res) => {
 
     const {
       batch,
-      course,
       trainer,
       startDate,
       durationMonths,
@@ -551,6 +623,10 @@ export const updateBatch = async (req, res) => {
       isActive,
     } = req.body;
 
+    // ==========================================
+    // UPDATE BATCH NAME
+    // ==========================================
+
     if (batch !== undefined) {
       if (typeof batch !== "string" || !batch.trim()) {
         return res.status(400).json({
@@ -559,33 +635,12 @@ export const updateBatch = async (req, res) => {
         });
       }
 
-      const normalizedBatch = batch.trim();
-
-      const duplicate = await Batch.findOne({
-        batch: normalizedBatch,
-        _id: { $ne: batchDocument._id },
-      }).select("_id");
-
-      if (duplicate) {
-        return res.status(409).json({
-          success: false,
-          message: "A batch with this name already exists.",
-        });
-      }
-
-      batchDocument.batch = normalizedBatch;
+      batchDocument.batch = batch.trim();
     }
 
-    if (course !== undefined) {
-      if (typeof course !== "string" || !course.trim()) {
-        return res.status(400).json({
-          success: false,
-          message: "Course cannot be empty.",
-        });
-      }
-
-      batchDocument.course = course.trim();
-    }
+    // ==========================================
+    // UPDATE TRAINER
+    // ==========================================
 
     if (trainer !== undefined) {
       if (!isValidId(trainer)) {
@@ -609,7 +664,30 @@ export const updateBatch = async (req, res) => {
       }
 
       batchDocument.trainer = trainerUser._id;
+      batchDocument.assignedDate = new Date();
     }
+
+    // ==========================================
+    // CHECK DUPLICATE BATCH + TRAINER
+    // ==========================================
+
+    const duplicate = await Batch.findOne({
+      batch: batchDocument.batch,
+      trainer: batchDocument.trainer,
+      _id: { $ne: batchDocument._id },
+    }).select("_id");
+
+    if (duplicate) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "This trainer is already assigned to a batch with this name.",
+      });
+    }
+
+    // ==========================================
+    // UPDATE START DATE
+    // ==========================================
 
     if (startDate !== undefined) {
       const parsedDate = new Date(startDate);
@@ -624,6 +702,10 @@ export const updateBatch = async (req, res) => {
       batchDocument.startDate = parsedDate;
     }
 
+    // ==========================================
+    // UPDATE DURATION
+    // ==========================================
+
     if (durationMonths !== undefined) {
       const parsedDuration = Number(durationMonths);
 
@@ -636,6 +718,10 @@ export const updateBatch = async (req, res) => {
 
       batchDocument.durationMonths = parsedDuration;
     }
+
+    // ==========================================
+    // UPDATE END DATE
+    // ==========================================
 
     if (endDate !== undefined) {
       const parsedEndDate = new Date(endDate);
@@ -658,6 +744,10 @@ export const updateBatch = async (req, res) => {
       );
     }
 
+    // ==========================================
+    // UPDATE STATUS
+    // ==========================================
+
     if (status !== undefined) {
       if (!allowedStatuses.includes(status)) {
         return res.status(400).json({
@@ -668,6 +758,10 @@ export const updateBatch = async (req, res) => {
 
       batchDocument.status = status;
     }
+
+    // ==========================================
+    // UPDATE MODE
+    // ==========================================
 
     if (mode !== undefined) {
       if (!allowedModes.includes(mode)) {
@@ -680,6 +774,10 @@ export const updateBatch = async (req, res) => {
       batchDocument.mode = mode;
     }
 
+    // ==========================================
+    // UPDATE BATCH TYPE
+    // ==========================================
+
     if (batchType !== undefined) {
       if (!allowedBatchTypes.includes(batchType)) {
         return res.status(400).json({
@@ -690,6 +788,10 @@ export const updateBatch = async (req, res) => {
 
       batchDocument.batchType = batchType;
     }
+
+    // ==========================================
+    // UPDATE CAPACITY
+    // ==========================================
 
     if (capacity !== undefined) {
       const parsedCapacity = Number(capacity);
@@ -717,13 +819,29 @@ export const updateBatch = async (req, res) => {
       batchDocument.capacity = parsedCapacity;
     }
 
+    // ==========================================
+    // UPDATE OPTIONAL FIELDS
+    // ==========================================
+
     if (description !== undefined) {
       batchDocument.description = description;
     }
 
-    if (time !== undefined) batchDocument.time = time;
-    if (days !== undefined) batchDocument.days = days;
-    if (meetingLink !== undefined) batchDocument.meetingLink = meetingLink;
+    if (time !== undefined) {
+      batchDocument.time = time;
+    }
+
+    if (days !== undefined) {
+      batchDocument.days = days;
+    }
+
+    if (meetingLink !== undefined) {
+      batchDocument.meetingLink = meetingLink;
+    }
+
+    // ==========================================
+    // UPDATE ACTIVE STATUS
+    // ==========================================
 
     if (isActive !== undefined) {
       if (typeof isActive !== "boolean") {
@@ -736,7 +854,15 @@ export const updateBatch = async (req, res) => {
       batchDocument.isActive = isActive;
     }
 
-    if (batchDocument.endDate < batchDocument.startDate) {
+    // ==========================================
+    // VALIDATE DATES
+    // ==========================================
+
+    if (
+      batchDocument.endDate &&
+      batchDocument.startDate &&
+      batchDocument.endDate < batchDocument.startDate
+    ) {
       return res.status(400).json({
         success: false,
         message: "Batch end date cannot be before the start date.",
@@ -769,6 +895,14 @@ export const updateBatch = async (req, res) => {
   } catch (error) {
     console.error("Update batch error:", error);
 
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "This batch name is already assigned to this trainer.",
+      });
+    }
+
     return res.status(500).json({
       success: false,
       message: "Failed to update batch.",
@@ -776,8 +910,11 @@ export const updateBatch = async (req, res) => {
   }
 };
 
+// ==========================================
+// DELETE / DEACTIVATE BATCH
 // DELETE /api/admin/batches/:id
-// Soft delete: keep the document for historical references.
+// ==========================================
+
 export const deleteBatch = async (req, res) => {
   try {
     if (!isValidId(req.params.id)) {

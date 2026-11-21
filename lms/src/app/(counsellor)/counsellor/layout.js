@@ -38,11 +38,11 @@ const navigation = [
     href: "/counsellor/fees",
     icon: Wallet,
   },
-  {
-    label: "Students",
-    href: "/counsellor/students",
-    icon: Users,
-  },
+  // {
+  //   label: "Students",
+  //   href: "/counsellor/students",
+  //   icon: Users,
+  // },
   {
     label: "Batches & Trainers",
     href: "/counsellor/batches",

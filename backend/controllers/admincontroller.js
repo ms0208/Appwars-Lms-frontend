@@ -267,98 +267,97 @@ export const getBatches = async (req, res, next) => {
 // GET /api/admin/dashboard
 // --------------------------------------------------
 
-export const getDashboard = async (req, res, next) => {
+export const getDashboard = async (req, res) => {
   try {
+    const now = new Date();
+
     const [
       totalStudents,
       totalTrainers,
-      activeCourses,
-      pendingPaymentResult,
-      runningBatches,
+      activeBatches,
       pendingAssignments,
       upcomingClasses,
       openDoubts,
-      recentUsers,
-      recentAnnouncements,
+      pendingPayments,
     ] = await Promise.all([
-      User.countDocuments({
-        role: "Student",
-        isActive: true,
+      User.countDocuments({ role: "Student" }),
+
+      User.countDocuments({ role: "Trainer" }),
+
+      Batch.countDocuments({ status: "Running" }),
+
+      Assignment.countDocuments({ status: "Pending" }),
+
+      LiveClass.countDocuments({
+        date: { $gte: now },
+        status: { $ne: "Cancelled" },
       }),
 
-      User.countDocuments({
-        role: "Trainer",
-        isActive: true,
-      }),
-
-      Course.countDocuments({
-        status: "Active",
-      }),
+      Doubt.countDocuments({ status: "Open" }),
 
       Payment.aggregate([
-        { $match: { status: "Pending" } },
         {
           $group: {
             _id: null,
-            total: { $sum: "$amount" },
+            totalPending: {
+              $sum: "$pendingFees",
+            },
           },
         },
       ]),
-
-      Batch.countDocuments({
-        status: "Running",
-      }),
-
-      Assignment.countDocuments({
-        status: "Published",
-      }),
-
-      LiveClass.countDocuments({
-        status: "Scheduled",
-        startTime: { $gte: new Date() },
-      }),
-
-      Doubt.countDocuments({
-        status: { $in: ["Open", "In Progress"] },
-      }),
-
-      User.find()
-        .select("userId name role createdAt")
-        .sort({ createdAt: -1 })
-        .limit(5)
-        .lean(),
-
-      Announcement.find({ isPublished: true })
-        .sort({ publishAt: -1 })
-        .limit(5)
-        .lean(),
     ]);
 
-    res.status(200).json({
+    const pendingPaymentAmount =
+      pendingPayments.length > 0
+        ? pendingPayments[0].totalPending
+        : 0;
+
+    // Recent students
+    const recentStudents = await User.find({
+      role: "Student",
+    })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select("name userId email batch createdAt");
+
+    // Recent batches (NO COURSE POPULATION)
+    const recentBatches = await Batch.find()
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .populate("trainer", "name userId email");
+
+    // Recent payments
+    const recentPayments = await Payment.find()
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .populate("student", "name userId email");
+
+    return res.status(200).json({
       success: true,
+      message: "Admin dashboard data fetched successfully.",
 
       stats: {
         totalStudents,
         totalTrainers,
-        activeCourses,
-        pendingPayments: pendingPaymentResult[0]?.total || 0,
-        runningBatches,
+        activeBatches,
+        pendingPayments: pendingPaymentAmount,
         pendingAssignments,
         upcomingClasses,
         openDoubts,
       },
 
-      recentActivity: recentUsers.map((user) => ({
-        type: "user_registered",
-        text: `${user.role} registered: ${user.name}`,
-        date: user.createdAt,
-        userId: user.userId,
-      })),
-
-      recentAnnouncements,
+      recentStudents,
+      recentBatches,
+      recentPayments,
     });
   } catch (error) {
-    next(error);
+    console.error("Admin Dashboard Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch admin dashboard data.",
+      error: error.message,
+    });
   }
 };
 
@@ -2781,49 +2780,22 @@ export const getPaymentById = async (req, res, next) => {
 // POST /api/admin/payments
 // ======================================================
 
+
 export const createPayment = async (req, res, next) => {
   try {
     const body = req.body || {};
 
-    // Support both frontend payload formats.
-    const studentId =
-      body.student || body.studentId;
-
-    const batchId =
-      body.batch || body.batchId;
-
-    const amount = Number(body.amount);
-
-    const currency = body.currency || "INR";
-
-    const method =
-      body.method ||
-      body.paymentMethod ||
-      "UPI";
-
-    const status = body.status || "Pending";
-
-    const reference =
-      body.reference ||
-      body.transactionId ||
-      body.providerReference ||
-      "";
-
-    const {
-      dueDate,
-      paidAt,
-      notes = "",
-    } = body;
-
     // ------------------------------------------
-    // VALIDATE STUDENT AND BATCH
+    // STUDENT AND BATCH
     // ------------------------------------------
 
-    const validation =
-      await validatePaymentStudentBatch(
-        studentId,
-        batchId
-      );
+    const studentId = body.student || body.studentId;
+    const batchId = body.batch || body.batchId;
+
+    const validation = await validatePaymentStudentBatch(
+      studentId,
+      batchId
+    );
 
     if (validation.error) {
       return res.status(validation.error.status).json({
@@ -2835,19 +2807,87 @@ export const createPayment = async (req, res, next) => {
     const { student, batch } = validation;
 
     // ------------------------------------------
-    // VALIDATE AMOUNT
+    // FEE STRUCTURE
     // ------------------------------------------
 
+    const totalFees = Number(
+      body.totalFees ?? body.amount
+    );
+
+    const collectedFees = Number(
+      body.collectedFees ?? 0
+    );
+
     if (
-      !Number.isFinite(amount) ||
-      amount <= 0
+      !Number.isFinite(totalFees) ||
+      totalFees <= 0
     ) {
       return res.status(400).json({
         success: false,
-        message:
-          "Payment amount must be greater than zero.",
+        message: "Total fees must be greater than zero.",
       });
     }
+
+    if (
+      !Number.isFinite(collectedFees) ||
+      collectedFees < 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Collected fees must be a valid non-negative amount.",
+      });
+    }
+
+    if (collectedFees > totalFees) {
+      return res.status(400).json({
+        success: false,
+        message: "Collected fees cannot exceed total fees.",
+      });
+    }
+
+    const pendingFees = totalFees - collectedFees;
+
+    // ------------------------------------------
+    // INDIVIDUAL PAYMENT TRANSACTION
+    // ------------------------------------------
+
+    const amount = Number(body.amount ?? collectedFees);
+
+    if (
+      !Number.isFinite(amount) ||
+      amount < 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid payment amount.",
+      });
+    }
+
+    // ------------------------------------------
+    // OTHER FIELDS
+    // ------------------------------------------
+
+    const currency = body.currency || "INR";
+
+    const method =
+      body.method ||
+      body.paymentMethod ||
+      "UPI";
+
+    const status =
+      body.status ||
+      (collectedFees >= totalFees ? "Paid" : "Pending");
+
+    const reference =
+      body.reference ||
+      body.transactionId ||
+      body.providerReference ||
+      "";
+
+    const dueDate = parsePaymentDate(body.dueDate);
+    const paidAt = parsePaymentDate(body.paidAt);
+
+    const notes = body.notes || "";
 
     // ------------------------------------------
     // VALIDATE STATUS
@@ -2860,10 +2900,6 @@ export const createPayment = async (req, res, next) => {
       });
     }
 
-    // ------------------------------------------
-    // VALIDATE PAYMENT METHOD
-    // ------------------------------------------
-
     if (!allowedPaymentMethods.includes(method)) {
       return res.status(400).json({
         success: false,
@@ -2871,15 +2907,10 @@ export const createPayment = async (req, res, next) => {
       });
     }
 
-    // ------------------------------------------
-    // VALIDATE CURRENCY
-    // ------------------------------------------
-
     if (currency !== "INR") {
       return res.status(400).json({
         success: false,
-        message:
-          "Only INR currency is currently supported.",
+        message: "Only INR currency is currently supported.",
       });
     }
 
@@ -2911,20 +2942,24 @@ export const createPayment = async (req, res, next) => {
     // VALIDATE DATES
     // ------------------------------------------
 
-    const parsedDueDate = parsePaymentDate(dueDate);
-    const parsedPaidAt = parsePaymentDate(paidAt);
-
-    if (parsedDueDate === false) {
+    if (dueDate === false) {
       return res.status(400).json({
         success: false,
         message: "Invalid due date.",
       });
     }
 
-    if (parsedPaidAt === false) {
+    if (paidAt === false) {
       return res.status(400).json({
         success: false,
         message: "Invalid paid date.",
+      });
+    }
+
+    if (status === "Paid" && collectedFees < totalFees) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment cannot be marked Paid while fees are pending.",
       });
     }
 
@@ -2936,21 +2971,24 @@ export const createPayment = async (req, res, next) => {
       student: student._id,
       batch: batch ? batch._id : null,
 
+      // Fee structure
+      totalFees,
+      collectedFees,
+      pendingFees,
+
+      // Individual transaction
       amount,
       currency,
+      method,
+      reference: reference.trim(),
+      status,
 
-      dueDate: parsedDueDate,
+      dueDate,
 
       paidAt:
         status === "Paid"
-          ? parsedPaidAt || new Date()
+          ? paidAt || new Date()
           : null,
-
-      method,
-
-      reference: reference.trim(),
-
-      status,
 
       notes: notes.trim(),
 
@@ -2972,10 +3010,12 @@ export const createPayment = async (req, res, next) => {
       message: "Payment record created successfully.",
       payment: populatedPayment,
     });
+
   } catch (error) {
     next(error);
   }
 };
+
 
 // ======================================================
 // 4. UPDATE PAYMENT

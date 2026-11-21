@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -84,16 +85,6 @@ function getArray(...candidates) {
   }
 
   return [];
-}
-
-function getTopics(data) {
-  return getArray(
-    data?.topics,
-    data?.data?.topics,
-    data?.data?.data?.topics,
-    data?.progress?.topics,
-    data?.batchProgress?.topics
-  );
 }
 
 function getBatchDetails(...responses) {
@@ -204,6 +195,18 @@ function getPercentage(value) {
   return Math.min(100, Math.max(0, number));
 }
 
+function getTopics(data) {
+  const candidates = [
+    data?.topics,
+    data?.data?.topics,
+    data?.data?.data?.topics,
+    data?.progress?.topics,
+    data?.batchProgress?.topics,
+  ];
+
+  return getArray(...candidates);
+}
+
 function getProgressValue(topic, type) {
   if (type === "trainer") {
     return getPercentage(
@@ -234,24 +237,132 @@ function calculateAverage(topics, type) {
   return Math.round(total / topics.length);
 }
 
-function getTopicName(topic) {
-  return String(
-    topic?.topicName ||
-    topic?.name ||
-    topic?.title ||
-    ""
-  ).trim();
+// ==========================================
+// STUDENT VIDEO LEARNING PROGRESS
+// ==========================================
+
+function getLearningVideoPercentage(data) {
+  if (!data) return 0;
+
+  const summary =
+    data?.summary ||
+    data?.data?.summary ||
+    data?.progress?.summary ||
+    {};
+
+  // First preference: backend-calculated percentage.
+  const backendPercentage =
+    summary.progressPercentage ??
+    summary.videoProgress ??
+    summary.overallProgress ??
+    summary.completionPercentage ??
+    data?.progressPercentage ??
+    data?.overallProgress ??
+    data?.videoProgress;
+
+  if (
+    backendPercentage !== undefined &&
+    backendPercentage !== null
+  ) {
+    return getPercentage(backendPercentage);
+  }
+
+  // Second preference: duration summary.
+  const totalDuration = Number(
+    summary.totalDuration ??
+    summary.totalVideoDuration ??
+    data?.totalDuration ??
+    0
+  );
+
+  const watchedDuration = Number(
+    summary.watchedDuration ??
+    summary.totalWatchedDuration ??
+    summary.watchedSeconds ??
+    data?.watchedDuration ??
+    data?.watchedSeconds ??
+    0
+  );
+
+  if (totalDuration > 0) {
+    return getPercentage(
+      Math.round((watchedDuration / totalDuration) * 100)
+    );
+  }
+
+  // Third preference: calculate from video resource records.
+  const resources = getArray(
+    data?.resources,
+    data?.videos,
+    data?.data?.resources,
+    data?.data?.videos,
+    data?.progress?.resources
+  );
+
+  if (!resources.length) return 0;
+
+  const videos = resources.filter(
+    (item) =>
+      item?.type === "video" ||
+      item?.resource?.type === "video"
+  );
+
+  let totalVideoDuration = 0;
+  let totalWatchedDuration = 0;
+
+  videos.forEach((item) => {
+    const duration = Number(
+      item?.duration ||
+      item?.resource?.duration ||
+      item?.progress?.duration ||
+      0
+    );
+
+    const watched = Number(
+      item?.watchedSeconds ??
+      item?.progress?.watchedSeconds ??
+      item?.progress?.watchedDuration ??
+      0
+    );
+
+    totalVideoDuration += duration;
+    totalWatchedDuration += Math.min(duration, watched);
+  });
+
+  if (totalVideoDuration <= 0) return 0;
+
+  return getPercentage(
+    Math.round(
+      (totalWatchedDuration / totalVideoDuration) * 100
+    )
+  );
 }
 
-function getTopicReference(topic) {
-  return (
-    topic?.topicId?._id ||
-    topic?.topicId ||
-    topic?.syllabusTopicId?._id ||
-    topic?.syllabusTopicId ||
-    topic?._id ||
-    null
-  );
+// ==========================================
+// VIDEO STATISTICS
+// ==========================================
+
+function getVideoStatistics(data) {
+  const summary =
+    data?.summary ||
+    data?.data?.summary ||
+    {};
+
+  return {
+    totalVideos: Number(
+      summary.totalVideos ??
+      summary.totalPublishedVideos ??
+      data?.totalVideos ??
+      0
+    ),
+
+    completedVideos: Number(
+      summary.completedVideos ??
+      summary.completed ??
+      data?.completedVideos ??
+      0
+    ),
+  };
 }
 
 // ==========================================
@@ -359,6 +470,13 @@ export default function DashboardPage() {
     useState("");
 
   // ==========================================
+  // VIDEO STATISTICS
+  // ==========================================
+
+  const [totalVideos, setTotalVideos] = useState(0);
+  const [completedVideos, setCompletedVideos] = useState(0);
+
+  // ==========================================
   // LOADING STATES
   // ==========================================
 
@@ -460,7 +578,6 @@ export default function DashboardPage() {
 
         message: data?.message || "",
       });
-
     } catch (err) {
       console.error("Student rank error:", err);
 
@@ -474,10 +591,13 @@ export default function DashboardPage() {
   }, []);
 
   // ==========================================
-  // LOAD STUDENT + TRAINER BATCH PROGRESS
+  // LOAD STUDENT VIDEO + TRAINER PROGRESS
   //
-  // GET /api/progress/student/:batchId
-  // GET /api/progress/trainer/:batchId
+  // STUDENT:
+  // GET /api/learning-resources/my-progress
+  //
+  // TRAINER:
+  // GET /api/progress/student/:batchId/trainer
   // ==========================================
 
   const loadBatchProgress = useCallback(
@@ -489,6 +609,9 @@ export default function DashboardPage() {
 
         setStudentBatchProgress(null);
         setTrainerBatchProgress(null);
+        setTotalVideos(0);
+        setCompletedVideos(0);
+
         return;
       }
 
@@ -498,8 +621,9 @@ export default function DashboardPage() {
       try {
         const [studentResponse, trainerResponse] =
           await Promise.all([
+            // Student video learning progress
             fetch(
-              `${API_URL}/api/progress/student/${batchId}`,
+              `${API_URL}/api/learning-resources/my-progress`,
               {
                 method: "GET",
                 headers,
@@ -507,6 +631,7 @@ export default function DashboardPage() {
               }
             ),
 
+            // Existing trainer batch progress
             fetch(
               `${API_URL}/api/progress/student/${batchId}/trainer`,
               {
@@ -522,30 +647,37 @@ export default function DashboardPage() {
           trainerResponse.json().catch(() => ({})),
         ]);
 
+        // STUDENT VIDEO PROGRESS
         if (!studentResponse.ok) {
           throw new Error(
             studentData.message ||
             studentData.error ||
-            "Unable to fetch student learning progress."
+            "Unable to fetch video learning progress."
           );
         }
 
         setStudentBatchProgress(studentData);
 
+        const videoStats = getVideoStatistics(studentData);
+
+        setTotalVideos(videoStats.totalVideos);
+        setCompletedVideos(videoStats.completedVideos);
+
+        // TRAINER PROGRESS
         if (!trainerResponse.ok) {
           setTrainerBatchProgress(null);
 
           setBatchProgressError(
             trainerData.message ||
             trainerData.error ||
-            "Student progress loaded, but trainer batch progress could not be loaded."
+            "Student video progress loaded, but trainer progress could not be loaded."
           );
         } else {
           setTrainerBatchProgress(trainerData);
         }
 
         console.log(
-          "STUDENT BATCH PROGRESS:",
+          "STUDENT VIDEO LEARNING PROGRESS:",
           studentData
         );
 
@@ -553,7 +685,6 @@ export default function DashboardPage() {
           "TRAINER BATCH PROGRESS:",
           trainerData
         );
-
       } catch (err) {
         console.error("Batch progress error:", err);
 
@@ -614,7 +745,6 @@ export default function DashboardPage() {
         },
         attendance: records,
       });
-
     } catch (err) {
       console.error("Student attendance error:", err);
 
@@ -664,7 +794,6 @@ export default function DashboardPage() {
           data.data?.data?.results
         )
       );
-
     } catch (err) {
       console.error("Student results error:", err);
 
@@ -679,8 +808,6 @@ export default function DashboardPage() {
 
   // ==========================================
   // LOAD STUDENT DASHBOARD
-  //
-  // GET /api/student/me
   // ==========================================
 
   const loadDashboard = useCallback(
@@ -697,10 +824,7 @@ export default function DashboardPage() {
       try {
         const headers = getAuthHeaders();
 
-        // ==========================================
         // FETCH STUDENT PROFILE
-        // ==========================================
-
         const profileResponse = await fetch(
           `${API_URL}/api/student/profile`,
           {
@@ -751,10 +875,7 @@ export default function DashboardPage() {
           );
         }
 
-        // ==========================================
         // EXTRACT BATCH DETAILS
-        // ==========================================
-
         const completeBatch = getBatchDetails(
           profileData,
           user
@@ -771,17 +892,14 @@ export default function DashboardPage() {
             user.batch.batchName
           : user.batch;
 
-        const batchName =
+        const resolvedBatchName =
           completeBatch.batch ||
           completeBatch.name ||
           completeBatch.batchName ||
           studentBatch ||
           "Not assigned";
 
-        // ==========================================
         // SET STUDENT
-        // ==========================================
-
         setStudent({
           id:
             user.userId ||
@@ -792,14 +910,11 @@ export default function DashboardPage() {
           name: user.name || "Student",
           email: user.email || "",
           role: user.role || "Student",
-          batch: batchName,
+          batch: resolvedBatchName,
           batchId,
         });
 
-        // ==========================================
         // INITIAL DASHBOARD DATA
-        // ==========================================
-
         setDashboard({
           ...getDashboard(profileData),
           batchDetails: completeBatch,
@@ -810,10 +925,7 @@ export default function DashboardPage() {
         console.log("EXTRACTED BATCH DETAILS:", completeBatch);
         console.log("STUDENT BATCH ID:", batchId);
 
-        // ==========================================
-        // FETCH OPTIONAL DASHBOARD DATA
-        // ==========================================
-
+        // FETCH PENDING ASSIGNMENTS
         const pendingPromise = fetch(
           `${API_URL}/api/student/pending-assignments`,
           {
@@ -839,10 +951,7 @@ export default function DashboardPage() {
             return null;
           });
 
-        // ==========================================
         // FETCH ALL DASHBOARD SECTIONS
-        // ==========================================
-
         await Promise.all([
           loadStudentRank(headers),
           loadAttendance(headers),
@@ -850,10 +959,7 @@ export default function DashboardPage() {
           loadBatchProgress(batchId, headers),
         ]);
 
-        // ==========================================
         // PENDING ASSIGNMENTS
-        // ==========================================
-
         const pendingData = await pendingPromise;
 
         if (pendingData) {
@@ -885,7 +991,6 @@ export default function DashboardPage() {
             },
           }));
         }
-
       } catch (err) {
         console.error("Student dashboard error:", err);
 
@@ -1010,25 +1115,6 @@ export default function DashboardPage() {
     : 0;
 
   // ==========================================
-  // PROFILE COURSE PROGRESS
-  // ==========================================
-
-  const rawCourseProgress =
-    dashboard?.overallProgress ??
-    dashboard?.progress ??
-    null;
-
-  const hasCourseProgress =
-    rawCourseProgress !== null &&
-    rawCourseProgress !== undefined &&
-    rawCourseProgress !== "" &&
-    Number.isFinite(Number(rawCourseProgress));
-
-  const safeCourseProgress = hasCourseProgress
-    ? getPercentage(rawCourseProgress)
-    : 0;
-
-  // ==========================================
   // ATTENDANCE STATISTICS
   // ==========================================
 
@@ -1116,13 +1202,16 @@ export default function DashboardPage() {
     Number(assignedRank) > 0;
 
   // ==========================================
-  // TRAINER PROGRESS TOPICS
+  // TRAINER PROGRESS
   // ==========================================
 
   const trainerTopics = getTopics(trainerBatchProgress);
 
-  const studentTopics = getTopics(studentBatchProgress);
+  // Student percentage is now based on video watch duration.
+  const studentOverallProgress =
+    getLearningVideoPercentage(studentBatchProgress);
 
+  // Keep existing trainer progress calculation.
   const trainerOverallProgress = getPercentage(
     trainerBatchProgress?.overallProgress ??
     trainerBatchProgress?.batchProgress ??
@@ -1130,51 +1219,6 @@ export default function DashboardPage() {
     trainerBatchProgress?.data?.overallProgress ??
     calculateAverage(trainerTopics, "trainer")
   );
-
-  const studentOverallProgress = getPercentage(
-    studentBatchProgress?.overallProgress ??
-    studentBatchProgress?.data?.overallProgress ??
-    studentBatchProgress?.progress ??
-    calculateAverage(studentTopics, "student")
-  );
-
-  // Merge the trainer's syllabus with student self-assessment.
-  // The trainer topic ID remains the canonical topic ID.
-  const mergedTopics = trainerTopics.length
-    ? trainerTopics.map((trainerTopic) => {
-        const trainerTopicId = getTopicReference(trainerTopic);
-
-        const matchingStudentTopic = studentTopics.find(
-          (studentTopic) => {
-            const studentTopicId =
-              getTopicReference(studentTopic);
-
-            const sameId =
-              trainerTopicId &&
-              studentTopicId &&
-              String(trainerTopicId) === String(studentTopicId);
-
-            const sameName =
-              getTopicName(trainerTopic) &&
-              getTopicName(studentTopic) &&
-              getTopicName(trainerTopic).toLowerCase() ===
-                getTopicName(studentTopic).toLowerCase();
-
-            return sameId || sameName;
-          }
-        );
-
-        return {
-          ...trainerTopic,
-          studentTopic: matchingStudentTopic || null,
-          canonicalTopicId: trainerTopicId,
-        };
-      })
-    : studentTopics.map((studentTopic) => ({
-        ...studentTopic,
-        studentTopic,
-        canonicalTopicId: null,
-      }));
 
   // ==========================================
   // DASHBOARD STATISTICS CARDS
@@ -1192,26 +1236,6 @@ export default function DashboardPage() {
         ? "Based on exam results"
         : "No exam results available",
       progress: overallProgress,
-    },
-    {
-      title: "Student Batch Progress",
-      value: batchProgressLoading
-        ? "Loading..."
-        : studentBatchProgress
-          ? `${studentOverallProgress}%`
-          : "—",
-      subtitle: "Your learning progress",
-      progress: studentOverallProgress,
-    },
-    {
-      title: "Trainer Batch Progress",
-      value: batchProgressLoading
-        ? "Loading..."
-        : trainerBatchProgress
-          ? `${trainerOverallProgress}%`
-          : "—",
-      subtitle: "Trainer syllabus completion",
-      progress: trainerOverallProgress,
     },
     {
       title: "Attendance",
@@ -1239,9 +1263,7 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 sm:px-6 lg:px-8">
 
-      {/* ==========================================
-          DASHBOARD HEADER
-      ========================================== */}
+      {/* DASHBOARD HEADER */}
 
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -1277,13 +1299,12 @@ export default function DashboardPage() {
               refreshing || loading ? "animate-spin" : ""
             }
           />
+
           Refresh Dashboard
         </button>
       </header>
 
-      {/* ==========================================
-          LOADING STATE
-      ========================================== */}
+      {/* LOADING STATE */}
 
       {loading && (
         <div
@@ -1295,9 +1316,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ==========================================
-          ERROR MESSAGE
-      ========================================== */}
+      {/* ERROR MESSAGE */}
 
       {error && (
         <div
@@ -1308,6 +1327,7 @@ export default function DashboardPage() {
             <p className="font-semibold">
               Unable to load dashboard
             </p>
+
             <p className="mt-1">{error}</p>
           </div>
 
@@ -1321,9 +1341,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ==========================================
-          NOTIFICATION
-      ========================================== */}
+      {/* NOTIFICATION */}
 
       {notice && (
         <div
@@ -1343,9 +1361,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ==========================================
-          DASHBOARD STATISTICS + RANK
-      ========================================== */}
+      {/* DASHBOARD STATISTICS + RANK */}
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         {stats.map((stat) => (
@@ -1387,7 +1403,7 @@ export default function DashboardPage() {
             </div>
 
             <p className="mt-1 text-sm text-slate-500">
-              Track your learning progress against your trainer's syllabus.
+              Track your video learning progress and trainer syllabus completion.
             </p>
 
             <p className="mt-1 text-xs text-slate-400">
@@ -1407,6 +1423,7 @@ export default function DashboardPage() {
                 batchProgressLoading ? "animate-spin" : ""
               }
             />
+
             Refresh Progress
           </button>
         </div>
@@ -1424,17 +1441,15 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* OVERALL PROGRESS CARDS */}
-
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
 
-              {/* TRAINER PROGRESS */}
+              {/* TRAINER BATCH PROGRESS */}
 
               <div className="rounded-xl border border-blue-100 bg-blue-50 p-5">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-slate-600">
-                      Trainer Batch Progress
+                      Batch Progress
                     </p>
 
                     <p className="mt-1 text-xs text-slate-500">
@@ -1466,7 +1481,7 @@ export default function DashboardPage() {
                 </p>
               </div>
 
-              {/* STUDENT PROGRESS */}
+              {/* STUDENT VIDEO LEARNING PROGRESS */}
 
               <div className="rounded-xl border border-green-100 bg-green-50 p-5">
                 <div className="flex items-center justify-between gap-3">
@@ -1476,7 +1491,7 @@ export default function DashboardPage() {
                     </p>
 
                     <p className="mt-1 text-xs text-slate-500">
-                      Your self-assessed knowledge
+                      Based on video lectures watched
                     </p>
                   </div>
 
@@ -1493,136 +1508,28 @@ export default function DashboardPage() {
 
                 <div className="mt-4">
                   <ProgressBar
-                    label="Your knowledge"
+                    label="Video learning completion"
                     percentage={studentOverallProgress}
                     color="bg-green-600"
                   />
                 </div>
 
-                <p className="mt-3 text-xs text-slate-500">
-                  {studentTopics.length} assessed topics
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                  <span>
+                    {completedVideos} videos completed
+                  </span>
+
+                  <span>
+                    {totalVideos} total videos
+                  </span>
+                </div>
+
+                <p className="mt-3 text-xs leading-5 text-slate-500">
+                  Your learning progress increases as you watch
+                  published video lectures. Notes and PDFs are
+                  not included in this calculation.
                 </p>
               </div>
-            </div>
-
-            {/* TOPIC-WISE PROGRESS */}
-
-            <div className="mt-7">
-              <div className="mb-4">
-                <h3 className="text-lg font-bold text-[#102e60]">
-                  Topic-wise Progress
-                </h3>
-
-                <p className="mt-1 text-sm text-slate-500">
-                  Compare trainer completion with your understanding of each topic.
-                </p>
-              </div>
-
-              {mergedTopics.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
-                  <BookOpen
-                    size={35}
-                    className="mx-auto mb-3 text-slate-300"
-                  />
-
-                  <p className="font-semibold text-slate-700">
-                    No topic progress available
-                  </p>
-
-                  <p className="mt-1 text-sm text-slate-500">
-                    Your trainer's syllabus and your learning progress will appear here once topics are added.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {mergedTopics.map((topic, index) => {
-                    const studentTopic = topic.studentTopic;
-
-                    const trainerPercentage =
-                      trainerTopics.length
-                        ? getProgressValue(topic, "trainer")
-                        : 0;
-
-                    const studentPercentage =
-                      studentTopic
-                        ? getProgressValue(studentTopic, "student")
-                        : 0;
-
-                    const topicStatus =
-                      studentTopic?.status ||
-                      topic.status ||
-                      "Not Started";
-
-                    return (
-                      <div
-                        key={
-                          topic.canonicalTopicId ||
-                          topic._id ||
-                          getTopicName(topic) ||
-                          index
-                        }
-                        className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5"
-                      >
-                        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
-                              <BookOpen size={20} />
-                            </div>
-
-                            <div>
-                              <h4 className="font-bold text-slate-800">
-                                {getTopicName(topic) ||
-                                  "Untitled Topic"}
-                              </h4>
-
-                              <p className="mt-1 text-xs text-slate-500">
-                                Topic {index + 1}
-                              </p>
-                            </div>
-                          </div>
-
-                          <span
-                            className={`rounded-full px-3 py-1.5 text-xs font-bold ${getStatusClass(
-                              topicStatus
-                            )}`}
-                          >
-                            {topicStatus}
-                          </span>
-                        </div>
-
-                        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-
-                          <div className="rounded-lg bg-blue-50 p-4">
-                            <ProgressBar
-                              label="Trainer Completion"
-                              percentage={trainerPercentage}
-                              color="bg-blue-600"
-                            />
-
-                            <p className="mt-3 text-xs text-slate-500">
-                              Progress updated by your trainer.
-                            </p>
-                          </div>
-
-                          <div className="rounded-lg bg-green-50 p-4">
-                            <ProgressBar
-                              label="Your Knowledge"
-                              percentage={studentPercentage}
-                              color="bg-green-600"
-                            />
-
-                            <p className="mt-3 text-xs text-slate-500">
-                              {studentTopic
-                                ? "Your self-assessed knowledge."
-                                : "You have not assessed this topic yet."}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
             </div>
           </>
         )}
@@ -1660,6 +1567,7 @@ export default function DashboardPage() {
               size={15}
               className={rankLoading ? "animate-spin" : ""}
             />
+
             Refresh Rank
           </button>
         </div>
@@ -2087,8 +1995,6 @@ export default function DashboardPage() {
           </span>
         </div>
 
-        {/* BATCH DETAILS */}
-
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
 
           <BatchInfoCard
@@ -2177,15 +2083,6 @@ export default function DashboardPage() {
             iconBackground="bg-purple-50"
             iconColor="text-purple-600"
           />
-{/* 
-          <BatchInfoCard
-            icon={Users}
-            title="Batch ID"
-            value={batchId}
-            subtitle="Unique MongoDB batch ID"
-            iconBackground="bg-orange-50"
-            iconColor="text-orange-600"
-          /> */}
         </div>
 
         {/* TRAINER INFORMATION */}

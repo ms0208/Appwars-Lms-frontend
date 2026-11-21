@@ -34,6 +34,7 @@ const navigation = [
   { name: "Batches", href: "/admin/batches", icon: BookOpen },
   { name: "Attendance", href: "/admin/attendance", icon: CalendarCheck },
   { name: "Results", href: "/admin/results", icon: CalendarCheck },
+  {name:"Learning Resources", href:"/admin/learning-resources",icon:BookOpen},
   {
     name: "ID-Generation",
     href: "/admin/id_generation",
@@ -362,11 +363,11 @@ export default function AdminLayout({ children }) {
           {children}
         </main>
 
-        {/* Footer */}
+        {/* Footer
         <footer className="border-t border-slate-200 bg-white px-6 py-4 text-center text-xs text-slate-500">
           © {new Date().getFullYear()} APPWARS TECHNOLOGIES PVT. LTD.
           {" "}All rights reserved.
-        </footer>
+        </footer> */}
       </div>
     </div>
   );

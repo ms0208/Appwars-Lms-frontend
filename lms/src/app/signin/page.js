@@ -654,11 +654,6 @@ export default function SignInPage() {
               )}
             </>
           )}
-
-          <p className="mt-8 text-center text-xs text-slate-400">
-            © {new Date().getFullYear()} APPWARS TECHNOLOGIES
-            PVT. LTD.
-          </p>
         </section>
       </div>
     </main>

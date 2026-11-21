@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   Menu,
   ClipboardList,
+  BriefcaseBusiness,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -33,24 +34,39 @@ export default function TrainerLayout({ children }) {
       icon: ClipboardList,
     },
     {
+      name: "Assesments",
+      href: "/Trainerassesments",
+      icon: ClipboardList
+    },
+    {
+      name: "Learning Resources",
+      href: "/trainerlearning-resources",
+      icon: ClipboardList
+    },
+    {
       name: "Student Marks",
       href: "/student-marks",
       icon: ClipboardList,
     },
     {
-      name:"Student Rank",
-      href:"/student-rank",
+      name: "Student Rank",
+      href: "/student-rank",
       icon: ClipboardList
     },
     {
-      name:"Batch Progress",
-      href:"/batch-progress",
-      icon:ClipboardList
+      name: "Batch Progress",
+      href: "/batch-progress",
+      icon: ClipboardList
     },
     {
-      name:"Trainer Profile",
-      href:"/trainer-profile",
-      icon:ClipboardList
+      name: "Career & Placement",
+      href: "/career-placement",
+      icon: BriefcaseBusiness,
+    },
+    {
+      name: "Trainer Profile",
+      href: "/trainer-profile",
+      icon: ClipboardList
     }
   ];
 

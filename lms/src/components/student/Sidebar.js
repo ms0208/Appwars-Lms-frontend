@@ -18,12 +18,14 @@ import {
 const menuItems = [
   { label: "Dashboard", href: "/studentdashboard", icon: LayoutDashboard },
   { label: "Learning Resources", href: "/resources", icon: BookOpen },
-  { label: "Assignments & Tests", href: "/assignments", icon: ClipboardList },
+  { label: "Assignments", href: "/assignments", icon: ClipboardList },
+  {label:"Assesments", href:"/assesments",icon: ClipboardList},
   { label: "Progress & Payments", href: "/progress-payments", icon: Wallet },
   {label: "Batch Progress" , href:"/batchProgress", icon:ClipboardList},
+  {label:"A3 Scorecard", href:"/a3",icon:BriefcaseBusiness},
   {
     label: "Career & Placement",
-    href: "/career-placement",
+    href: "/career",
     icon: BriefcaseBusiness,
   },
   { label: "My Profile", href: "/profile", icon: UserRound },

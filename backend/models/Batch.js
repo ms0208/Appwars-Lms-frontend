@@ -1,14 +1,9 @@
+
 import mongoose from "mongoose";
 
 const batchSchema = new mongoose.Schema(
   {
     batch: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    course: {
       type: String,
       required: true,
       trim: true,
@@ -35,6 +30,21 @@ const batchSchema = new mongoose.Schema(
       type: Number,
       required: true,
       min: 1,
+      validate: {
+        validator: Number.isInteger,
+        message: "Duration must be a whole number of months.",
+      },
+    },
+
+    endDate: {
+      type: Date,
+      validate: {
+        validator: function (value) {
+          if (!value || !this.startDate) return true;
+          return value >= this.startDate;
+        },
+        message: "End date cannot be before the start date.",
+      },
     },
 
     status: {
@@ -46,6 +56,7 @@ const batchSchema = new mongoose.Schema(
     description: {
       type: String,
       default: "",
+      trim: true,
     },
 
     isActive: {
@@ -58,7 +69,13 @@ const batchSchema = new mongoose.Schema(
   }
 );
 
-batchSchema.index({ batch: 1, trainer: 1 }, { unique: true });
+// A trainer can handle multiple batches.
+// The same batch name can be assigned to different trainers.
+// But the same batch name + same trainer combination must be unique.
+batchSchema.index(
+  { batch: 1, trainer: 1 },
+  { unique: true }
+);
 
 export default mongoose.models.Batch ||
   mongoose.model("Batch", batchSchema);
