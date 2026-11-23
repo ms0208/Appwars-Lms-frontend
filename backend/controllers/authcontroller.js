@@ -83,16 +83,16 @@ export const registerAdmin = async (req, res, next) => {
       });
     }
 
-    const existingAdmin = await User.findOne({
-      role: "Admin",
-    });
+    // const existingAdmin = await User.findOne({
+    //   role: "Admin",
+    // });
 
-    if (existingAdmin) {
-      return res.status(403).json({
-        success: false,
-        message: "Admin account already exists.",
-      });
-    }
+    // if (existingAdmin) {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: "Admin account already exists.",
+    //   });
+    // }
 
     const emailExists = await User.findOne({
       email: normalizedEmail,
