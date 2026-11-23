@@ -1,5 +1,4 @@
 
-import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
 import Result from "../models/result.js";
 import User from "../models/user.js";
@@ -8,7 +7,9 @@ import {
   generateUserId,
   generateTemporaryPassword,
 } from "../utils/generateCredentials.js";
+
 import Attendance from "../models/Attendance.js";
+
 import {
   Course,
   Batch,
@@ -241,6 +242,7 @@ const validateTrainer = async (trainerId) => {
 // --------------------------------------------------
 
 // GET /api/admin/batches
+
 export const getBatches = async (req, res, next) => {
   try {
     const batches = await Batch.find()
@@ -259,8 +261,6 @@ export const getBatches = async (req, res, next) => {
     next(error);
   }
 };
-
-
 
 // --------------------------------------------------
 // 1. ADMIN DASHBOARD
@@ -365,8 +365,6 @@ export const getDashboard = async (req, res) => {
 // 2. CREATE STUDENT / TRAINER / COUNSELLOR
 // POST /api/admin/users
 // --------------------------------------------------
-
-
 
 export const createUser = async (req, res, next) => {
   try {
@@ -517,7 +515,6 @@ export const createUser = async (req, res, next) => {
           });
         }
 
-        // IMPORTANT:
         // Store MongoDB ObjectId, NOT generated userId
         referral = {
           role: "Counsellor",
@@ -531,7 +528,6 @@ export const createUser = async (req, res, next) => {
     // ==========================================
 
     const temporaryPassword = generateTemporaryPassword(16);
-    const hashedPassword = await bcrypt.hash(temporaryPassword, 12);
 
     let user = null;
 
@@ -541,7 +537,10 @@ export const createUser = async (req, res, next) => {
           userId: generateUserId(role),
           name: trimmedName,
           email: normalizedEmail,
-          password: hashedPassword,
+
+          // Direct password storage (no bcrypt hashing)
+          password: temporaryPassword,
+
           role,
 
           batch: role === "Student" ? batch.trim() : "",
@@ -552,9 +551,9 @@ export const createUser = async (req, res, next) => {
             role === "Student"
               ? referral
               : {
-                role: "Admin",
-                counsellor: null,
-              },
+                  role: "Admin",
+                  counsellor: null,
+                },
 
           isActive: true,
           mustChangePassword: true,
@@ -640,8 +639,6 @@ export const createUser = async (req, res, next) => {
   }
 };
 
-
-
 // --------------------------------------------------
 // 3. LIST USERS
 // GET /api/admin/users
@@ -725,7 +722,6 @@ const getStudentRankMap = async () => {
   return rankMap;
 };
 
-
 export const getAllUsers = async (req, res, next) => {
   try {
     const {
@@ -776,7 +772,7 @@ export const getAllUsers = async (req, res, next) => {
 
     const [users, total, rankMap] = await Promise.all([
       User.find(filter)
-        .select("-password")
+        .select("+password")
         .populate(
           "referredBy.counsellor",
           "name userId email"
@@ -832,14 +828,10 @@ export const getAllUsers = async (req, res, next) => {
     next(error);
   }
 };
-
-
-
 // --------------------------------------------------
 // 4. GET USER BY GENERATED ID
 // GET /api/admin/users/:userId
 // --------------------------------------------------
-
 
 export const getUserById = async (req, res, next) => {
   try {
@@ -864,12 +856,10 @@ export const getUserById = async (req, res, next) => {
   }
 };
 
-
 // --------------------------------------------------
 // 5. UPDATE USER
 // PATCH /api/admin/users/:userId
 // --------------------------------------------------
-
 
 export const updateUser = async (req, res, next) => {
   try {
@@ -998,8 +988,6 @@ export const updateUser = async (req, res, next) => {
     }
 
     // UPDATE COUNSELLOR REFERRAL
-
-    // UPDATE COUNSELLOR REFERRAL
     if (counsellorId !== undefined) {
       if (user.role !== "Student") {
         return res.status(400).json({
@@ -1044,7 +1032,6 @@ export const updateUser = async (req, res, next) => {
       }
     }
 
-
     await user.save();
 
     // RETURN UPDATED USER WITH COUNSELLOR DETAILS
@@ -1066,11 +1053,9 @@ export const updateUser = async (req, res, next) => {
   }
 };
 
-
 // --------------------------------------------------
 // 6. DEACTIVATE / REACTIVATE USER
 // --------------------------------------------------
-
 
 export const deactivateUser = async (req, res, next) => {
   try {
@@ -1157,7 +1142,6 @@ export const reactivateUser = async (req, res, next) => {
     next(error);
   }
 };
-
 
 // --------------------------------------------------
 // 7. COURSE MANAGEMENT
@@ -1697,7 +1681,6 @@ export const getAllAttendance = async (req, res) => {
   }
 };
 // ==========================================
-// CREATE ATTENDANCE
 // POST /api/admin/attendance
 // ==========================================
 
@@ -1810,6 +1793,7 @@ export const createAttendance = async (req, res) => {
     });
   }
 };
+
 // ==========================================
 // UPDATE ATTENDANCE
 // PATCH /api/admin/attendance/:attendanceId
@@ -1917,6 +1901,7 @@ export const updateAttendance = async (req, res) => {
     });
   }
 };
+
 // ==========================================
 // DELETE ATTENDANCE
 // DELETE /api/admin/attendance/:attendanceId
@@ -2014,9 +1999,9 @@ export const listResource = async (req, res, next) => {
     const formattedItems =
       req.params.resource === "courses"
         ? items.map((item) => ({
-          ...item,
-          title: item.courseName,
-        }))
+            ...item,
+            title: item.courseName,
+          }))
         : items;
 
     res.json({
@@ -2306,8 +2291,7 @@ export const deleteResource = async (req, res, next) => {
     next(error);
   }
 };
-// --------------------------------------------------
-// PAYMENT MANAGEMENT
+
 // --------------------------------------------------
 // PAYMENT MANAGEMENT
 // --------------------------------------------------
@@ -2460,7 +2444,7 @@ const validatePaymentStudentBatch = async (
     if (
       student.batch &&
       String(student.batch).trim() !==
-      String(batch.batch).trim()
+        String(batch.batch).trim()
     ) {
       return {
         error: {
@@ -2555,59 +2539,26 @@ export const getPayments = async (req, res, next) => {
       }
 
       conditions.push({
-        student: new mongoose.Types.ObjectId(studentId),
+        student: studentId,
       });
     }
 
     // ------------------------------------------
-    // DATE FILTER
-    // Filters payment creation date
+    // BATCH FILTER
     // ------------------------------------------
 
-    if (req.query.from || req.query.to) {
-      const createdAt = {};
+    const batchId = req.query.batchId || req.query.batch;
 
-      if (req.query.from) {
-        const from = parsePaymentDate(req.query.from);
-
-        if (from === false || !from) {
-          return res.status(400).json({
-            success: false,
-            message: "Invalid start date.",
-          });
-        }
-
-        from.setHours(0, 0, 0, 0);
-        createdAt.$gte = from;
-      }
-
-      if (req.query.to) {
-        const to = parsePaymentDate(req.query.to);
-
-        if (to === false || !to) {
-          return res.status(400).json({
-            success: false,
-            message: "Invalid end date.",
-          });
-        }
-
-        to.setHours(23, 59, 59, 999);
-        createdAt.$lte = to;
-      }
-
-      if (
-        createdAt.$gte &&
-        createdAt.$lte &&
-        createdAt.$gte > createdAt.$lte
-      ) {
+    if (batchId) {
+      if (!validObjectId(batchId)) {
         return res.status(400).json({
           success: false,
-          message: "Start date cannot be after end date.",
+          message: "Invalid batch ID.",
         });
       }
 
       conditions.push({
-        createdAt,
+        batch: batchId,
       });
     }
 
@@ -2615,129 +2566,42 @@ export const getPayments = async (req, res, next) => {
     // SEARCH FILTER
     // ------------------------------------------
 
-    const searchValue = String(
-      req.query.search || req.query.q || ""
-    ).trim();
+    const searchFilter = await getPaymentSearchFilter(
+      req.query.search
+    );
 
-    if (searchValue) {
-      const searchFilter =
-        await getPaymentSearchFilter(searchValue);
-
-      if (searchFilter) {
-        conditions.push(searchFilter);
-      }
+    if (searchFilter) {
+      conditions.push(searchFilter);
     }
 
-    const filter = conditions.length
-      ? { $and: conditions }
-      : {};
+    const filter =
+      conditions.length > 0
+        ? { $and: conditions }
+        : {};
 
-    // ------------------------------------------
-    // FETCH PAYMENTS + SUMMARY
-    // ------------------------------------------
-
-    const [
-      payments,
-      total,
-      groupedTotals,
-    ] = await Promise.all([
+    const [payments, total] = await Promise.all([
       Payment.find(filter)
         .populate(paymentPopulate)
-        .sort({
-          createdAt: -1,
-          _id: -1,
-        })
+        .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .lean(),
 
       Payment.countDocuments(filter),
-
-      Payment.aggregate([
-        {
-          $match: filter,
-        },
-        {
-          $group: {
-            _id: "$status",
-
-            amount: {
-              $sum: {
-                $ifNull: ["$amount", 0],
-              },
-            },
-
-            count: {
-              $sum: 1,
-            },
-          },
-        },
-      ]),
     ]);
-
-    // ------------------------------------------
-    // BUILD SUMMARY
-    // ------------------------------------------
-
-    const byStatus = new Map(
-      groupedTotals.map((item) => [
-        item._id,
-        item,
-      ])
-    );
-
-    const summary = {
-      totalPayments: groupedTotals.reduce(
-        (sum, item) =>
-          sum + Number(item.count || 0),
-        0
-      ),
-
-      paidTotal: Number(
-        byStatus.get("Paid")?.amount || 0
-      ),
-
-      pendingTotal: Number(
-        byStatus.get("Pending")?.amount || 0
-      ),
-
-      failedTotal: Number(
-        byStatus.get("Failed")?.amount || 0
-      ),
-
-      refundedTotal: Number(
-        byStatus.get("Refunded")?.amount || 0
-      ),
-
-      currency: "INR",
-    };
-
-    const pages = Math.ceil(total / limit);
 
     return res.status(200).json({
       success: true,
-      message: "Payment records fetched successfully.",
-
-      summary,
       payments,
-
-      count: total,
+      count: payments.length,
       total,
       page,
-      pages,
-
-      pagination: {
-        page,
-        limit,
-        total,
-        pages,
-      },
+      pages: Math.ceil(total / limit),
     });
   } catch (error) {
     next(error);
   }
 };
-
 // ======================================================
 // 2. GET SINGLE PAYMENT
 // GET /api/admin/payments/:id
@@ -2780,14 +2644,9 @@ export const getPaymentById = async (req, res, next) => {
 // POST /api/admin/payments
 // ======================================================
 
-
 export const createPayment = async (req, res, next) => {
   try {
     const body = req.body || {};
-
-    // ------------------------------------------
-    // STUDENT AND BATCH
-    // ------------------------------------------
 
     const studentId = body.student || body.studentId;
     const batchId = body.batch || body.batchId;
@@ -2806,10 +2665,7 @@ export const createPayment = async (req, res, next) => {
 
     const { student, batch } = validation;
 
-    // ------------------------------------------
     // FEE STRUCTURE
-    // ------------------------------------------
-
     const totalFees = Number(
       body.totalFees ?? body.amount
     );
@@ -2818,10 +2674,7 @@ export const createPayment = async (req, res, next) => {
       body.collectedFees ?? 0
     );
 
-    if (
-      !Number.isFinite(totalFees) ||
-      totalFees <= 0
-    ) {
+    if (!Number.isFinite(totalFees) || totalFees <= 0) {
       return res.status(400).json({
         success: false,
         message: "Total fees must be greater than zero.",
@@ -2847,26 +2700,17 @@ export const createPayment = async (req, res, next) => {
 
     const pendingFees = totalFees - collectedFees;
 
-    // ------------------------------------------
     // INDIVIDUAL PAYMENT TRANSACTION
-    // ------------------------------------------
-
     const amount = Number(body.amount ?? collectedFees);
 
-    if (
-      !Number.isFinite(amount) ||
-      amount < 0
-    ) {
+    if (!Number.isFinite(amount) || amount < 0) {
       return res.status(400).json({
         success: false,
         message: "Invalid payment amount.",
       });
     }
 
-    // ------------------------------------------
     // OTHER FIELDS
-    // ------------------------------------------
-
     const currency = body.currency || "INR";
 
     const method =
@@ -2889,10 +2733,7 @@ export const createPayment = async (req, res, next) => {
 
     const notes = body.notes || "";
 
-    // ------------------------------------------
     // VALIDATE STATUS
-    // ------------------------------------------
-
     if (!allowedPaymentStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -2914,10 +2755,7 @@ export const createPayment = async (req, res, next) => {
       });
     }
 
-    // ------------------------------------------
     // VALIDATE REFERENCE AND NOTES
-    // ------------------------------------------
-
     if (
       typeof reference !== "string" ||
       reference.length > 150
@@ -2938,10 +2776,7 @@ export const createPayment = async (req, res, next) => {
       });
     }
 
-    // ------------------------------------------
     // VALIDATE DATES
-    // ------------------------------------------
-
     if (dueDate === false) {
       return res.status(400).json({
         success: false,
@@ -2963,20 +2798,15 @@ export const createPayment = async (req, res, next) => {
       });
     }
 
-    // ------------------------------------------
     // CREATE PAYMENT
-    // ------------------------------------------
-
     const payment = await Payment.create({
       student: student._id,
       batch: batch ? batch._id : null,
 
-      // Fee structure
       totalFees,
       collectedFees,
       pendingFees,
 
-      // Individual transaction
       amount,
       currency,
       method,
@@ -2995,10 +2825,7 @@ export const createPayment = async (req, res, next) => {
       recordedBy: req.user?._id,
     });
 
-    // ------------------------------------------
     // FETCH POPULATED PAYMENT
-    // ------------------------------------------
-
     const populatedPayment = await Payment.findById(
       payment._id
     )
@@ -3010,27 +2837,20 @@ export const createPayment = async (req, res, next) => {
       message: "Payment record created successfully.",
       payment: populatedPayment,
     });
-
   } catch (error) {
     next(error);
   }
 };
-
 
 // ======================================================
 // 4. UPDATE PAYMENT
 // PATCH /api/admin/payments/:id
 // ======================================================
 
-
 export const updatePayment = async (req, res, next) => {
   try {
     const { id } = req.params;
     const body = req.body || {};
-
-    // ------------------------------------------
-    // VALIDATE PAYMENT ID
-    // ------------------------------------------
 
     if (!validObjectId(id)) {
       return res.status(400).json({
@@ -3050,10 +2870,7 @@ export const updatePayment = async (req, res, next) => {
 
     const updates = {};
 
-    // ------------------------------------------
     // UPDATE STUDENT
-    // ------------------------------------------
-
     const studentId = body.student ?? body.studentId;
 
     if (studentId !== undefined) {
@@ -3096,7 +2913,7 @@ export const updatePayment = async (req, res, next) => {
         if (
           student.batch &&
           String(student.batch).trim() !==
-          String(batch.batch).trim()
+            String(batch.batch).trim()
         ) {
           return res.status(400).json({
             success: false,
@@ -3107,10 +2924,7 @@ export const updatePayment = async (req, res, next) => {
       }
     }
 
-    // ------------------------------------------
     // UPDATE BATCH
-    // ------------------------------------------
-
     const batchId =
       body.batch !== undefined
         ? body.batch
@@ -3147,7 +2961,7 @@ export const updatePayment = async (req, res, next) => {
         if (
           student?.batch &&
           String(student.batch).trim() !==
-          String(batch.batch).trim()
+            String(batch.batch).trim()
         ) {
           return res.status(400).json({
             success: false,
@@ -3160,12 +2974,7 @@ export const updatePayment = async (req, res, next) => {
       }
     }
 
-    // ------------------------------------------
-    // UPDATE TOTAL FEES
-    // UPDATE COLLECTED FEES
-    // AUTO CALCULATE PENDING FEES
-    // ------------------------------------------
-
+    // UPDATE TOTAL FEES, COLLECTED FEES AND PENDING FEES
     if (
       body.totalFees !== undefined ||
       body.collectedFees !== undefined
@@ -3180,10 +2989,7 @@ export const updatePayment = async (req, res, next) => {
           ? Number(body.collectedFees)
           : Number(payment.collectedFees ?? 0);
 
-      if (
-        !Number.isFinite(totalFees) ||
-        totalFees < 0
-      ) {
+      if (!Number.isFinite(totalFees) || totalFees < 0) {
         return res.status(400).json({
           success: false,
           message: "Total fees must be a valid non-negative amount.",
@@ -3203,8 +3009,7 @@ export const updatePayment = async (req, res, next) => {
       if (collectedFees > totalFees) {
         return res.status(400).json({
           success: false,
-          message:
-            "Collected fees cannot exceed total fees.",
+          message: "Collected fees cannot exceed total fees.",
         });
       }
 
@@ -3215,31 +3020,21 @@ export const updatePayment = async (req, res, next) => {
       updates.pendingFees = pendingFees;
     }
 
-    // ------------------------------------------
     // UPDATE INDIVIDUAL PAYMENT AMOUNT
-    // ------------------------------------------
-
     if (body.amount !== undefined) {
       const amount = Number(body.amount);
 
-      if (
-        !Number.isFinite(amount) ||
-        amount <= 0
-      ) {
+      if (!Number.isFinite(amount) || amount <= 0) {
         return res.status(400).json({
           success: false,
-          message:
-            "Payment amount must be greater than zero.",
+          message: "Payment amount must be greater than zero.",
         });
       }
 
       updates.amount = amount;
     }
 
-    // ------------------------------------------
     // UPDATE DUE DATE
-    // ------------------------------------------
-
     if (body.dueDate !== undefined) {
       const dueDate = parsePaymentDate(body.dueDate);
 
@@ -3253,14 +3048,9 @@ export const updatePayment = async (req, res, next) => {
       updates.dueDate = dueDate;
     }
 
-    // ------------------------------------------
     // UPDATE STATUS
-    // ------------------------------------------
-
     if (body.status !== undefined) {
-      if (
-        !allowedPaymentStatuses.includes(body.status)
-      ) {
+      if (!allowedPaymentStatuses.includes(body.status)) {
         return res.status(400).json({
           success: false,
           message: "Invalid payment status.",
@@ -3270,10 +3060,7 @@ export const updatePayment = async (req, res, next) => {
       updates.status = body.status;
     }
 
-    // ------------------------------------------
     // UPDATE PAID DATE
-    // ------------------------------------------
-
     if (body.paidAt !== undefined) {
       const paidAt = parsePaymentDate(body.paidAt);
 
@@ -3304,10 +3091,7 @@ export const updatePayment = async (req, res, next) => {
       updates.paidAt = null;
     }
 
-    // ------------------------------------------
     // UPDATE PAYMENT METHOD
-    // ------------------------------------------
-
     const method =
       body.method !== undefined
         ? body.method
@@ -3324,26 +3108,19 @@ export const updatePayment = async (req, res, next) => {
       updates.method = method;
     }
 
-    // ------------------------------------------
     // UPDATE CURRENCY
-    // ------------------------------------------
-
     if (body.currency !== undefined) {
       if (body.currency !== "INR") {
         return res.status(400).json({
           success: false,
-          message:
-            "Only INR currency is currently supported.",
+          message: "Only INR currency is currently supported.",
         });
       }
 
       updates.currency = body.currency;
     }
 
-    // ------------------------------------------
     // UPDATE REFERENCE
-    // ------------------------------------------
-
     const reference =
       body.reference ??
       body.transactionId ??
@@ -3363,10 +3140,7 @@ export const updatePayment = async (req, res, next) => {
       updates.reference = reference.trim();
     }
 
-    // ------------------------------------------
     // UPDATE NOTES
-    // ------------------------------------------
-
     if (body.notes !== undefined) {
       if (
         typeof body.notes !== "string" ||
@@ -3381,30 +3155,20 @@ export const updatePayment = async (req, res, next) => {
       updates.notes = body.notes.trim();
     }
 
-    // ------------------------------------------
     // CHECK EMPTY UPDATE
-    // ------------------------------------------
-
     if (!Object.keys(updates).length) {
       return res.status(400).json({
         success: false,
-        message:
-          "No valid fields were provided for update.",
+        message: "No valid fields were provided for update.",
       });
     }
 
-    // ------------------------------------------
     // SAVE PAYMENT
-    // ------------------------------------------
-
     Object.assign(payment, updates);
 
     await payment.save();
 
-    // ------------------------------------------
     // FETCH UPDATED PAYMENT
-    // ------------------------------------------
-
     const updatedPayment = await Payment.findById(
       payment._id
     )
@@ -3420,7 +3184,6 @@ export const updatePayment = async (req, res, next) => {
     next(error);
   }
 };
-
 
 // ======================================================
 // 5. DELETE PAYMENT
@@ -3462,16 +3225,12 @@ export const deletePayment = async (req, res, next) => {
 // GET /api/admin/reports/payments
 // --------------------------------------------------
 
-
 export const getPaymentReport = async (req, res, next) => {
   try {
     const { from, to } = req.query;
     const filter = {};
 
-    // --------------------------------------------------
     // DATE FILTER VALIDATION
-    // --------------------------------------------------
-
     if (from || to) {
       filter.createdAt = {};
 
@@ -3532,7 +3291,7 @@ export const getPaymentReport = async (req, res, next) => {
         from &&
         to &&
         new Date(`${from}T00:00:00.000Z`) >
-        new Date(`${to}T23:59:59.999Z`)
+          new Date(`${to}T23:59:59.999Z`)
       ) {
         return res.status(400).json({
           success: false,
@@ -3541,16 +3300,15 @@ export const getPaymentReport = async (req, res, next) => {
       }
     }
 
-    // --------------------------------------------------
     // COMMON FEE CALCULATION
-    // Supports both new and old payment records.
-    // --------------------------------------------------
-
     const feeCalculation = [
       {
         $addFields: {
           reportTotalFees: {
-            $ifNull: ["$totalFees", { $ifNull: ["$amount", 0] }],
+            $ifNull: [
+              "$totalFees",
+              { $ifNull: ["$amount", 0] },
+            ],
           },
 
           reportCollectedFees: {
@@ -3589,16 +3347,13 @@ export const getPaymentReport = async (req, res, next) => {
       },
     ];
 
-    // --------------------------------------------------
     // REPORT GROUPED BY STATUS
-    // --------------------------------------------------
-
     const reportPipeline = [
       { $match: filter },
       ...feeCalculation,
       {
         $group: {
-          _id: "$status",
+                  _id: "$status",
 
           count: {
             $sum: 1,

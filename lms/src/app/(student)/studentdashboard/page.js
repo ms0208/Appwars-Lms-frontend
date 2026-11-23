@@ -14,6 +14,7 @@ import {
   FileText,
   GraduationCap,
   TrendingUp,
+  FileCheck 
 } from "lucide-react";
 
 import StatCard from "@/src/components/student/StatCard";

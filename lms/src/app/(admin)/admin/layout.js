@@ -21,6 +21,7 @@ import {
   LogOut,
   Menu,
   X,
+  FileCheck
 } from "lucide-react";
 
 const API_URL =
@@ -41,6 +42,7 @@ const navigation = [
     icon: MessageCircleQuestion,
   },
   { name: "Payments & Reports", href: "/admin/payments", icon: CreditCard },
+  {name: "Admission Terms", href:"/admin/admission-terms",icon: FileCheck},
   { name: "Settings", href: "/admin/settings", icon: Settings },
 ];
 

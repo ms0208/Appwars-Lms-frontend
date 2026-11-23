@@ -13,20 +13,26 @@ import {
   UserRound,
   MessageCircleQuestion,
   BriefcaseBusiness,
+  FileText
 } from "lucide-react";
 
 const menuItems = [
   { label: "Dashboard", href: "/studentdashboard", icon: LayoutDashboard },
   { label: "Learning Resources", href: "/resources", icon: BookOpen },
   { label: "Assignments", href: "/assignments", icon: ClipboardList },
-  {label:"Assesments", href:"/assesments",icon: ClipboardList},
+  { label: "Assesments", href: "/assesments", icon: ClipboardList },
   { label: "Progress & Payments", href: "/progress-payments", icon: Wallet },
-  {label: "Batch Progress" , href:"/batchProgress", icon:ClipboardList},
-  {label:"A3 Scorecard", href:"/a3",icon:BriefcaseBusiness},
+  { label: "Batch Progress", href: "/batchProgress", icon: ClipboardList },
+  { label: "A3 Scorecard", href: "/a3", icon: BriefcaseBusiness },
   {
     label: "Career & Placement",
     href: "/career",
     icon: BriefcaseBusiness,
+  },
+  {
+    label: "Terms & Conditions",
+    href: "/studentadmission-terms",
+    icon: FileText,
   },
   { label: "My Profile", href: "/profile", icon: UserRound },
 ];
@@ -77,11 +83,10 @@ export default function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
-              className={`flex min-w-max items-center gap-2 rounded-lg px-2.5 py-3 text-left text-[13px] transition md:w-full ${
-                active
+              className={`flex min-w-max items-center gap-2 rounded-lg px-2.5 py-3 text-left text-[13px] transition md:w-full ${active
                   ? "bg-blue-600 font-semibold text-white"
                   : "text-blue-100 hover:bg-blue-900"
-              }`}
+                }`}
             >
               <Icon size={15} />
               <span>{item.label}</span>

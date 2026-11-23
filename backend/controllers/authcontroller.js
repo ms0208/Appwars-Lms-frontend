@@ -1,14 +1,13 @@
 
-import bcrypt from "bcryptjs";
-
-import User from "../models/user.js"; 
+import User from "../models/user.js";
 import Batch from "../models/Batch.js";
-
 import generateToken from "../utils/generateToken.js";
 import { generateUserId } from "../utils/generateCredentials.js";
+import crypto from "crypto";
+import sendEmail from "../utils/sendEmail.js";
 
 // ==========================================
-// Helper: Get Student Batch Details
+// STUDENT BATCH DETAILS
 // ==========================================
 
 const getStudentBatchDetails = async (user) => {
@@ -22,24 +21,20 @@ const getStudentBatchDetails = async (user) => {
     .populate("trainer", "userId name email phone")
     .lean();
 
-  if (!batchDetails) {
-    return null;
-  }
+  if (!batchDetails) return null;
 
   return {
     _id: batchDetails._id,
     batch: batchDetails.batch,
     course: batchDetails.course,
-
     trainer: batchDetails.trainer
       ? {
-          userId: batchDetails.trainer.userId,
-          name: batchDetails.trainer.name,
-          email: batchDetails.trainer.email,
-          phone: batchDetails.trainer.phone || "",
-        }
+        userId: batchDetails.trainer.userId,
+        name: batchDetails.trainer.name,
+        email: batchDetails.trainer.email,
+        phone: batchDetails.trainer.phone || "",
+      }
       : null,
-
     startDate: batchDetails.startDate,
     endDate: batchDetails.endDate,
     durationMonths: batchDetails.durationMonths,
@@ -55,133 +50,70 @@ const getStudentBatchDetails = async (user) => {
 };
 
 // ==========================================
+// REGISTER ADMIN
 // POST /api/auth/register-admin
-// Creates the initial Admin account.
 // ==========================================
 
 export const registerAdmin = async (req, res, next) => {
   try {
     const { name, email, password } = req.body ?? {};
 
-    if (
-      typeof name !== "string" ||
-      typeof email !== "string" ||
-      typeof password !== "string" ||
-      !name.trim() ||
-      !email.trim() ||
-      !password
-    ) {
+    if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
         message: "Name, email, and password are required.",
       });
     }
 
-    const trimmedName = name.trim();
-    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedEmail = String(email).trim().toLowerCase();
 
-    // Validate name
-    if (trimmedName.length < 2 || trimmedName.length > 100) {
-      return res.status(400).json({
-        success: false,
-        message: "Name must contain 2–100 characters.",
-      });
-    }
-
-    // Validate email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-    if (
-      normalizedEmail.length > 254 ||
-      !emailRegex.test(normalizedEmail)
-    ) {
+    if (!emailRegex.test(normalizedEmail)) {
       return res.status(400).json({
         success: false,
         message: "Please enter a valid email address.",
       });
     }
 
-    // Validate password
-    if (password.length < 12 || password.length > 128) {
+    if (String(password).length < 8) {
       return res.status(400).json({
         success: false,
-        message: "Password must contain 12–128 characters.",
+        message: "Password must contain at least 8 characters.",
       });
     }
 
-    // Check whether an Admin already exists
-    // const existingAdmin = await User.exists({
-    //   role: "Admin",
-    // });
+    const existingAdmin = await User.findOne({
+      role: "Admin",
+    });
 
-    // if (existingAdmin) {
-    //   return res.status(403).json({
-    //     success: false,
-    //     message:
-    //       "Admin registration is closed. Contact your administrator.",
-    //   });
-    // }
+    if (existingAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "Admin account already exists.",
+      });
+    }
 
-    // Check duplicate email
-    const emailExists = await User.exists({
+    const emailExists = await User.findOne({
       email: normalizedEmail,
     });
 
     if (emailExists) {
       return res.status(409).json({
         success: false,
-        message: "An account with this email already exists.",
+        message: "Email already registered.",
       });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 12);
-
-    let admin = null;
-
-    // Generate unique Admin ID
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const userId = generateUserId("Admin");
-
-      try {
-        admin = await User.create({
-          userId,
-          name: trimmedName,
-          email: normalizedEmail,
-          password: hashedPassword,
-          role: "Admin",
-          batch: "",
-          isActive: true,
-          mustChangePassword: false,
-        });
-
-        break;
-      } catch (error) {
-        const isDuplicateId =
-          error.code === 11000 &&
-          (error.keyPattern?.userId ||
-            error.keyValue?.userId);
-
-        if (isDuplicateId && attempt < 2) {
-          continue;
-        }
-
-        if (error.code === 11000) {
-          return res.status(409).json({
-            success: false,
-            message: "A duplicate ID or email was detected.",
-          });
-        }
-
-        throw error;
-      }
-    }
-
-    if (!admin) {
-      return res.status(503).json({
-        success: false,
-        message: "Unable to generate an Admin ID. Try again.",
-      });
-    }
+    const admin = await User.create({
+      userId: generateUserId("Admin"),
+      name: String(name).trim(),
+      email: normalizedEmail,
+      password: String(password),
+      role: "Admin",
+      isActive: true,
+      mustChangePassword: false,
+    });
 
     const token = generateToken(admin);
 
@@ -195,7 +127,6 @@ export const registerAdmin = async (req, res, next) => {
         name: admin.name,
         email: admin.email,
         role: admin.role,
-        mustChangePassword: admin.mustChangePassword,
       },
     });
   } catch (error) {
@@ -204,46 +135,26 @@ export const registerAdmin = async (req, res, next) => {
 };
 
 // ==========================================
+// LOGIN
 // POST /api/auth/login
-// Authenticates users using generated ID.
-// Includes Student batch details.
 // ==========================================
 
 export const login = async (req, res, next) => {
   try {
     const { userId, password } = req.body ?? {};
 
-    if (
-      typeof userId !== "string" ||
-      typeof password !== "string" ||
-      !userId.trim() ||
-      !password
-    ) {
+    if (!userId || !password) {
       return res.status(400).json({
         success: false,
-        message: "ID and password are required.",
+        message: "User ID and password are required.",
       });
     }
-
-    const normalizedUserId = userId.trim().toUpperCase();
 
     const user = await User.findOne({
-      userId: normalizedUserId,
+      userId: String(userId).trim().toUpperCase(),
     }).select("+password");
 
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid ID or password.",
-      });
-    }
-
-    const isPasswordValid = await bcrypt.compare(
-      password,
-      user.password
-    );
-
-    if (!isPasswordValid) {
+    if (!user || String(password) !== user.password) {
       return res.status(401).json({
         success: false,
         message: "Invalid ID or password.",
@@ -253,31 +164,25 @@ export const login = async (req, res, next) => {
     if (!user.isActive) {
       return res.status(403).json({
         success: false,
-        message:
-          "Your account is inactive. Contact your administrator.",
+        message: "Your account is inactive. Contact administrator.",
       });
     }
 
     const token = generateToken(user);
-
-    // Fetch batch information for Students
     const batchDetails = await getStudentBatchDetails(user);
 
     return res.status(200).json({
       success: true,
       message: "Login successful.",
       token,
-
       user: {
         id: user._id,
         userId: user.userId,
         name: user.name,
         email: user.email,
         role: user.role,
-
         batch: user.batch || "",
         batchDetails,
-
         mustChangePassword: user.mustChangePassword,
       },
     });
@@ -287,9 +192,8 @@ export const login = async (req, res, next) => {
 };
 
 // ==========================================
+// GET CURRENT USER
 // GET /api/auth/me
-// Returns currently authenticated user.
-// Includes Student batch details.
 // ==========================================
 
 export const getCurrentUser = async (req, res, next) => {
@@ -318,26 +222,21 @@ export const getCurrentUser = async (req, res, next) => {
 
     return res.status(200).json({
       success: true,
-
       user: {
         id: currentUser._id,
         userId: currentUser.userId,
         name: currentUser.name,
         fullName: currentUser.name,
         email: currentUser.email,
-
         phone: currentUser.phone || "",
         designation: currentUser.designation || "",
         department: currentUser.department || "",
         timezone: currentUser.timezone || "Asia/Kolkata",
         language: currentUser.language || "English",
         photo: currentUser.photo || "",
-
         role: currentUser.role,
-
         batch: currentUser.batch || "",
         batchDetails,
-
         mustChangePassword: currentUser.mustChangePassword,
       },
     });
@@ -347,9 +246,8 @@ export const getCurrentUser = async (req, res, next) => {
 };
 
 // ==========================================
+// UPDATE CURRENT USER
 // PATCH /api/auth/me
-// Updates currently authenticated user.
-// Returns updated Student batch details.
 // ==========================================
 
 export const updateCurrentUser = async (req, res, next) => {
@@ -363,6 +261,15 @@ export const updateCurrentUser = async (req, res, next) => {
       });
     }
 
+    const currentUser = await User.findById(databaseUserId);
+
+    if (!currentUser || !currentUser.isActive) {
+      return res.status(401).json({
+        success: false,
+        message: "User not found or inactive.",
+      });
+    }
+
     const {
       fullName,
       email,
@@ -373,82 +280,47 @@ export const updateCurrentUser = async (req, res, next) => {
       language,
     } = req.body ?? {};
 
-    const currentUser = await User.findById(databaseUserId);
-
-    if (!currentUser || !currentUser.isActive) {
-      return res.status(401).json({
-        success: false,
-        message: "User not found or account is inactive.",
-      });
-    }
-
-    // Update full name
     if (fullName !== undefined) {
       if (
         typeof fullName !== "string" ||
-        !fullName.trim()
+        fullName.trim().length < 2
       ) {
         return res.status(400).json({
           success: false,
-          message: "Full name is required.",
-        });
-      }
-
-      if (
-        fullName.trim().length < 2 ||
-        fullName.trim().length > 100
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: "Name must contain 2–100 characters.",
+          message: "Please enter a valid name.",
         });
       }
 
       currentUser.name = fullName.trim();
     }
 
-    // Update email
     if (email !== undefined) {
-      if (
-        typeof email !== "string" ||
-        !email.trim()
-      ) {
-        return res.status(400).json({
-          success: false,
-          message: "Valid email is required.",
-        });
-      }
-
-      const normalizedEmail = email.trim().toLowerCase();
+      const normalizedEmail = String(email).trim().toLowerCase();
 
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-      if (
-        normalizedEmail.length > 254 ||
-        !emailRegex.test(normalizedEmail)
-      ) {
+      if (!emailRegex.test(normalizedEmail)) {
         return res.status(400).json({
           success: false,
-          message: "Please enter a valid email address.",
+          message: "Please enter a valid email.",
         });
       }
 
-      const emailExists = await User.exists({
+      const existingEmail = await User.findOne({
         email: normalizedEmail,
         _id: { $ne: currentUser._id },
       });
 
-      if (emailExists) {
+      if (existingEmail) {
         return res.status(409).json({
           success: false,
-          message: "This email is already registered.",
+          message: "Email is already registered.",
         });
       }
 
       currentUser.email = normalizedEmail;
     }
 
-    // Update optional profile fields
     const optionalFields = [
       "phone",
       "designation",
@@ -459,52 +331,290 @@ export const updateCurrentUser = async (req, res, next) => {
 
     for (const field of optionalFields) {
       if (req.body[field] !== undefined) {
-        if (typeof req.body[field] !== "string") {
-          return res.status(400).json({
-            success: false,
-            message: `${field} must be a string.`,
-          });
-        }
-
-        currentUser.set(field, req.body[field].trim());
+        currentUser[field] = String(req.body[field]).trim();
       }
     }
 
     await currentUser.save();
 
-    // Fetch updated user without password
     const updatedUser = await User.findById(currentUser._id)
       .select("-password")
       .lean();
 
-    // Fetch updated batch information
     const batchDetails = await getStudentBatchDetails(updatedUser);
 
     return res.status(200).json({
       success: true,
       message: "Profile updated successfully.",
-
       user: {
         id: updatedUser._id,
         userId: updatedUser.userId,
         name: updatedUser.name,
         fullName: updatedUser.name,
         email: updatedUser.email,
-
         phone: updatedUser.phone || "",
         designation: updatedUser.designation || "",
         department: updatedUser.department || "",
         timezone: updatedUser.timezone || "Asia/Kolkata",
         language: updatedUser.language || "English",
         photo: updatedUser.photo || "",
-
         role: updatedUser.role,
-
         batch: updatedUser.batch || "",
         batchDetails,
-
         mustChangePassword: updatedUser.mustChangePassword,
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ==========================================
+// FORGOT PASSWORD
+// POST /api/auth/forgot-password
+// ==========================================
+
+export const forgotPassword = async (req, res, next) => {
+  try {
+    const userId = String(req.body?.userId || "")
+      .trim()
+      .toUpperCase();
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID is required.",
+      });
+    }
+
+    const user = await User.findOne({
+      userId,
+      isActive: true,
+    }).select("+resetOtpSentAt");
+
+    const genericMessage =
+      "If an active account exists, an OTP has been sent to its registered email.";
+
+    if (!user) {
+      return res.status(200).json({
+        success: true,
+        message: genericMessage,
+      });
+    }
+
+    if (!user.email) {
+      return res.status(400).json({
+        success: false,
+        message: "No registered email found for this account.",
+      });
+    }
+
+    // 60-second resend cooldown
+    if (
+      user.resetOtpSentAt &&
+      Date.now() - new Date(user.resetOtpSentAt).getTime() < 60000
+    ) {
+      return res.status(429).json({
+        success: false,
+        message: "Please wait 60 seconds before requesting another OTP.",
+      });
+    }
+
+    const otp = String(crypto.randomInt(100000, 1000000));
+
+    user.resetOtp = otp;
+    user.resetOtpExpires = new Date(Date.now() + 5 * 60 * 1000);
+    user.resetOtpAttempts = 0;
+    user.resetOtpSentAt = new Date();
+
+    user.resetToken = undefined;
+    user.resetTokenExpires = undefined;
+
+    await user.save();
+
+    try {
+      await sendEmail({
+        to: user.email,
+        subject: "APPWARS LMS - Password Reset OTP",
+        text: `Hello ${user.name}, your password reset OTP is ${otp}. It expires in 5 minutes.`,
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:24px;color:#172554">
+            <h2>APPWARS LMS</h2>
+            <p>Hello ${String(user.name).replace(/[&<>"']/g, "")},</p>
+            <p>Your password reset OTP is:</p>
+            <div style="font-size:32px;font-weight:bold;letter-spacing:8px;padding:18px;background:#eff6ff;text-align:center;border-radius:8px">
+              ${otp}
+            </div>
+            <p>This OTP expires in 5 minutes.</p>
+            <p>Do not share this OTP with anyone.</p>
+            <p>APPWARS TECHNOLOGIES PVT. LTD.</p>
+          </div>
+        `,
+      });
+    } catch (emailError) {
+      user.resetOtp = undefined;
+      user.resetOtpExpires = undefined;
+      user.resetOtpSentAt = undefined;
+      await user.save();
+      throw emailError;
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: genericMessage,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ==========================================
+// VERIFY RESET OTP
+// POST /api/auth/verify-otp
+// ==========================================
+
+export const verifyResetOtp = async (req, res, next) => {
+  try {
+    const userId = String(req.body?.userId || "")
+      .trim()
+      .toUpperCase();
+
+    const otp = String(req.body?.otp || "").trim();
+
+    if (!userId || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({
+        success: false,
+        message: "Enter your User ID and 6-digit OTP.",
+      });
+    }
+
+    const user = await User.findOne({
+      userId,
+      isActive: true,
+    }).select("+resetOtp +resetOtpExpires +resetOtpAttempts");
+
+    if (
+      !user ||
+      !user.resetOtp ||
+      !user.resetOtpExpires ||
+      user.resetOtpExpires.getTime() < Date.now()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP is invalid or expired. Request a new OTP.",
+      });
+    }
+
+    if ((user.resetOtpAttempts || 0) >= 5) {
+      user.resetOtp = undefined;
+      user.resetOtpExpires = undefined;
+      await user.save();
+
+      return res.status(429).json({
+        success: false,
+        message: "Too many incorrect attempts. Request a new OTP.",
+      });
+    }
+
+    if (otp !== user.resetOtp) {
+      user.resetOtpAttempts = (user.resetOtpAttempts || 0) + 1;
+      await user.save();
+
+      return res.status(400).json({
+        success: false,
+        message: "Incorrect OTP.",
+      });
+    }
+
+    const resetToken = crypto.randomBytes(32).toString("hex");
+
+    user.resetToken = resetToken;
+    user.resetTokenExpires = new Date(Date.now() + 10 * 60 * 1000);
+
+    user.resetOtp = undefined;
+    user.resetOtpExpires = undefined;
+    user.resetOtpAttempts = 0;
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP verified successfully.",
+      resetToken,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ==========================================
+// RESET PASSWORD
+// POST /api/auth/reset-password
+// ==========================================
+
+export const resetPassword = async (req, res, next) => {
+  try {
+    const userId = String(req.body?.userId || "")
+      .trim()
+      .toUpperCase();
+
+    const resetToken = String(req.body?.resetToken || "").trim();
+    const newPassword = req.body?.newPassword;
+
+    if (!userId || !resetToken || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID, reset token, and new password are required.",
+      });
+    }
+
+    if (
+      typeof newPassword !== "string" ||
+      newPassword.length < 8 ||
+      newPassword.length > 128
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must contain 8–128 characters.",
+      });
+    }
+
+    const user = await User.findOne({
+      userId,
+      isActive: true,
+    }).select("+resetToken +resetTokenExpires +password");
+
+    if (
+      !user ||
+      !user.resetToken ||
+      !user.resetTokenExpires ||
+      user.resetTokenExpires.getTime() < Date.now() ||
+      resetToken !== user.resetToken
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Reset session is invalid or expired. Start again.",
+      });
+    }
+
+    // Direct password storage. No bcrypt or hashing.
+    user.password = newPassword;
+    user.mustChangePassword = false;
+
+    // Clear reset information
+    user.resetOtp = undefined;
+    user.resetOtpExpires = undefined;
+    user.resetOtpAttempts = 0;
+    user.resetOtpSentAt = undefined;
+
+    user.resetToken = undefined;
+    user.resetTokenExpires = undefined;
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset successfully. Please log in.",
     });
   } catch (error) {
     next(error);

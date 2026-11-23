@@ -18,7 +18,8 @@ import studentAttendanceRoutes from "./router/studentAttendanceRoutes.js";
 import assessmentTrainerRoutes from "./router/assessmentTrainerRoutes.js";
 import assessmentStudentRoutes from "./router/assessmentStudentRoutes.js";
 import learningResourceRoutes from "./router/learningResourceRoutes.js";
-
+import adminAdmissionTermsRoutes from "./router/adminAdmissionTermsRoutes.js";
+import studentAdmissionTermsRoutes from "./router/studentAdmissionTermsRoutes.js";
 import progressRoutes from "./router/progressRoutes.js";
 import careerRoutes from "./router/careerRoutes.js";
 
@@ -105,7 +106,15 @@ app.use(
   assessmentStudentRoutes
 );
 
+app.use(
+  "/api/admin/admission-terms",
+  adminAdmissionTermsRoutes
+);
 
+app.use(
+  "/api/student/admission-terms",
+  studentAdmissionTermsRoutes
+);
 // Career & Placement APIs
 app.use("/api", careerRoutes);
 // Handle unknown API routes
