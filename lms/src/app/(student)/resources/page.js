@@ -26,40 +26,68 @@ import {
   PauseCircle,
 } from "lucide-react";
 
-const API =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+// ------------------------------------------------------
+// API CONFIGURATION
+// ------------------------------------------------------
+
+const API = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000"
+).replace(/\/+$/, "");
+
+// Always use backend origin for uploaded files.
+const BACKEND_ORIGIN = (() => {
+  try {
+    return new URL(API).origin;
+  } catch {
+    return "http://localhost:5000";
+  }
+})();
 
 // ------------------------------------------------------
 // FIX UPLOADED FILE URL
 // ------------------------------------------------------
 
 const getFileUrl = (fileUrl) => {
-  if (!fileUrl) return "";
-
-  const backendUrl = API.replace(/\/+$/, "");
-
-  // Handle absolute localhost URLs
-  if (
-    fileUrl.includes("localhost:3000/uploads/") ||
-    fileUrl.includes("127.0.0.1:3000/uploads/")
-  ) {
-    return fileUrl.replace(
-      /localhost:3000|127\.0\.0\.1:3000/,
-      new URL(backendUrl).host
-    ).replace(/^http:\/\//, `${new URL(backendUrl).protocol}//`);
+  if (!fileUrl || typeof fileUrl !== "string") {
+    return "";
   }
 
-  // Handle relative upload paths
-  if (fileUrl.startsWith("/uploads/")) {
-    return `${backendUrl}${fileUrl}`;
-  }
+  try {
+    const value = fileUrl.trim();
 
-  // Handle other relative paths
-  if (!/^https?:\/\//i.test(fileUrl)) {
-    return `${backendUrl}/${fileUrl.replace(/^\/+/, "")}`;
-  }
+    if (!value) return "";
 
-  return fileUrl;
+    // Correct old frontend localhost upload URLs.
+    if (/^https?:\/\//i.test(value)) {
+      const parsed = new URL(value);
+
+      if (
+        parsed.pathname.startsWith("/uploads/") &&
+        (
+          parsed.hostname === "localhost" ||
+          parsed.hostname === "127.0.0.1"
+        )
+      ) {
+        return (
+          BACKEND_ORIGIN +
+          parsed.pathname +
+          parsed.search
+        );
+      }
+
+      return value;
+    }
+
+    // Handle relative upload paths.
+    if (value.startsWith("/")) {
+      return `${BACKEND_ORIGIN}${value}`;
+    }
+
+    return `${BACKEND_ORIGIN}/${value.replace(/^\/+/, "")}`;
+  } catch (error) {
+    console.error("Invalid uploaded file URL:", fileUrl, error);
+    return "";
+  }
 };
 
 // ------------------------------------------------------
@@ -103,7 +131,13 @@ export default function StudentLearningResourcesPage() {
   const heartbeatRef = useRef(null);
   const lastHeartbeatRef = useRef(0);
   const activeVideoRef = useRef(null);
+
+  // Prevent simultaneous progress requests.
   const progressSavingRef = useRef(false);
+
+  // Store the latest progress if another save is requested
+  // while an earlier request is still running.
+  const pendingProgressRef = useRef(null);
 
   // ----------------------------------------------------
   // TOKEN
@@ -214,6 +248,11 @@ export default function StudentLearningResourcesPage() {
         "/api/student/profile"
       );
 
+      console.log(
+        "STUDENT PROFILE RESPONSE:",
+        profileData
+      );
+
       const profile =
         profileData.user ||
         profileData.profile ||
@@ -230,6 +269,11 @@ export default function StudentLearningResourcesPage() {
 
       const batchDetails = profile.batchDetails;
 
+      console.log(
+        "EXTRACTED BATCH DETAILS:",
+        batchDetails
+      );
+
       const actualBatchId =
         batchDetails?._id ||
         batchDetails?.id ||
@@ -243,17 +287,25 @@ export default function StudentLearningResourcesPage() {
         );
       }
 
+      console.log(
+        "STUDENT BATCH ID:",
+        actualBatchId
+      );
+
       setBatchId(String(actualBatchId));
 
       setBatchName(
         batchDetails?.batch ||
+        batchDetails?.batchName ||
         (typeof profile.batch === "string"
           ? profile.batch
           : "My Batch")
       );
 
       setCourseName(
-        batchDetails?.course || ""
+        batchDetails?.course ||
+        batchDetails?.courseName ||
+        ""
       );
 
       await Promise.all([
@@ -451,27 +503,59 @@ export default function StudentLearningResourcesPage() {
     async (video, currentTime, delta = 0) => {
       if (!video?._id) return;
 
-      if (progressSavingRef.current) return;
+      const request = {
+        video,
+        currentTime: Number(currentTime) || 0,
+        delta: Number(delta) || 0,
+      };
+
+      // If another save is running, retain the latest
+      // position and accumulated playback time.
+      if (progressSavingRef.current) {
+        if (
+          pendingProgressRef.current &&
+          String(pendingProgressRef.current.video._id) ===
+            String(video._id)
+        ) {
+          pendingProgressRef.current = {
+            ...request,
+            delta:
+              pendingProgressRef.current.delta +
+              request.delta,
+          };
+        } else {
+          pendingProgressRef.current = request;
+        }
+
+        return;
+      }
 
       progressSavingRef.current = true;
 
-      try {
-        const data = await api(
-          `/api/learning-resources/${video._id}/progress`,
-          {
-            method: "POST",
-            body: JSON.stringify({
-              currentTime: Number(currentTime) || 0,
-              playbackDelta: Number(delta) || 0,
-            }),
-          }
-        );
+      let currentRequest = request;
 
-        if (data.progress) {
-          updateLocalProgress(
-            video._id,
-            data.progress
+      try {
+        while (currentRequest) {
+          const data = await api(
+            `/api/learning-resources/${currentRequest.video._id}/progress`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                currentTime: currentRequest.currentTime,
+                playbackDelta: currentRequest.delta,
+              }),
+            }
           );
+
+          if (data.progress) {
+            updateLocalProgress(
+              currentRequest.video._id,
+              data.progress
+            );
+          }
+
+          currentRequest = pendingProgressRef.current;
+          pendingProgressRef.current = null;
         }
 
         await loadProgress();
@@ -495,10 +579,31 @@ export default function StudentLearningResourcesPage() {
     (video) => {
       stopHeartbeat();
 
+      const videoUrl = getFileUrl(video.videoUrl);
+
+      if (!videoUrl) {
+        setError(
+          "Invalid video URL. Please contact your trainer."
+        );
+        return;
+      }
+
+      setError("");
+
       const selectedVideo = {
         ...video,
-        videoUrl: getFileUrl(video.videoUrl),
+        videoUrl,
       };
+
+      console.log(
+        "OPENING VIDEO:",
+        selectedVideo
+      );
+
+      console.log(
+        "VIDEO URL:",
+        selectedVideo.videoUrl
+      );
 
       activeVideoRef.current = selectedVideo;
 
@@ -525,6 +630,10 @@ export default function StudentLearningResourcesPage() {
     }
 
     stopHeartbeat();
+
+    if (videoRef.current) {
+      videoRef.current.pause();
+    }
 
     activeVideoRef.current = null;
 
@@ -627,6 +736,7 @@ export default function StudentLearningResourcesPage() {
 
       if (
         savedPosition > 0 &&
+        Number.isFinite(videoElement.duration) &&
         savedPosition < videoElement.duration
       ) {
         videoElement.currentTime = savedPosition;
@@ -638,12 +748,62 @@ export default function StudentLearningResourcesPage() {
   );
 
   // ----------------------------------------------------
+  // VIDEO ERROR HANDLER
+  // ----------------------------------------------------
+
+  const handleVideoError = useCallback((event) => {
+    const videoElement = event.currentTarget;
+
+    const errorCode =
+      videoElement.error?.code;
+
+    const errorMessage =
+      videoElement.error?.message;
+
+    console.error("VIDEO PLAYBACK ERROR:", {
+      source: videoElement.currentSrc,
+      errorCode,
+      errorMessage,
+      networkState: videoElement.networkState,
+      readyState: videoElement.readyState,
+    });
+
+    stopHeartbeat();
+
+    setVideoLoading(false);
+
+    let message =
+      "Unable to play this video. Please check the uploaded file or contact your administrator.";
+
+    if (errorCode === 2) {
+      message =
+        "Network error while loading the video. Check your backend server and uploaded file URL.";
+    }
+
+    if (errorCode === 3) {
+      message =
+        "Video decoding failed. The uploaded video format may not be supported by your browser.";
+    }
+
+    if (errorCode === 4) {
+      message =
+        "Video format or source is not supported. Please upload a compatible MP4 video.";
+    }
+
+    setError(message);
+  }, [stopHeartbeat]);
+
+  // ----------------------------------------------------
   // CLEANUP
   // ----------------------------------------------------
 
   useEffect(() => {
     return () => {
       stopHeartbeat();
+
+      if (videoRef.current) {
+        videoRef.current.pause();
+      }
     };
   }, [stopHeartbeat]);
 
@@ -759,9 +919,20 @@ export default function StudentLearningResourcesPage() {
         {/* ERROR MESSAGE */}
 
         {error && (
-          <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            <AlertCircle size={18} />
-            {error}
+          <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            <AlertCircle size={18} className="mt-0.5 shrink-0" />
+
+            <div className="flex-1">
+              {error}
+            </div>
+
+            <button
+              onClick={() => setError("")}
+              className="shrink-0"
+              aria-label="Dismiss error"
+            >
+              <X size={17} />
+            </button>
           </div>
         )}
 
@@ -797,13 +968,6 @@ export default function StudentLearningResourcesPage() {
               </div>
 
               <div>
-                <p className="text-xs text-slate-400">
-                  MY COURSE
-                </p>
-
-                <p className="mt-1 font-bold text-[#102e60]">
-                  {courseName || "N/A"}
-                </p>
               </div>
             </div>
           </div>
@@ -816,6 +980,7 @@ export default function StudentLearningResourcesPage() {
             <div>
               <div className="flex items-center gap-2 text-blue-100">
                 <BookOpen size={18} />
+
                 <p className="text-sm font-medium">
                   Overall Learning Progress
                 </p>
@@ -868,7 +1033,7 @@ export default function StudentLearningResourcesPage() {
               style={{
                 width: `${Math.min(
                   100,
-                  summary.batchProgress
+                  Math.max(0, summary.batchProgress)
                 )}%`,
               }}
             />
@@ -974,7 +1139,8 @@ export default function StudentLearningResourcesPage() {
                   <div className="space-y-3">
                     {moduleVideos.map((video) => {
                       const percent = formatPercent(video);
-                      const completed = video.progress?.completed;
+                      const completed =
+                        video.progress?.completed;
 
                       return (
                         <div
@@ -1009,6 +1175,7 @@ export default function StudentLearningResourcesPage() {
                             <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
                               <span className="flex items-center gap-1">
                                 <Clock size={13} />
+
                                 {formatDuration(video.duration)}
                               </span>
 
@@ -1077,7 +1244,6 @@ export default function StudentLearningResourcesPage() {
           ) : (
             <div className="grid gap-4 md:grid-cols-2">
               {notes.map((note) => {
-                // IMPORTANT: Use backend URL for uploaded PDFs
                 const fileUrl = getFileUrl(note.fileUrl);
 
                 return (
@@ -1114,26 +1280,34 @@ export default function StudentLearningResourcesPage() {
                     </div>
 
                     <div className="mt-5 flex flex-wrap gap-3">
-                      <a
-                        href={fileUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                      >
-                        <ExternalLink size={16} />
-                        Open Notes
-                      </a>
+                      {fileUrl ? (
+                        <>
+                          <a
+                            href={fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                          >
+                            <ExternalLink size={16} />
+                            Open Notes
+                          </a>
 
-                      <a
-                        href={fileUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        download={note.fileName || undefined}
-                        className="inline-flex items-center gap-2 rounded-xl bg-[#102e60] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-900"
-                      >
-                        <Download size={16} />
-                        Download
-                      </a>
+                          <a
+                            href={fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            download={note.fileName || undefined}
+                            className="inline-flex items-center gap-2 rounded-xl bg-[#102e60] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-900"
+                          >
+                            <Download size={16} />
+                            Download
+                          </a>
+                        </>
+                      ) : (
+                        <p className="text-sm text-red-500">
+                          Invalid file URL
+                        </p>
+                      )}
                     </div>
                   </div>
                 );
@@ -1203,12 +1377,7 @@ export default function StudentLearningResourcesPage() {
                   onLoadedMetadata={handleVideoMetadata}
                   onCanPlay={() => setVideoLoading(false)}
                   onWaiting={() => setVideoLoading(true)}
-                  onError={() => {
-                    setVideoLoading(false);
-                    setError(
-                      "Unable to play this video. Please check the video URL or contact your trainer."
-                    );
-                  }}
+                  onError={handleVideoError}
                 />
               </div>
 
@@ -1248,6 +1417,7 @@ export default function StudentLearningResourcesPage() {
 
                 <div className="flex items-center gap-2 rounded-xl bg-blue-50 p-3 text-xs text-blue-800">
                   <PauseCircle size={17} />
+
                   Your lecture progress is saved automatically while watching.
                 </div>
               </div>

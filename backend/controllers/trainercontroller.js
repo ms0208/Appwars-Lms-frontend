@@ -678,34 +678,53 @@ export const getAttendance = async (req, res) => {
 // GET /api/trainer/submissions
 // ==========================================
 
+
 export const getSubmissions = async (req, res) => {
   try {
+    const trainerId = req.user.id || req.user._id;
+
+    // Get only batches assigned to the logged-in trainer.
+    const assignedBatches = await getTrainerBatches(trainerId);
+    const assignedBatchIds = assignedBatches.map((batch) => batch._id);
+
     const filter = {
-      trainer: req.user.id,
+      trainer: trainerId,
+      batch: { $in: assignedBatchIds },
     };
 
+    // Optional batch filter.
     if (req.query.batchId) {
+      if (!isValidObjectId(req.query.batchId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid batch ID.",
+        });
+      }
+
       const batch = await getTrainerBatch(
         req.query.batchId,
-        req.user.id
+        trainerId
       );
 
       if (!batch) {
-        return res.status(404).json({
+        return res.status(403).json({
           success: false,
-          message: "Batch not found or not assigned to you.",
+          message: "This batch is not assigned to you.",
         });
       }
 
       filter.batch = batch._id;
     }
 
+    // Optional grading status filter.
     if (req.query.result) {
-      if (
-        !["Pending", "Graded", "Needs revision"].includes(
-          req.query.result
-        )
-      ) {
+      const allowedResults = [
+        "Pending",
+        "Graded",
+        "Needs revision",
+      ];
+
+      if (!allowedResults.includes(req.query.result)) {
         return res.status(400).json({
           success: false,
           message: "Invalid result filter.",
@@ -715,20 +734,60 @@ export const getSubmissions = async (req, res) => {
       filter.result = req.query.result;
     }
 
+    // Optional assignment filter.
+    if (req.query.assignmentId) {
+      if (!isValidObjectId(req.query.assignmentId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid assignment ID.",
+        });
+      }
+
+      const assignment = await Assignment.findOne({
+        _id: req.query.assignmentId,
+        trainer: trainerId,
+        batch: { $in: assignedBatchIds },
+      });
+
+      if (!assignment) {
+        return res.status(404).json({
+          success: false,
+          message: "Assignment not found or unauthorized.",
+        });
+      }
+
+      filter.assignment = assignment._id;
+    }
+
+    // Fetch submitted assignments.
     const submissions = await AssignmentSubmission.find(filter)
       .populate("student", "userId name email")
       .populate("batch", "batch course")
-      .sort({ submittedAt: -1 });
+      .populate(
+        "assignment",
+        "title description instructions dueDate totalMarks attachmentUrl"
+      )
+      .populate("trainer", "userId name email")
+      .sort({ submittedAt: -1 })
+      .lean();
 
     return res.status(200).json({
       success: true,
       count: submissions.length,
       submissions,
     });
+
   } catch (error) {
-    return sendError(res, error, "Unable to load submissions.");
+    console.error("Get Trainer Submissions Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to load student assignment submissions.",
+      error: error.message,
+    });
   }
 };
+
 
 // ==========================================
 // 9. GRADE ASSIGNMENT

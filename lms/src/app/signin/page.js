@@ -571,7 +571,7 @@ export default function SignInPage() {
               </h2>
 
               <p className="mt-5 text-sm leading-7 text-blue-100">
-                Access courses, manage classes, track progress,
+                Access batches, manage classes, track progress,
                 and collaborate through one learning management
                 platform.
               </p>

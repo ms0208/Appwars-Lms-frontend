@@ -19,6 +19,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/apiError.js";
 import Assignment from "../models/Assignement.js";
 import AssignmentProgress from "../models/AssignmentProgress.js";
+import AssignmentSubmission from "../models/AssignmentSubmission.js"
 
 const idOf = (value) => String(value?._id || value);
 const validId = (value) => mongoose.isValidObjectId(value);
@@ -769,11 +770,14 @@ export const getJobs = asyncHandler(async (_req, res) => {
 ========================================== */
 
 
+
 export const getAssignments = asyncHandler(async (req, res) => {
   const studentId = req.user.id || req.user._id;
 
   // Get logged-in student
-  const student = await User.findById(studentId).select("batch batchId");
+  const student = await User.findById(studentId)
+    .select("_id batch batchId")
+    .lean();
 
   if (!student) {
     return res.status(404).json({
@@ -785,16 +789,19 @@ export const getAssignments = asyncHandler(async (req, res) => {
   let batchDetails = null;
 
   // Resolve batch using batchId
-  if (student.batchId) {
-    batchDetails = await Batch.findById(student.batchId);
+  if (
+    student.batchId &&
+    mongoose.isValidObjectId(student.batchId)
+  ) {
+    batchDetails = await Batch.findById(student.batchId).lean();
   }
 
-  // Resolve batch using batch name if batchId is unavailable
+  // Resolve batch using batch name
   if (!batchDetails && student.batch) {
     batchDetails = await Batch.findOne({
-      batch: student.batch.trim(),
+      batch: String(student.batch).trim(),
       isActive: true,
-    });
+    }).lean();
   }
 
   if (!batchDetails) {
@@ -815,6 +822,20 @@ export const getAssignments = asyncHandler(async (req, res) => {
     .sort({ createdAt: -1 })
     .lean();
 
+  // If no assignments exist
+  if (!assignments.length) {
+    return res.status(200).json({
+      success: true,
+      count: 0,
+      batch: {
+        _id: batchDetails._id,
+        batch: batchDetails.batch,
+        course: batchDetails.course,
+      },
+      assignments: [],
+    });
+  }
+
   // Get assignment IDs
   const assignmentIds = assignments.map(
     (assignment) => assignment._id
@@ -822,28 +843,34 @@ export const getAssignments = asyncHandler(async (req, res) => {
 
   // Fetch progress records for this student
   const progressRecords = await AssignmentProgress.find({
-    student: studentId,
+    student: student._id,
     assignment: { $in: assignmentIds },
-  }).lean();
+  })
+    .select("assignment status")
+    .lean();
 
-  // Create a lookup for assignment progress
+  // Create progress lookup
   const progressMap = new Map(
     progressRecords.map((progress) => [
-      progress.assignment.toString(),
+      String(progress.assignment),
       progress.status,
     ])
   );
 
-  // Attach progress status to every assignment
-  const assignmentsWithProgress = assignments.map((assignment) => ({
-    ...assignment,
-    progressStatus:
-      progressMap.get(assignment._id.toString()) || "Not Access",
-  }));
+  // Attach progress status and remove inaccessible assignments
+  const visibleAssignments = assignments
+    .map((assignment) => ({
+      ...assignment,
+      progressStatus:
+        progressMap.get(String(assignment._id)) || "Not Access",
+    }))
+    .filter((assignment) => {
+      return assignment.progressStatus !== "Not Access";
+    });
 
   return res.status(200).json({
     success: true,
-    count: assignmentsWithProgress.length,
+    count: visibleAssignments.length,
 
     batch: {
       _id: batchDetails._id,
@@ -851,194 +878,248 @@ export const getAssignments = asyncHandler(async (req, res) => {
       course: batchDetails.course,
     },
 
-    assignments: assignmentsWithProgress,
+    assignments: visibleAssignments,
   });
 });
+
 
 // ==========================================
 // STUDENT SUBMIT ASSIGNMENT
 // POST /api/student/assignments/:assignmentId/submit
 // ==========================================
 
+
 export const submitAssignment = async (req, res) => {
-  // try {
-  //   const studentId = req.user.id || req.user._id;
+  try {
+    const studentId = req.user.id || req.user._id;
+    const { assignmentId } = req.params;
+    const { answerText, submissionUrl } = req.body;
 
-  //   const { assignmentId } = req.params;
+    // 1. Validate assignment ID
+    if (!mongoose.Types.ObjectId.isValid(assignmentId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid assignment ID.",
+      });
+    }
 
-  //   const { answerText, submissionUrl } = req.body;
+    // 2. Validate submission fields
+    const cleanAnswer = String(answerText || "").trim();
+    const cleanUrl = String(submissionUrl || "").trim();
 
-  //   // Validate assignment ID
-  //   if (!mongoose.Types.ObjectId.isValid(assignmentId)) {
-  //     return res.status(400).json({
-  //       success: false,
-  //       message: "Invalid assignment ID.",
-  //     });
-  //   }
+    if (!cleanAnswer && !cleanUrl) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Please enter your answer or provide a Project/GitHub URL.",
+      });
+    }
 
-  //   // Validate form fields
-  //   if (!answerText?.trim() && !submissionUrl?.trim()) {
-  //     return res.status(400).json({
-  //       success: false,
-  //       message: "Please enter your answer or provide a Project/GitHub URL.",
-  //     });
-  //   }
+    // 3. Get logged-in student
+    const student = await User.findById(studentId).select(
+      "_id userId name email role batch batchId"
+    );
 
-  //   // Get logged-in student
-  //   const student = await User.findById(studentId).select(
-  //     "_id userId name email role batch batchId"
-  //   );
+    if (
+      !student ||
+      String(student.role).toLowerCase() !== "student"
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Only students can submit assignments.",
+      });
+    }
 
-  //   if (!student || student.role !== "Student") {
-  //     return res.status(403).json({
-  //       success: false,
-  //       message: "Only students can submit assignments.",
-  //     });
-  //   }
+    // 4. Resolve student's batch
+    let batchDetails = null;
 
-  //   // Resolve student's batch
-  //   let batchDetails = null;
+    if (
+      student.batchId &&
+      mongoose.isValidObjectId(student.batchId)
+    ) {
+      batchDetails = await Batch.findById(student.batchId);
+    }
 
-  //   if (student.batchId) {
-  //     batchDetails = await Batch.findById(student.batchId);
-  //   }
+    if (!batchDetails && student.batch) {
+      batchDetails = await Batch.findOne({
+        batch: String(student.batch).trim(),
+        isActive: true,
+      });
+    }
 
-  //   if (!batchDetails && student.batch) {
-  //     batchDetails = await Batch.findOne({
-  //       batch: student.batch.trim(),
-  //     });
-  //   }
+    if (!batchDetails) {
+      return res.status(404).json({
+        success: false,
+        message: "Your batch could not be found.",
+      });
+    }
 
-  //   if (!batchDetails) {
-  //     return res.status(404).json({
-  //       success: false,
-  //       message: "Your batch could not be found.",
-  //     });
-  //   }
+    // 5. Get assignment
+    const assignment = await Assignment.findById(assignmentId)
+      .populate("batch", "batch course")
+      .populate("trainer", "name email userId");
 
-  //   // Get assignment created by trainer
-  //   const assignment = await Assignment.findById(assignmentId)
-  //     .populate("batch", "batch course")
-  //     .populate("trainer", "name email userId");
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        message: "Assignment not found.",
+      });
+    }
 
-  //   if (!assignment) {
-  //     return res.status(404).json({
-  //       success: false,
-  //       message: "Assignment not found.",
-  //     });
-  //   }
+    // 6. Assignment must be published
+    if (assignment.status !== "Published") {
+      return res.status(400).json({
+        success: false,
+        message: "This assignment is not published.",
+      });
+    }
 
-  //   // Assignment must be published
-  //   if (assignment.status !== "Published") {
-  //     return res.status(400).json({
-  //       success: false,
-  //       message: "This assignment is not published.",
-  //     });
-  //   }
+    // 7. Verify assignment belongs to student's batch
+    const assignmentBatchId =
+      assignment.batch?._id?.toString() ||
+      assignment.batch?.toString();
 
-  //   // Verify assignment belongs to student's batch
-  //   const assignmentBatchId =
-  //     assignment.batch?._id?.toString() ||
-  //     assignment.batch?.toString();
+    if (
+      assignmentBatchId !== batchDetails._id.toString()
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "This assignment does not belong to your batch.",
+      });
+    }
 
-  //   if (assignmentBatchId !== batchDetails._id.toString()) {
-  //     return res.status(403).json({
-  //       success: false,
-  //       message: "This assignment does not belong to your batch.",
-  //     });
-  //   }
+    // 8. Verify trainer has granted assignment access
+    const accessProgress = await AssignmentProgress.findOne({
+      student: student._id,
+      assignment: assignment._id,
+    });
 
-  //   // Check deadline
-  //   if (
-  //     assignment.dueDate &&
-  //     new Date() > new Date(assignment.dueDate)
-  //   ) {
-  //     return res.status(400).json({
-  //       success: false,
-  //       message: "Assignment submission deadline has passed.",
-  //     });
-  //   }
+    if (
+      !accessProgress ||
+      String(accessProgress.status).toLowerCase() === "not access"
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have access to this assignment.",
+      });
+    }
 
-  //   const trainerId =
-  //     assignment.trainer?._id ||
-  //     assignment.trainer ||
-  //     assignment.createdBy;
+    // 9. Prevent submission if assignment is already completed
+    if (
+      String(accessProgress.status).toLowerCase() === "complete"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "This assignment has already been completed.",
+      });
+    }
 
-  //   // Check previous submission
-  //   let submission = await AssignmentSubmission.findOne({
-  //     student: student._id,
-  //     assignment: assignment._id,
-  //   });
+    // 10. Check assignment deadline
+    if (
+      assignment.dueDate &&
+      new Date() > new Date(assignment.dueDate)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Assignment submission deadline has passed.",
+      });
+    }
 
-  //   const submissionData = {
-  //     student: student._id,
-  //     batch: batchDetails._id,
-  //     trainer: trainerId,
-  //     assignment: assignment._id,
+    // 11. Resolve trainer ID
+    const trainerId =
+      assignment.trainer?._id ||
+      assignment.trainer ||
+      assignment.createdBy;
 
-  //     title: assignment.title,
-  //     assignmentTitle: assignment.title,
+    // 12. Check previous submission
+    let submission = await AssignmentSubmission.findOne({
+      student: student._id,
+      assignment: assignment._id,
+    });
 
-  //     // Trainer grading frontend reads submission.description
-  //     description: answerText?.trim() || "",
+    // 13. Prepare submission data
+    const submissionData = {
+      student: student._id,
+      batch: batchDetails._id,
+      trainer: trainerId,
+      assignment: assignment._id,
 
-  //     // Form GitHub/project URL
-  //     submissionUrl: submissionUrl?.trim() || "",
+      title: assignment.title,
+      assignmentTitle: assignment.title,
 
-  //     maxMarks: Number(assignment.totalMarks || 50),
+      description: cleanAnswer,
+      submissionUrl: cleanUrl,
 
-  //     result: "Pending",
-  //     feedback: "",
-  //     submittedAt: new Date(),
-  //   };
+      maxMarks: Number(assignment.totalMarks || 50),
 
-  //   // Save new submission or update existing submission
-  //   if (submission) {
-  //     submission.set(submissionData);
-  //     await submission.save();
-  //   } else {
-  //     submission = await AssignmentSubmission.create(
-  //       submissionData
-  //     );
-  //   }
+      result: "Pending",
+      feedback: "",
+      submittedAt: new Date(),
+    };
 
-  //   // Populate for trainer grading page
-  //   await submission.populate([
-  //     {
-  //       path: "student",
-  //       select: "userId name email",
-  //     },
-  //     {
-  //       path: "batch",
-  //       select: "batch course",
-  //     },
-  //     {
-  //       path: "trainer",
-  //       select: "userId name email",
-  //     },
-  //   ]);
+    // 14. Save or update submission
+    if (submission) {
+      // Do not overwrite an already graded submission
+      if (
+        ["Pass", "Fail", "Passed", "Failed"].includes(
+          String(submission.result || "").trim()
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "This assignment has already been evaluated. You cannot resubmit it.",
+        });
+      }
 
-  //   return res.status(201).json({
-  //     success: true,
-  //     message: "Assignment submitted successfully to your trainer.",
-  //     submission,
-  //   });
-  // } catch (error) {
-  //   console.error("Submit Assignment Error:", error);
+      submission.set(submissionData);
+      await submission.save();
+    } else {
+      submission = await AssignmentSubmission.create(
+        submissionData
+      );
+    }
 
-  //   return res.status(500).json({
-  //     success: false,
-  //     message: "Unable to submit assignment.",
-  //     error: error.message,
-  //   });
-  // }
+    // 15. Populate submission for trainer grading
+    await submission.populate([
+      {
+        path: "student",
+        select: "userId name email",
+      },
+      {
+        path: "batch",
+        select: "batch course",
+      },
+      {
+        path: "trainer",
+        select: "userId name email",
+      },
+    ]);
+
+    return res.status(201).json({
+      success: true,
+      message:
+        "Assignment submitted successfully to your trainer.",
+      submission,
+    });
+  } catch (error) {
+    console.error("Submit Assignment Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to submit assignment.",
+      error: error.message,
+    });
+  }
 };
+
 
 
 // ==========================================
 // GET LOGGED-IN STUDENT PENDING ASSIGNMENTS COUNT
 // GET /api/student/pending-assignments
 // ==========================================
+
 
 export const getPendingAssignmentsCount = asyncHandler(
   async (req, res) => {
@@ -1060,7 +1141,9 @@ export const getPendingAssignmentsCount = asyncHandler(
       student.batchId &&
       mongoose.isValidObjectId(student.batchId)
     ) {
-      batchDetails = await Batch.findById(student.batchId).lean();
+      batchDetails = await Batch.findById(
+        student.batchId
+      ).lean();
     }
 
     // Fallback using batch name
@@ -1084,7 +1167,7 @@ export const getPendingAssignmentsCount = asyncHandler(
       });
     }
 
-    // Fetch published assignments assigned to student's batch
+    // Fetch published assignments
     const assignments = await Assignment.find({
       batch: batchDetails._id,
       status: "Published",
@@ -1092,14 +1175,7 @@ export const getPendingAssignmentsCount = asyncHandler(
       .select("_id")
       .lean();
 
-    const assignmentIds = assignments.map(
-      (assignment) => assignment._id
-    );
-
-    const totalAssignments = assignmentIds.length;
-
-    // If no published assignments
-    if (totalAssignments === 0) {
+    if (!assignments.length) {
       return res.status(200).json({
         success: true,
         pendingAssignments: 0,
@@ -1111,7 +1187,11 @@ export const getPendingAssignmentsCount = asyncHandler(
       });
     }
 
-    // Fetch progress of this particular student only
+    const assignmentIds = assignments.map(
+      (assignment) => assignment._id
+    );
+
+    // Fetch student's progress
     const progressRecords = await AssignmentProgress.find({
       student: student._id,
       assignment: { $in: assignmentIds },
@@ -1119,7 +1199,6 @@ export const getPendingAssignmentsCount = asyncHandler(
       .select("assignment status")
       .lean();
 
-    // Map assignment ID to status
     const progressMap = new Map(
       progressRecords.map((progress) => [
         String(progress.assignment),
@@ -1130,18 +1209,23 @@ export const getPendingAssignmentsCount = asyncHandler(
     let pendingCount = 0;
     let completedCount = 0;
 
-    // Count each published assignment
+    // Count only assignments with granted access
     assignments.forEach((assignment) => {
       const status =
         progressMap.get(String(assignment._id)) || "Not Access";
 
+      if (status === "Not Access") {
+        return;
+      }
+
       if (status === "Complete") {
         completedCount++;
-      } else {
-        // Pending and Not Access both count as pending
+      } else if (status === "Pending") {
         pendingCount++;
       }
     });
+
+    const totalAccessible = pendingCount + completedCount;
 
     return res.status(200).json({
       success: true,
@@ -1151,11 +1235,12 @@ export const getPendingAssignmentsCount = asyncHandler(
       pendingAssignments: pendingCount,
 
       assignments: {
-        total: totalAssignments,
+        total: totalAccessible,
         pending: pendingCount,
         completed: completedCount,
       },
     });
   }
 );
+
 

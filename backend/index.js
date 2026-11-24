@@ -7,6 +7,9 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import path from "path";
+import { fileURLToPath } from "url";
+
+// Routes
 import authRoutes from "./router/authRoutes.js";
 import adminRoutes from "./router/adminRoutes.js";
 import studentRoutes from "./router/studentRoutes.js";
@@ -23,6 +26,9 @@ import studentAdmissionTermsRoutes from "./router/studentAdmissionTermsRoutes.js
 import progressRoutes from "./router/progressRoutes.js";
 import careerRoutes from "./router/careerRoutes.js";
 
+// ES Module __dirname configuration
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 
@@ -31,7 +37,13 @@ const FRONTEND_URL =
   process.env.FRONTEND_URL || "http://localhost:3000";
 
 // Security middleware
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: {
+      policy: "cross-origin",
+    },
+  })
+);
 
 // CORS configuration
 app.use(
@@ -46,12 +58,18 @@ app.use(
 app.use(express.json({ limit: "10kb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded assignment PDFs.
+// Serve uploaded files (videos, PDFs, assignments, etc.)
 app.use(
   "/uploads",
-  express.static(path.join(process.cwd(), "uploads"))
+  express.static(path.join(__dirname, "uploads"), {
+    setHeaders: (res) => {
+      res.setHeader(
+        "Cross-Origin-Resource-Policy",
+        "cross-origin"
+      );
+    },
+  })
 );
-
 
 // Health check
 app.get("/api/health", (req, res) => {
@@ -77,24 +95,27 @@ const authLimiter = rateLimit({
 // Authentication routes
 app.use("/api/auth", authLimiter, authRoutes);
 
-// Admin user management routes
+// Admin routes
 app.use("/api/admin", adminRoutes);
 
 // Student routes
 app.use("/api/student", studentRoutes);
 app.use("/api/studentassignments", studentAssessmentRoutes);
 app.use("/api/student", studentAttendanceRoutes);
-// Trainer Routes 
-app.use("/api/trainer", trainerRoutes)
 
-// Counsellor Routes 
+// Trainer routes
+app.use("/api/trainer", trainerRoutes);
+
+// Counsellor routes
 app.use("/api/counsellor", counsellorRoutes);
 app.use("/api/counsellor/schedule", scheduleRoutes);
 
-
+// Progress routes
 app.use("/api/progress", progressRoutes);
-// resources progress
+
+// Learning resources routes
 app.use("/api/learning-resources", learningResourceRoutes);
+
 // Assessment APIs
 app.use(
   "/api/trainer/assessments",
@@ -106,6 +127,7 @@ app.use(
   assessmentStudentRoutes
 );
 
+// Admission terms routes
 app.use(
   "/api/admin/admission-terms",
   adminAdmissionTermsRoutes
@@ -115,8 +137,10 @@ app.use(
   "/api/student/admission-terms",
   studentAdmissionTermsRoutes
 );
+
 // Career & Placement APIs
 app.use("/api", careerRoutes);
+
 // Handle unknown API routes
 app.use((req, res) => {
   res.status(404).json({
@@ -161,8 +185,13 @@ async function startServer() {
       console.log(
         `APPWARS LMS backend running on port ${PORT}`
       );
+
       console.log(
         `Health check: http://localhost:${PORT}/api/health`
+      );
+
+      console.log(
+        `Uploaded files: http://localhost:${PORT}/uploads/`
       );
     });
   } catch (error) {
@@ -170,6 +199,5 @@ async function startServer() {
     process.exit(1);
   }
 }
-
 
 startServer();
