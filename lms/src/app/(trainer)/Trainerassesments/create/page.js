@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -49,8 +48,8 @@ const createMongoId = () => {
 // CREATE OPTION
 // =====================================================
 
-const createOption = () => ({
-  _id: createMongoId(),
+const createOption = (id = "") => ({
+  _id: id,
   optionText: "",
 });
 
@@ -58,15 +57,15 @@ const createOption = () => ({
 // CREATE QUESTION
 // =====================================================
 
-const createQuestion = () => ({
-  _id: createMongoId(),
+const createQuestion = (
+  id = "",
+  optionIds = ["", "", "", ""]
+) => ({
+  _id: id,
   questionText: "",
-  options: [
-    createOption(),
-    createOption(),
-    createOption(),
-    createOption(),
-  ],
+  options: optionIds.map((optionId) =>
+    createOption(optionId)
+  ),
   correctOption: "0",
   marks: 1,
 });
@@ -86,13 +85,23 @@ export default function CreateAssessmentPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  // Minimum date is populated after component mounts.
+  const [minDateTime, setMinDateTime] = useState("");
+
   const [form, setForm] = useState({
     title: "",
     description: "",
     batch: "",
     dueDate: "",
     instructions: "",
-    questions: [createQuestion()],
+    questions: [
+      createQuestion("initial-question", [
+        "initial-option-0",
+        "initial-option-1",
+        "initial-option-2",
+        "initial-option-3",
+      ]),
+    ],
   });
 
   // =====================================================
@@ -101,6 +110,22 @@ export default function CreateAssessmentPage() {
 
   useEffect(() => {
     fetchBatches();
+  }, []);
+
+  // =====================================================
+  // SET MINIMUM DEADLINE AFTER COMPONENT MOUNTS
+  // =====================================================
+
+  useEffect(() => {
+    const now = new Date();
+
+    now.setMinutes(
+      now.getMinutes() - now.getTimezoneOffset()
+    );
+
+    setMinDateTime(
+      now.toISOString().slice(0, 16)
+    );
   }, []);
 
   const fetchBatches = async () => {
@@ -152,11 +177,24 @@ export default function CreateAssessmentPage() {
   // =====================================================
 
   const addQuestion = () => {
+    // Generate IDs in the click handler.
+    // Do not generate random IDs inside a state updater.
+
+    const newQuestion = createQuestion(
+      createMongoId(),
+      [
+        createMongoId(),
+        createMongoId(),
+        createMongoId(),
+        createMongoId(),
+      ]
+    );
+
     setForm((prev) => ({
       ...prev,
       questions: [
         ...prev.questions,
-        createQuestion(),
+        newQuestion,
       ],
     }));
   };
@@ -194,6 +232,10 @@ export default function CreateAssessmentPage() {
   // =====================================================
 
   const addOption = (questionIndex) => {
+    // Generate ID outside the state updater.
+
+    const newOption = createOption(createMongoId());
+
     setForm((prev) => ({
       ...prev,
       questions: prev.questions.map(
@@ -203,7 +245,7 @@ export default function CreateAssessmentPage() {
                 ...question,
                 options: [
                   ...question.options,
-                  createOption(),
+                  newOption,
                 ],
               }
             : question
@@ -368,6 +410,7 @@ export default function CreateAssessmentPage() {
       }
     }
 
+    // This validation runs only when the user submits.
     if (
       form.dueDate &&
       new Date(form.dueDate) <= new Date()
@@ -406,7 +449,9 @@ export default function CreateAssessmentPage() {
 
       const payload = {
         title: form.title.trim(),
+
         description: form.description.trim(),
+
         batch: form.batch,
 
         dueDate: form.dueDate
@@ -415,27 +460,37 @@ export default function CreateAssessmentPage() {
 
         instructions: form.instructions.trim(),
 
-        questions: form.questions.map(
-          (question) => ({
+        questions: form.questions.map((question) => {
+          // Assign valid MongoDB IDs before creating
+          // the request payload.
+
+          const options = question.options.map(
+            (option) => ({
+              _id: /^[a-f\d]{24}$/i.test(
+                option._id || ""
+              )
+                ? option._id
+                : createMongoId(),
+
+              optionText: option.optionText.trim(),
+            })
+          );
+
+          return {
             questionText: question.questionText.trim(),
 
-            options: question.options.map(
-              (option) => ({
-                _id: option._id,
-                optionText: option.optionText.trim(),
-              })
-            ),
+            options,
 
-            // Backend expects the correct option ID,
-            // not the numeric option index.
+            // Backend receives the correct option ID.
+
             correctOption:
-              question.options[
+              options[
                 Number(question.correctOption)
               ]?._id,
 
             marks: Number(question.marks),
-          })
-        ),
+          };
+        }),
       };
 
       const response = await assessmentApi(
@@ -458,7 +513,6 @@ export default function CreateAssessmentPage() {
           "Assessment created successfully!"
       );
 
-      // Redirect to the actual listing URL.
       setTimeout(() => {
         router.push("/Trainerassesments");
         router.refresh();
@@ -712,13 +766,7 @@ export default function CreateAssessmentPage() {
                     name="dueDate"
                     value={form.dueDate}
                     onChange={handleChange}
-                    min={new Date(
-                      Date.now() -
-                        new Date().getTimezoneOffset() *
-                          60000
-                    )
-                      .toISOString()
-                      .slice(0, 16)}
+                    min={minDateTime}
                     className="w-full rounded-xl border border-slate-300 py-3 pl-10 pr-3 text-sm outline-none transition focus:border-[#102e60] focus:ring-2 focus:ring-blue-100"
                   />
                 </div>

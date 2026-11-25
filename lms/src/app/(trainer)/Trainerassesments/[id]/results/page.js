@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
@@ -19,9 +19,22 @@ import {
 
 import { assessmentApi } from "@/src/lib/assessmentApi";
 
-export default function TrainerAssessmentResultsPage() {
+// Loading fallback
+function ResultsLoading() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50">
+      <RefreshCw
+        className="animate-spin text-[#102e60]"
+        size={32}
+      />
+    </div>
+  );
+}
+
+// Main results content
+function TrainerAssessmentResultsContent() {
   const params = useParams();
-  const id = params.id;
+  const id = params?.id;
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -31,6 +44,8 @@ export default function TrainerAssessmentResultsPage() {
   const [sheetLoading, setSheetLoading] = useState(false);
 
   const loadResults = useCallback(async () => {
+    if (!id) return;
+
     try {
       setLoading(true);
       setError("");
@@ -41,7 +56,7 @@ export default function TrainerAssessmentResultsPage() {
 
       setData(response);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Failed to load assessment results.");
     } finally {
       setLoading(false);
     }
@@ -52,6 +67,11 @@ export default function TrainerAssessmentResultsPage() {
   }, [loadResults]);
 
   const viewAnswerSheet = async (studentId) => {
+    if (!studentId || !id) {
+      alert("Student information is unavailable.");
+      return;
+    }
+
     try {
       setSelectedStudent(studentId);
       setSheetLoading(true);
@@ -63,11 +83,16 @@ export default function TrainerAssessmentResultsPage() {
 
       setAnswerSheet(response);
     } catch (err) {
-      alert(err.message);
+      alert(err.message || "Failed to load student answer sheet.");
       setSelectedStudent(null);
     } finally {
       setSheetLoading(false);
     }
+  };
+
+  const closeAnswerSheet = () => {
+    setSelectedStudent(null);
+    setAnswerSheet(null);
   };
 
   const results = data?.results || [];
@@ -75,31 +100,33 @@ export default function TrainerAssessmentResultsPage() {
   const average = results.length
     ? (
         results.reduce(
-          (sum, item) => sum + item.percentage,
+          (sum, item) => sum + Number(item.percentage || 0),
           0
         ) / results.length
       ).toFixed(2)
     : 0;
 
   const highest = results.length
-    ? Math.max(...results.map((item) => item.percentage))
+    ? Math.max(
+        ...results.map((item) => Number(item.percentage || 0))
+      )
     : 0;
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-7">
-
       <div className="mx-auto max-w-7xl">
 
+        {/* Back Button */}
         <Link
-          href="/Trainerassessments"
+          href="/Trainerassesments"
           className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-slate-500 hover:text-[#102e60]"
         >
           <ArrowLeft size={17} />
           Back to Assessments
         </Link>
 
+        {/* Page Header */}
         <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-
           <div>
             <h1 className="text-2xl font-bold text-[#102e60] md:text-3xl">
               Assessment Results
@@ -112,14 +139,18 @@ export default function TrainerAssessmentResultsPage() {
 
           <button
             onClick={loadResults}
-            className="flex items-center justify-center gap-2 rounded-lg border bg-white px-4 py-2.5 text-sm font-semibold text-slate-700"
+            disabled={loading}
+            className="flex items-center justify-center gap-2 rounded-lg border bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <RefreshCw size={16} />
+            <RefreshCw
+              size={16}
+              className={loading ? "animate-spin" : ""}
+            />
             Refresh Results
           </button>
-
         </div>
 
+        {/* Error Message */}
         {error && (
           <div className="mb-5 rounded-lg bg-red-50 p-4 text-sm text-red-700">
             {error}
@@ -128,15 +159,15 @@ export default function TrainerAssessmentResultsPage() {
 
         {loading ? (
           <div className="flex justify-center py-20">
-            <RefreshCw className="animate-spin text-[#102e60]" size={30} />
+            <RefreshCw
+              className="animate-spin text-[#102e60]"
+              size={30}
+            />
           </div>
         ) : (
           <>
-
-            {/* Stats */}
-
+            {/* Statistics */}
             <div className="mb-7 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-
               {[
                 {
                   label: "Submissions",
@@ -175,6 +206,7 @@ export default function TrainerAssessmentResultsPage() {
                         <p className="text-sm text-slate-500">
                           {item.label}
                         </p>
+
                         <p className="mt-2 text-2xl font-bold text-slate-800">
                           {item.value}
                         </p>
@@ -187,17 +219,15 @@ export default function TrainerAssessmentResultsPage() {
                   </div>
                 );
               })}
-
             </div>
 
             {/* Results Table */}
-
             <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
-
               <div className="border-b p-5">
                 <h2 className="font-bold text-slate-800">
                   Student Performance
                 </h2>
+
                 <p className="mt-1 text-xs text-slate-500">
                   View individual student answer sheets.
                 </p>
@@ -209,18 +239,18 @@ export default function TrainerAssessmentResultsPage() {
                     size={40}
                     className="mx-auto mb-3 text-slate-300"
                   />
+
                   <p className="font-semibold text-slate-700">
                     No submissions yet
                   </p>
+
                   <p className="mt-1 text-sm text-slate-500">
                     Student results will appear here.
                   </p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-
                   <table className="w-full min-w-[800px] text-left text-sm">
-
                     <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                       <tr>
                         <th className="px-5 py-4">Student</th>
@@ -234,16 +264,18 @@ export default function TrainerAssessmentResultsPage() {
                     </thead>
 
                     <tbody className="divide-y">
-
                       {results.map((item) => (
-                        <tr key={item.attemptId} className="hover:bg-slate-50">
-
+                        <tr
+                          key={item.attemptId}
+                          className="hover:bg-slate-50"
+                        >
                           <td className="px-5 py-4">
                             <p className="font-semibold text-slate-800">
                               {item.student?.name ||
                                 item.student?.fullName ||
                                 "Student"}
                             </p>
+
                             <p className="text-xs text-slate-500">
                               {item.student?.userId ||
                                 item.student?.email ||
@@ -264,20 +296,24 @@ export default function TrainerAssessmentResultsPage() {
                           </td>
 
                           <td className="px-5 py-4">
-                            <span className={`rounded-full px-3 py-1 text-xs font-bold ${
-                              item.percentage >= 75
-                                ? "bg-green-100 text-green-700"
-                                : item.percentage >= 40
-                                  ? "bg-yellow-100 text-yellow-700"
-                                  : "bg-red-100 text-red-700"
-                            }`}>
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs font-bold ${
+                                item.percentage >= 75
+                                  ? "bg-green-100 text-green-700"
+                                  : item.percentage >= 40
+                                    ? "bg-yellow-100 text-yellow-700"
+                                    : "bg-red-100 text-red-700"
+                              }`}
+                            >
                               {item.percentage}%
                             </span>
                           </td>
 
                           <td className="px-5 py-4 text-xs text-slate-500">
                             {item.submittedAt
-                              ? new Date(item.submittedAt).toLocaleString("en-IN")
+                              ? new Date(
+                                  item.submittedAt
+                                ).toLocaleString("en-IN")
                               : "-"}
                           </td>
 
@@ -286,49 +322,40 @@ export default function TrainerAssessmentResultsPage() {
                               onClick={() =>
                                 viewAnswerSheet(item.student?._id)
                               }
-                              className="flex items-center gap-1.5 rounded-lg bg-[#102e60] px-3 py-2 text-xs font-semibold text-white hover:bg-blue-900"
+                              disabled={!item.student?._id}
+                              className="flex items-center gap-1.5 rounded-lg bg-[#102e60] px-3 py-2 text-xs font-semibold text-white hover:bg-blue-900 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               <Eye size={14} />
                               View Answers
                             </button>
                           </td>
-
                         </tr>
                       ))}
-
                     </tbody>
-
                   </table>
-
                 </div>
               )}
-
             </div>
-
           </>
         )}
 
-        {/* Answer Sheet Modal */}
-
+        {/* Student Answer Sheet Modal */}
         {selectedStudent && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 md:p-6"
-            onClick={() => {
-              setSelectedStudent(null);
-              setAnswerSheet(null);
-            }}
+            onClick={closeAnswerSheet}
           >
-
             <div
               className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
-
+              {/* Modal Header */}
               <div className="sticky top-0 flex items-center justify-between border-b bg-white p-5">
                 <div>
                   <h2 className="font-bold text-slate-800">
                     Student Answer Sheet
                   </h2>
+
                   <p className="text-xs text-slate-500">
                     {answerSheet?.student?.name ||
                       answerSheet?.student?.fullName ||
@@ -337,135 +364,150 @@ export default function TrainerAssessmentResultsPage() {
                 </div>
 
                 <button
-                  onClick={() => {
-                    setSelectedStudent(null);
-                    setAnswerSheet(null);
-                  }}
+                  onClick={closeAnswerSheet}
                   className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
                 >
                   ✕
                 </button>
               </div>
 
+              {/* Modal Content */}
               {sheetLoading ? (
                 <div className="flex justify-center py-16">
-                  <RefreshCw className="animate-spin text-[#102e60]" />
+                  <RefreshCw
+                    className="animate-spin text-[#102e60]"
+                    size={28}
+                  />
                 </div>
               ) : answerSheet ? (
                 <div className="p-5">
-
+                  {/* Score Summary */}
                   <div className="mb-5 grid grid-cols-3 gap-3">
-
                     <div className="rounded-lg bg-blue-50 p-3">
-                      <p className="text-xs text-slate-500">Score</p>
+                      <p className="text-xs text-slate-500">
+                        Score
+                      </p>
+
                       <p className="font-bold text-blue-800">
-                        {answerSheet.result.obtainedMarks}/
-                        {answerSheet.result.totalMarks}
+                        {answerSheet.result?.obtainedMarks}/
+                        {answerSheet.result?.totalMarks}
                       </p>
                     </div>
 
                     <div className="rounded-lg bg-green-50 p-3">
-                      <p className="text-xs text-slate-500">Correct</p>
+                      <p className="text-xs text-slate-500">
+                        Correct
+                      </p>
+
                       <p className="font-bold text-green-700">
-                        {answerSheet.result.correctAnswers}
+                        {answerSheet.result?.correctAnswers}
                       </p>
                     </div>
 
                     <div className="rounded-lg bg-red-50 p-3">
-                      <p className="text-xs text-slate-500">Incorrect</p>
+                      <p className="text-xs text-slate-500">
+                        Incorrect
+                      </p>
+
                       <p className="font-bold text-red-700">
-                        {answerSheet.result.incorrectAnswers}
+                        {answerSheet.result?.incorrectAnswers}
                       </p>
                     </div>
-
                   </div>
 
+                  {/* Questions and Answers */}
                   <div className="space-y-4">
+                    {answerSheet.answerSheet?.map(
+                      (question, index) => (
+                        <div
+                          key={question.questionId || index}
+                          className="rounded-xl border p-4"
+                        >
+                          <h3 className="mb-3 text-sm font-bold text-slate-800">
+                            Q{index + 1}. {question.questionText}
+                          </h3>
 
-                    {answerSheet.answerSheet?.map((question, index) => (
+                          <div className="space-y-2">
+                            {question.options?.map(
+                              (option, optionIndex) => {
+                                const isCorrect =
+                                  String(option._id) ===
+                                  String(question.correctOption);
 
-                      <div
-                        key={question.questionId}
-                        className="rounded-xl border p-4"
-                      >
+                                const isSelected =
+                                  String(option._id) ===
+                                  String(question.selectedOption);
 
-                        <h3 className="mb-3 text-sm font-bold text-slate-800">
-                          Q{index + 1}. {question.questionText}
-                        </h3>
+                                return (
+                                  <div
+                                    key={option._id || optionIndex}
+                                    className={`flex items-center gap-2 rounded-lg border p-3 text-sm ${
+                                      isCorrect
+                                        ? "border-green-400 bg-green-50 text-green-800"
+                                        : isSelected
+                                          ? "border-red-300 bg-red-50 text-red-700"
+                                          : "border-slate-100 text-slate-600"
+                                    }`}
+                                  >
+                                    {isCorrect ? (
+                                      <CheckCircle2 size={17} />
+                                    ) : isSelected ? (
+                                      <XCircle size={17} />
+                                    ) : (
+                                      <span className="w-[17px]" />
+                                    )}
 
-                        <div className="space-y-2">
+                                    <span>
+                                      {String.fromCharCode(
+                                        65 + optionIndex
+                                      )}
+                                      . {option.optionText}
+                                    </span>
 
-                          {question.options.map((option, optionIndex) => {
+                                    {isSelected && (
+                                      <span className="ml-auto text-xs font-semibold">
+                                        Student selected
+                                      </span>
+                                    )}
 
-                            const isCorrect =
-                              String(option._id) ===
-                              String(question.correctOption);
+                                    {isCorrect && (
+                                      <span className="ml-auto text-xs font-semibold">
+                                        Correct answer
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              }
+                            )}
+                          </div>
 
-                            const isSelected =
-                              String(option._id) ===
-                              String(question.selectedOption);
-
-                            return (
-                              <div
-                                key={option._id}
-                                className={`flex items-center gap-2 rounded-lg border p-3 text-sm ${
-                                  isCorrect
-                                    ? "border-green-400 bg-green-50 text-green-800"
-                                    : isSelected
-                                      ? "border-red-300 bg-red-50 text-red-700"
-                                      : "border-slate-100 text-slate-600"
-                                }`}
-                              >
-                                {isCorrect ? (
-                                  <CheckCircle2 size={17} />
-                                ) : isSelected ? (
-                                  <XCircle size={17} />
-                                ) : (
-                                  <span className="w-[17px]" />
-                                )}
-
-                                <span>
-                                  {String.fromCharCode(65 + optionIndex)}.{" "}
-                                  {option.optionText}
-                                </span>
-
-                                {isSelected && (
-                                  <span className="ml-auto text-xs font-semibold">
-                                    Student selected
-                                  </span>
-                                )}
-
-                                {isCorrect && (
-                                  <span className="ml-auto text-xs font-semibold">
-                                    Correct answer
-                                  </span>
-                                )}
-                              </div>
-                            );
-                          })}
-
+                          <div className="mt-3 text-xs font-semibold text-slate-500">
+                            Marks: {question.marksObtained}/
+                            {question.marks}
+                          </div>
                         </div>
-
-                        <div className="mt-3 text-xs font-semibold text-slate-500">
-                          Marks: {question.marksObtained}/{question.marks}
-                        </div>
-
-                      </div>
-
-                    ))}
-
+                      )
+                    )}
                   </div>
-
                 </div>
-              ) : null}
-
+              ) : (
+                <div className="py-12 text-center text-sm text-slate-500">
+                  Unable to load answer sheet.
+                </div>
+              )}
             </div>
-
           </div>
         )}
-
       </div>
-
     </div>
+  );
+}
+
+// Page component: Suspense must wrap the component that calls useParams()
+export default function TrainerAssessmentResultsPage() {
+  return (
+    <Suspense fallback={<ResultsLoading />}>
+      <TrainerAssessmentResultsContent />
+    </Suspense>
   );
 }

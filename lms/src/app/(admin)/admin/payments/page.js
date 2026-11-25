@@ -180,10 +180,10 @@ export default function PaymentsPage() {
       const studentList = Array.isArray(result.users)
         ? result.users
         : Array.isArray(result.data?.users)
-        ? result.data.users
-        : Array.isArray(result.data)
-        ? result.data
-        : [];
+          ? result.data.users
+          : Array.isArray(result.data)
+            ? result.data
+            : [];
 
       setStudents(studentList);
     } catch (error) {
@@ -198,10 +198,10 @@ export default function PaymentsPage() {
       const batchList = Array.isArray(result.batches)
         ? result.batches
         : Array.isArray(result.data?.batches)
-        ? result.data.batches
-        : Array.isArray(result.data)
-        ? result.data
-        : [];
+          ? result.data.batches
+          : Array.isArray(result.data)
+            ? result.data
+            : [];
 
       setBatches(batchList);
     } catch (error) {
@@ -353,7 +353,7 @@ export default function PaymentsPage() {
 
       const pendingFees = Number(
         selected.pendingFees ??
-          Math.max(0, totalFees - collectedFees)
+        Math.max(0, totalFees - collectedFees)
       );
 
       setFormData({
@@ -474,9 +474,8 @@ export default function PaymentsPage() {
       notes: formData.notes.trim(),
 
       paidAt:
-        formData.status === "Paid"
-          ? formData.paidAt || new Date().toISOString()
-          : null,
+        formData.paidAt ||
+        (collectedFees > 0 ? new Date().toISOString() : null),
     };
 
     setSaving(true);
@@ -724,7 +723,7 @@ export default function PaymentsPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1050px] text-left text-sm">
+            <table className="w-full min-w-[1160px] text-left text-sm">
               <thead className="bg-gray-50 text-xs uppercase text-gray-500">
                 <tr>
                   <th className="px-4 py-4">Student</th>
@@ -734,6 +733,7 @@ export default function PaymentsPage() {
                   <th className="px-4 py-4">Remaining</th>
                   <th className="px-4 py-4">Progress</th>
                   <th className="px-4 py-4">Due Date</th>
+                  <th className="px-4 py-4">Payment Date</th>
                   <th className="px-4 py-4">Status</th>
                   <th className="px-4 py-4 text-center">Actions</th>
                 </tr>
@@ -751,7 +751,7 @@ export default function PaymentsPage() {
 
                   const pending = Number(
                     payment.pendingFees ??
-                      Math.max(0, total - collected)
+                    Math.max(0, total - collected)
                   );
 
                   const progress = getProgress(total, collected);
@@ -806,6 +806,10 @@ export default function PaymentsPage() {
 
                       <td className="px-4 py-4 text-gray-600">
                         {formatDate(payment.dueDate)}
+                      </td>
+
+                      <td className="px-4 py-4 text-gray-600">
+                        {formatDate(payment.paidAt)}
                       </td>
 
                       <td className="px-4 py-4">
@@ -1139,11 +1143,10 @@ export default function PaymentsPage() {
                     className={inputClass}
                   >
                     <option value="UPI">UPI</option>
+                    <option value="Credit Card">Credit Card</option>
+                    <option value="Debit Card">Debit Card</option>
+                    <option value="Net Banking">Net Banking</option>
                     <option value="Cash">Cash</option>
-                    <option value="Bank Transfer">Bank Transfer</option>
-                    <option value="Card">Card</option>
-                    <option value="Online">Online</option>
-                    <option value="Other">Other</option>
                   </select>
                 </div>
 
@@ -1237,8 +1240,8 @@ export default function PaymentsPage() {
                   {saving
                     ? "Saving..."
                     : isEditing
-                    ? "Update Payment"
-                    : "Create Payment"}
+                      ? "Update Payment"
+                      : "Create Payment"}
                 </button>
               </div>
             </form>
@@ -1288,14 +1291,14 @@ export default function PaymentsPage() {
                   value={getBatchName(selectedPayment.batch)}
                 />
 
-                <DetailItem
+                {/* <DetailItem
                   label="Course"
                   value={
                     selectedPayment.batch?.course?.name ||
                     selectedPayment.batch?.course ||
                     "—"
                   }
-                />
+                /> */}
 
                 <DetailItem
                   label="Total Fees"

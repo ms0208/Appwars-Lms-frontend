@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import {
@@ -21,7 +21,11 @@ import {
 import Link from "next/link";
 import { assessmentApi } from "@/src/lib/assessmentApi";
 
-export default function StudentAssessmentAttemptPage() {
+// ==========================================
+// ASSESSMENT CONTENT
+// ==========================================
+
+function StudentAssessmentAttemptContent() {
   const params = useParams();
   const router = useRouter();
 
@@ -42,6 +46,8 @@ export default function StudentAssessmentAttemptPage() {
   // ==========================================
 
   const loadAssessment = useCallback(async () => {
+    if (!id) return;
+
     try {
       setLoading(true);
       setError("");
@@ -60,7 +66,7 @@ export default function StudentAssessmentAttemptPage() {
 
       const data = response.assessment;
 
-      // Validate that question and option IDs are present.
+      // Validate question and option IDs.
       const invalidQuestion = (data.questions || []).find(
         (question) =>
           !question._id ||
@@ -76,7 +82,7 @@ export default function StudentAssessmentAttemptPage() {
 
       setAssessment(data);
 
-      // Restore actual MongoDB option IDs.
+      // Restore saved MongoDB option IDs.
       const savedAnswers = {};
 
       (response.attempt?.answers || []).forEach((answer) => {
@@ -91,12 +97,11 @@ export default function StudentAssessmentAttemptPage() {
               : answer.question;
 
           if (questionId) {
-            savedAnswers[String(questionId)] =
-              String(
-                typeof answer.selectedOption === "object"
-                  ? answer.selectedOption._id
-                  : answer.selectedOption
-              );
+            savedAnswers[String(questionId)] = String(
+              typeof answer.selectedOption === "object"
+                ? answer.selectedOption._id
+                : answer.selectedOption
+            );
           }
         }
       });
@@ -127,8 +132,8 @@ export default function StudentAssessmentAttemptPage() {
   // PROGRESS
   // ==========================================
 
-  const answeredCount = questions.filter(
-    (item) => Boolean(answers[String(item._id)])
+  const answeredCount = questions.filter((item) =>
+    Boolean(answers[String(item._id)])
   ).length;
 
   const unansweredCount = questions.length - answeredCount;
@@ -139,7 +144,6 @@ export default function StudentAssessmentAttemptPage() {
 
   // ==========================================
   // SELECT ANSWER
-  // IMPORTANT: STORE OPTION ID, NOT INDEX
   // ==========================================
 
   const selectAnswer = (optionId) => {
@@ -217,8 +221,7 @@ export default function StudentAssessmentAttemptPage() {
   const saveAndNext = async () => {
     if (!question) return;
 
-    const selectedOptionId =
-      answers[String(question._id)];
+    const selectedOptionId = answers[String(question._id)];
 
     if (!selectedOptionId) {
       setError("Please select an answer before continuing.");
@@ -270,7 +273,6 @@ export default function StudentAssessmentAttemptPage() {
 
   // ==========================================
   // FINAL SUBMIT
-  // SAVE ALL SELECTED ANSWERS FIRST
   // ==========================================
 
   const handleSubmit = async () => {
@@ -287,7 +289,7 @@ export default function StudentAssessmentAttemptPage() {
       setError("");
       setNotice("");
 
-      // Save every selected answer before submitting.
+      // Save all selected answers first.
       for (const questionItem of questions) {
         const selectedOptionId =
           answers[String(questionItem._id)];
@@ -297,7 +299,7 @@ export default function StudentAssessmentAttemptPage() {
         }
       }
 
-      // Now submit the assessment.
+      // Submit assessment.
       const response = await assessmentApi(
         `/api/student/assessments/${id}/submit`,
         {
@@ -368,8 +370,7 @@ export default function StudentAssessmentAttemptPage() {
 
   if (!assessment || !question) return null;
 
-  const selectedOptionId =
-    answers[String(question._id)];
+  const selectedOptionId = answers[String(question._id)];
 
   // ==========================================
   // MAIN UI
@@ -720,5 +721,26 @@ export default function StudentAssessmentAttemptPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// ==========================================
+// PAGE EXPORT WITH SUSPENSE
+// ==========================================
+
+export default function StudentAssessmentAttemptPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-slate-50">
+          <RefreshCw
+            size={32}
+            className="animate-spin text-[#102e60]"
+          />
+        </div>
+      }
+    >
+      <StudentAssessmentAttemptContent />
+    </Suspense>
   );
 }

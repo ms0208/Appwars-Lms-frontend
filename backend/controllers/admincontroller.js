@@ -551,9 +551,9 @@ export const createUser = async (req, res, next) => {
             role === "Student"
               ? referral
               : {
-                  role: "Admin",
-                  counsellor: null,
-                },
+                role: "Admin",
+                counsellor: null,
+              },
 
           isActive: true,
           mustChangePassword: true,
@@ -1999,9 +1999,9 @@ export const listResource = async (req, res, next) => {
     const formattedItems =
       req.params.resource === "courses"
         ? items.map((item) => ({
-            ...item,
-            title: item.courseName,
-          }))
+          ...item,
+          title: item.courseName,
+        }))
         : items;
 
     res.json({
@@ -2444,7 +2444,7 @@ const validatePaymentStudentBatch = async (
     if (
       student.batch &&
       String(student.batch).trim() !==
-        String(batch.batch).trim()
+      String(batch.batch).trim()
     ) {
       return {
         error: {
@@ -2816,9 +2816,8 @@ export const createPayment = async (req, res, next) => {
       dueDate,
 
       paidAt:
-        status === "Paid"
-          ? paidAt || new Date()
-          : null,
+        paidAt ||
+        (collectedFees > 0 ? new Date() : null),
 
       notes: notes.trim(),
 
@@ -2846,6 +2845,7 @@ export const createPayment = async (req, res, next) => {
 // 4. UPDATE PAYMENT
 // PATCH /api/admin/payments/:id
 // ======================================================
+
 
 export const updatePayment = async (req, res, next) => {
   try {
@@ -3013,11 +3013,9 @@ export const updatePayment = async (req, res, next) => {
         });
       }
 
-      const pendingFees = totalFees - collectedFees;
-
       updates.totalFees = totalFees;
       updates.collectedFees = collectedFees;
-      updates.pendingFees = pendingFees;
+      updates.pendingFees = totalFees - collectedFees;
     }
 
     // UPDATE INDIVIDUAL PAYMENT AMOUNT
@@ -3060,34 +3058,32 @@ export const updatePayment = async (req, res, next) => {
       updates.status = body.status;
     }
 
-    // UPDATE PAID DATE
+    // UPDATE PAYMENT DATE
     if (body.paidAt !== undefined) {
       const paidAt = parsePaymentDate(body.paidAt);
 
       if (paidAt === false) {
         return res.status(400).json({
           success: false,
-          message: "Invalid paid date.",
+          message: "Invalid payment date.",
         });
       }
 
       updates.paidAt = paidAt;
     }
 
-    const finalStatus =
-      updates.status || payment.status;
+    // CALCULATE FINAL COLLECTED FEES
+    const finalCollectedFees =
+      updates.collectedFees !== undefined
+        ? Number(updates.collectedFees)
+        : Number(payment.collectedFees || 0);
 
-    if (finalStatus === "Paid") {
-      if (
-        updates.paidAt === undefined &&
-        !payment.paidAt
-      ) {
-        updates.paidAt = new Date();
+    // AUTOMATICALLY RECORD DATE WHEN MONEY IS COLLECTED
+    if (finalCollectedFees > 0) {
+      if (!updates.paidAt) {
+        updates.paidAt = payment.paidAt || new Date();
       }
-    } else if (
-      updates.status &&
-      updates.status !== "Paid"
-    ) {
+    } else {
       updates.paidAt = null;
     }
 
@@ -3169,9 +3165,7 @@ export const updatePayment = async (req, res, next) => {
     await payment.save();
 
     // FETCH UPDATED PAYMENT
-    const updatedPayment = await Payment.findById(
-      payment._id
-    )
+    const updatedPayment = await Payment.findById(payment._id)
       .populate(paymentPopulate)
       .lean();
 
@@ -3184,6 +3178,7 @@ export const updatePayment = async (req, res, next) => {
     next(error);
   }
 };
+
 
 // ======================================================
 // 5. DELETE PAYMENT
@@ -3291,7 +3286,7 @@ export const getPaymentReport = async (req, res, next) => {
         from &&
         to &&
         new Date(`${from}T00:00:00.000Z`) >
-          new Date(`${to}T23:59:59.999Z`)
+        new Date(`${to}T23:59:59.999Z`)
       ) {
         return res.status(400).json({
           success: false,
@@ -3353,7 +3348,7 @@ export const getPaymentReport = async (req, res, next) => {
       ...feeCalculation,
       {
         $group: {
-                  _id: "$status",
+          _id: "$status",
 
           count: {
             $sum: 1,

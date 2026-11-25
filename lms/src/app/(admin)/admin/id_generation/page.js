@@ -1,13 +1,7 @@
 
-
 "use client";
-
-
-
 import { useCallback, useEffect, useMemo, useState } from "react";
-
 import {
-
   UserPlus,
 
   Users,
@@ -186,9 +180,9 @@ async function apiRequest(endpoint, options = {}) {
 
       data?.message ||
 
-        data?.error ||
+      data?.error ||
 
-        `Request failed (${response.status})`
+      `Request failed (${response.status})`
 
     );
 
@@ -266,11 +260,11 @@ function extractReferrer(user = {}) {
 
           ? counsellor.userId ||
 
-            counsellor._id ||
+          counsellor._id ||
 
-            counsellor.id ||
+          counsellor.id ||
 
-            ""
+          ""
 
           : String(counsellor),
 
@@ -328,9 +322,9 @@ function extractReferrer(user = {}) {
 
           ? legacyReferrer.userId ||
 
-            legacyReferrer._id ||
+          legacyReferrer._id ||
 
-            ""
+          ""
 
           : String(legacyReferrer),
 
@@ -1158,17 +1152,17 @@ export default function IDGenerationPage() {
 
           ? {
 
-              id:
+            id:
 
-                selectedReferrer.userId ||
+              selectedReferrer.userId ||
 
-                selectedReferrer._id,
+              selectedReferrer._id,
 
-              name: selectedReferrer.name,
+            name: selectedReferrer.name,
 
-              role: selectedReferrer.role,
+            role: selectedReferrer.role,
 
-            }
+          }
 
           : mappedUser.referredBy,
 
@@ -1854,9 +1848,9 @@ export default function IDGenerationPage() {
 
       : trainers.find(
 
-          (trainer) => trainer._id === currentBatch?.trainer
+        (trainer) => trainer._id === currentBatch?.trainer
 
-        );
+      );
 
 
 
@@ -1990,15 +1984,13 @@ export default function IDGenerationPage() {
 
             role="status"
 
-            className={`mb-6 flex items-start justify-between gap-3 rounded-lg border p-4 text-sm ${
-
-              messageType === "error"
+            className={`mb-6 flex items-start justify-between gap-3 rounded-lg border p-4 text-sm ${messageType === "error"
 
                 ? "border-red-200 bg-red-50 text-red-700"
 
                 : "border-green-200 bg-green-50 text-green-700"
 
-            }`}
+              }`}
 
           >
 
@@ -2431,29 +2423,6 @@ export default function IDGenerationPage() {
                       </h3>
 
                     </div>
-
-
-
-                    <div>
-
-                      <p className="text-xs font-semibold uppercase text-blue-600">
-
-                        Course
-
-                      </p>
-
-
-
-                      <p className="mt-1 text-sm font-semibold text-slate-800">
-
-                        {currentBatch.course || "Not specified"}
-
-                      </p>
-
-                    </div>
-
-
-
                     <div>
 
                       <p className="text-xs font-semibold uppercase text-blue-600">
@@ -3268,15 +3237,15 @@ export default function IDGenerationPage() {
 
                       : "•".repeat(
 
-                          Math.min(
+                        Math.min(
 
-                            generatedRecord.password.length,
+                          generatedRecord.password.length,
 
-                            16
+                          16
 
-                          )
+                        )
 
-                        )}
+                      )}
 
                   </span>
 
@@ -3475,9 +3444,6 @@ export default function IDGenerationPage() {
               </select>
 
             </div>
-
-
-
             {/* USERS TABLE */}
 
             <div className="overflow-x-auto">
@@ -3670,23 +3636,21 @@ export default function IDGenerationPage() {
 
                         <span
 
-                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-
-                            record.role === "Student"
+                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${record.role === "Student"
 
                               ? "bg-blue-100 text-blue-700"
 
                               : record.role === "Trainer"
 
-                              ? "bg-purple-100 text-purple-700"
+                                ? "bg-purple-100 text-purple-700"
 
-                              : record.role === "Counsellor"
+                                : record.role === "Counsellor"
 
-                              ? "bg-emerald-100 text-emerald-700"
+                                  ? "bg-emerald-100 text-emerald-700"
 
-                              : "bg-slate-100 text-slate-700"
+                                  : "bg-slate-100 text-slate-700"
 
-                          }`}
+                            }`}
 
                         >
 
@@ -3772,15 +3736,13 @@ export default function IDGenerationPage() {
 
                         <span
 
-                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-
-                            record.status === "Active"
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${record.status === "Active"
 
                               ? "bg-green-100 text-green-700"
 
                               : "bg-slate-100 text-slate-600"
 
-                          }`}
+                            }`}
 
                         >
 

@@ -203,14 +203,11 @@ export default function TrainerProfilePage() {
         body: JSON.stringify({
           name: profile.name.trim(),
           email: profile.email.trim(),
-
-          trainerDetails: {
-            phone: profile.phone.trim(),
-            expertise: profile.expertise.trim(),
-            experience: profile.experience.trim(),
-            joiningDate: profile.joiningDate || null,
-            availability: profile.availability,
-          },
+          phone: profile.phone.trim(),
+          expertise: profile.expertise.trim(),
+          experience: profile.experience,
+          joiningDate: profile.joiningDate || null,
+          availability: profile.availability,
         }),
       });
 
@@ -492,13 +489,15 @@ export default function TrainerProfilePage() {
                     Experience
 
                     <input
-                      type="text"
+                      type="number"
+                      min="0"
+                      max="60"
+                      step="1"
                       value={profile.experience}
                       onChange={(event) =>
                         update("experience", event.target.value)
                       }
-                      maxLength={100}
-                      placeholder="e.g. 3 Years"
+                      placeholder="e.g. 3"
                       className={inputClass}
                     />
                   </label>

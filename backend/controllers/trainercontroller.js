@@ -1117,6 +1117,10 @@ export const getTrainerProfile = async (req, res) => {
       });
     }
 
+    if (!trainer.trainerDetails) {
+      trainer.trainerDetails = {};
+    }
+
     return res.status(200).json({
       success: true,
 
@@ -1158,12 +1162,26 @@ export const updateTrainerProfile = async (req, res) => {
 
     const {
       name,
+      email,
       phone,
       expertise,
       courses,
       experience,
       availability,
+      joiningDate,
+      trainerDetails,
     } = req.body;
+
+    const details =
+      trainerDetails && typeof trainerDetails === "object"
+        ? trainerDetails
+        : {};
+
+    const phoneValue = phone ?? details.phone;
+    const expertiseValue = expertise ?? details.expertise;
+    const experienceValue = experience ?? details.experience;
+    const availabilityValue = availability ?? details.availability;
+    const joiningDateValue = joiningDate ?? details.joiningDate;
 
     // NAME
 
@@ -1178,12 +1196,44 @@ export const updateTrainerProfile = async (req, res) => {
       trainer.name = name.trim();
     }
 
+    // EMAIL
+
+    if (email !== undefined) {
+      if (
+        typeof email !== "string" ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Please provide a valid email address.",
+        });
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+      const existingTrainer = await User.findOne({
+        email: normalizedEmail,
+        _id: { $ne: trainer._id },
+      }).select("_id");
+
+      if (existingTrainer) {
+        return res.status(400).json({
+          success: false,
+          message: "This email address is already in use.",
+        });
+      }
+
+      trainer.email = normalizedEmail;
+    }
+
     // PHONE
 
-    if (phone !== undefined) {
+    if (phoneValue !== undefined) {
+      if (typeof phoneValue === "string" && phoneValue.trim() === "") {
+        trainer.trainerDetails.phone = "";
+      } else
       if (
-        typeof phone !== "string" ||
-        !/^[0-9+\-\s()]{7,20}$/.test(phone.trim())
+        typeof phoneValue !== "string" ||
+        !/^[0-9+\-\s()]{7,20}$/.test(phoneValue.trim())
       ) {
         return res.status(400).json({
           success: false,
@@ -1191,15 +1241,15 @@ export const updateTrainerProfile = async (req, res) => {
         });
       }
 
-      trainer.trainerDetails.phone = phone.trim();
+      trainer.trainerDetails.phone = phoneValue.trim();
     }
 
     // EXPERTISE
 
-    if (expertise !== undefined) {
+    if (expertiseValue !== undefined) {
       if (
-        typeof expertise !== "string" ||
-        expertise.trim().length > 200
+        typeof expertiseValue !== "string" ||
+        expertiseValue.trim().length > 200
       ) {
         return res.status(400).json({
           success: false,
@@ -1207,7 +1257,7 @@ export const updateTrainerProfile = async (req, res) => {
         });
       }
 
-      trainer.trainerDetails.expertise = expertise.trim();
+      trainer.trainerDetails.expertise = expertiseValue.trim();
     }
 
     // COURSES
@@ -1235,8 +1285,8 @@ export const updateTrainerProfile = async (req, res) => {
 
     // EXPERIENCE
 
-    if (experience !== undefined) {
-      const numericExperience = Number(experience);
+    if (experienceValue !== undefined) {
+      const numericExperience = Number(experienceValue);
 
       if (
         !Number.isFinite(numericExperience) ||
@@ -1254,21 +1304,40 @@ export const updateTrainerProfile = async (req, res) => {
 
     // AVAILABILITY
 
-    if (availability !== undefined) {
+    if (availabilityValue !== undefined) {
       const allowedAvailability = [
         "Available",
         "Busy",
         "Unavailable",
       ];
 
-      if (!allowedAvailability.includes(availability)) {
+      if (!allowedAvailability.includes(availabilityValue)) {
         return res.status(400).json({
           success: false,
           message: "Invalid availability status.",
         });
       }
 
-      trainer.trainerDetails.availability = availability;
+      trainer.trainerDetails.availability = availabilityValue;
+    }
+
+    // JOINING DATE
+
+    if (joiningDateValue !== undefined) {
+      if (joiningDateValue === null || joiningDateValue === "") {
+        trainer.trainerDetails.joiningDate = null;
+      } else {
+        const joiningDate = new Date(joiningDateValue);
+
+        if (Number.isNaN(joiningDate.getTime())) {
+          return res.status(400).json({
+            success: false,
+            message: "Please provide a valid joining date.",
+          });
+        }
+
+        trainer.trainerDetails.joiningDate = joiningDate;
+      }
     }
 
     await trainer.save();

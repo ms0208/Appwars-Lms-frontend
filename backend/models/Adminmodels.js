@@ -274,8 +274,14 @@ const paymentSchema = new Schema(
 
     method: {
       type: String,
-      enum: ["Cash", "UPI", "Card", "Bank Transfer", "Other"],
-      default: "Other",
+      enum: [
+        "UPI",
+        "Credit Card",
+        "Debit Card",
+        "Net Banking",
+        "Cash",
+      ],
+      default: "UPI",
     },
 
     reference: {
