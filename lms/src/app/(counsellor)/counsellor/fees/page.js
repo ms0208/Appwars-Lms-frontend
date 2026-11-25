@@ -288,12 +288,6 @@ function normalizePayment(payment) {
 
     batchName: getBatchName(payment.batch),
 
-    courseName:
-      batch?.course?.courseName ||
-      batch?.course?.title ||
-      (typeof batch?.course === "string" ? batch.course : "") ||
-      "",
-
     trainerName: getTrainerName(batch),
 
     // Fee amounts
@@ -348,7 +342,6 @@ function downloadCSV(rows) {
     "Student",
     "Student ID",
     "Batch",
-    "Course",
     "Trainer",
     "Total Fees",
     "Collected Fees",
@@ -373,7 +366,6 @@ function downloadCSV(rows) {
         payment.studentName,
         payment.studentUserId,
         payment.batchName,
-        payment.courseName,
         payment.trainerName,
         payment.totalFees,
         payment.collectedFees,
@@ -512,7 +504,6 @@ export default function FeeManagementPage() {
         payment.studentUserId.toLowerCase().includes(term) ||
         payment.studentEmail.toLowerCase().includes(term) ||
         payment.batchName.toLowerCase().includes(term) ||
-        payment.courseName.toLowerCase().includes(term) ||
         payment.reference.toLowerCase().includes(term);
 
       const matchesStatus =
@@ -1236,7 +1227,7 @@ export default function FeeManagementPage() {
               <tr>
                 {[
                   "Student",
-                  "Batch / Course",
+                  "Batch",
                   "Total Fees",
                   "Collected",
                   "Pending",
@@ -1279,10 +1270,6 @@ export default function FeeManagementPage() {
                     <td className="px-4 py-4">
                       <p className="font-medium text-slate-700">
                         {payment.batchName}
-                      </p>
-
-                      <p className="mt-1 text-xs text-slate-500">
-                        {payment.courseName || "—"}
                       </p>
 
                       {payment.trainerName && (
@@ -1461,7 +1448,7 @@ export default function FeeManagementPage() {
                   </select>
                 </Field>
 
-                <Field label="Total Course Fees *">
+                <Field label="Total Fees *">
                   <input
                     required
                     min="0.01"
@@ -1471,7 +1458,7 @@ export default function FeeManagementPage() {
                     value={form.amount}
                     onChange={updateForm}
                     className={inputClass}
-                    placeholder="Enter total course fees"
+                    placeholder="Enter total fees"
                   />
                 </Field>
 
@@ -1635,7 +1622,7 @@ export default function FeeManagementPage() {
 
               <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
                 This form creates or updates a Payment record. It does not
-                modify the student's course fee plan or admission details.
+                modify the student's fee plan or admission details.
               </p>
 
               <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end">

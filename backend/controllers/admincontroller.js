@@ -1659,7 +1659,7 @@ export const getAllAttendance = async (req, res) => {
   try {
     const attendance = await Attendance.find({})
       .populate("student", "userId name email")
-      .populate("batch", "batch course")
+      .populate("batch", "name batch code")
       .populate("trainer", "userId name email")
       .sort({ date: -1, createdAt: -1 })
       .lean();
@@ -1767,7 +1767,7 @@ export const createAttendance = async (req, res) => {
 
     await attendance.populate([
       { path: "student", select: "userId name email" },
-      { path: "batch", select: "batch course" },
+      { path: "batch", select: "name batch code" },
       { path: "trainer", select: "userId name email" },
     ]);
 

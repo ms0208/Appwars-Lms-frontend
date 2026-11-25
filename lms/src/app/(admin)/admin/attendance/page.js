@@ -102,6 +102,19 @@ function getName(value) {
   );
 }
 
+function getBatchName(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+
+  const name = value.name || value.batch || value.title || "";
+
+  if (name && value.code) {
+    return `${name} (${value.code})`;
+  }
+
+  return name || value.code || "";
+}
+
 function mapAttendance(record) {
   return {
     ...record,
@@ -111,8 +124,7 @@ function mapAttendance(record) {
     trainerId: getId(record.trainer),
     name: getName(record.student),
     email: record.student?.email || "",
-    batch: getName(record.batch),
-    course: getName(record.batch?.course),
+    batch: getBatchName(record.batch),
     trainerName: getName(record.trainer),
     date: record.date ? String(record.date).slice(0, 10) : "",
     status: record.status || "Absent",
@@ -274,7 +286,6 @@ export default function AttendancePage() {
           record.name,
           record.email,
           record.batch,
-          record.course,
           record.trainerName,
         ]
           .filter(Boolean)
@@ -523,7 +534,6 @@ export default function AttendancePage() {
       "Student",
       "Email",
       "Batch",
-      "Course",
       "Trainer",
       "Date",
       "Status",
@@ -534,7 +544,6 @@ export default function AttendancePage() {
       record.name,
       record.email,
       record.batch,
-      record.course,
       record.trainerName,
       record.date,
       record.status,
@@ -743,7 +752,7 @@ export default function AttendancePage() {
                 <thead className="bg-gray-50 text-xs uppercase text-gray-500">
                   <tr>
                     <th className="px-5 py-4">Student</th>
-                    <th className="px-4 py-4">Course / Batch</th>
+                    <th className="px-4 py-4">Batch</th>
                     <th className="px-4 py-4">Trainer</th>
                     <th className="px-4 py-4">Date</th>
                     <th className="px-4 py-4">Status</th>
@@ -772,10 +781,6 @@ export default function AttendancePage() {
 
                         <td className="px-4 py-4">
                           <p className="font-medium text-gray-800">
-                            {record.course || "—"}
-                          </p>
-
-                          <p className="mt-1 text-xs text-gray-500">
                             {record.batch || "No batch"}
                           </p>
                         </td>
@@ -927,7 +932,7 @@ export default function AttendancePage() {
                         key={getId(batch)}
                         value={getId(batch)}
                       >
-                        {getName(batch)}
+                        {getBatchName(batch)}
                       </option>
                     ))}
                   </select>
@@ -1056,13 +1061,6 @@ export default function AttendancePage() {
                 <p className="text-xs text-gray-500">Email</p>
                 <p className="mt-1 font-semibold text-gray-900">
                   {viewRecord.email || "—"}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-xs text-gray-500">Course</p>
-                <p className="mt-1 font-semibold text-gray-900">
-                  {viewRecord.course || "—"}
                 </p>
               </div>
 

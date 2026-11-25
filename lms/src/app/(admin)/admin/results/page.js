@@ -54,18 +54,13 @@ function getStatus(percentage) {
 
 // ==========================================
 // MAP BACKEND RESULT
-// Backend returns populated student/course
+// Backend returns the populated student
 // ==========================================
 
 function mapResult(item) {
   const student =
     item.student && typeof item.student === "object"
       ? item.student
-      : null;
-
-  const course =
-    item.course && typeof item.course === "object"
-      ? item.course
       : null;
 
   return {
@@ -76,10 +71,6 @@ function mapResult(item) {
     rollNo: student?.userId || "",
     email: student?.email || "",
     batch: student?.batch || "",
-
-    courseId: course?._id || "",
-    course: course?.courseName || "",
-    courseCode: course?.code || "",
 
     exam: item.exam || "",
     date: String(item.date || "").slice(0, 10),
@@ -166,7 +157,6 @@ export default function ResultsPage() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
-  const [courseFilter, setCourseFilter] = useState("All");
 
   const [selected, setSelected] = useState(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -203,26 +193,6 @@ export default function ResultsPage() {
   useEffect(() => {
     fetchResults();
   }, [fetchResults]);
-
-  // ==========================================
-  // COURSE OPTIONS FROM FETCHED RESULTS
-  // ==========================================
-
-  const courseOptions = useMemo(() => {
-    const uniqueCourses = new Map();
-
-    results.forEach((result) => {
-      if (result.courseId) {
-        uniqueCourses.set(result.courseId, {
-          id: result.courseId,
-          name: result.course,
-          code: result.courseCode,
-        });
-      }
-    });
-
-    return Array.from(uniqueCourses.values());
-  }, [results]);
 
   // ==========================================
   // STATISTICS
@@ -264,12 +234,7 @@ export default function ResultsPage() {
       const matchesSearch =
         result.student.toLowerCase().includes(query) ||
         result.rollNo.toLowerCase().includes(query) ||
-        result.course.toLowerCase().includes(query) ||
         result.exam.toLowerCase().includes(query);
-
-      const matchesCourse =
-        courseFilter === "All" ||
-        result.courseId === courseFilter;
 
       const matchesStatus =
         statusFilter === "All" ||
@@ -277,11 +242,10 @@ export default function ResultsPage() {
 
       return (
         matchesSearch &&
-        matchesCourse &&
         matchesStatus
       );
     });
-  }, [results, search, courseFilter, statusFilter]);
+  }, [results, search, statusFilter]);
 
   // ==========================================
   // VIEW RESULT DETAILS
@@ -300,7 +264,6 @@ export default function ResultsPage() {
     const headers = [
       "Student",
       "Roll Number",
-      "Course",
       "Exam",
       "Date",
       "Obtained Marks",
@@ -320,7 +283,6 @@ export default function ResultsPage() {
       return [
         result.student,
         result.rollNo,
-        result.course,
         result.exam,
         result.date,
         result.obtained,
@@ -459,7 +421,7 @@ export default function ResultsPage() {
         {/* SEARCH AND FILTER */}
 
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
 
             <div className="relative">
               <Search
@@ -476,25 +438,6 @@ export default function ResultsPage() {
                 className={inputClass + " pl-10"}
               />
             </div>
-
-            <select
-              value={courseFilter}
-              onChange={(event) =>
-                setCourseFilter(event.target.value)
-              }
-              className={inputClass}
-            >
-              <option value="All">All Courses</option>
-
-              {courseOptions.map((course) => (
-                <option
-                  key={course.id}
-                  value={course.id}
-                >
-                  {course.name} ({course.code})
-                </option>
-              ))}
-            </select>
 
             <select
               value={statusFilter}
@@ -525,11 +468,11 @@ export default function ResultsPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1000px] text-left text-sm">
+            <table className="w-full min-w-[900px] text-left text-sm">
               <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                 <tr>
                   <th className="px-5 py-4">Student</th>
-                  <th className="px-5 py-4">Course / Exam</th>
+                  <th className="px-5 py-4">Exam</th>
                   <th className="px-5 py-4">Exam Date</th>
                   <th className="px-5 py-4">Marks</th>
                   <th className="px-5 py-4">Percentage</th>
@@ -567,10 +510,6 @@ export default function ResultsPage() {
 
                         <td className="px-5 py-4">
                           <p className="font-medium text-slate-700">
-                            {result.course || "—"}
-                          </p>
-
-                          <p className="mt-1 text-xs text-slate-500">
                             {result.exam || "—"}
                           </p>
                         </td>
@@ -695,16 +634,6 @@ export default function ResultsPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-
-              <Detail
-                label="Course"
-                value={selected.course}
-              />
-
-              <Detail
-                label="Course Code"
-                value={selected.courseCode}
-              />
 
               <Detail
                 label="Exam"
