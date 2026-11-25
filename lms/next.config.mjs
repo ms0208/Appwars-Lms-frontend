@@ -3,6 +3,10 @@
 const nextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
+  experimental: {
+    cpus: 2,
+    agentUpgrade: "security",
+  },
 
   turbopack: {
     rules: {
