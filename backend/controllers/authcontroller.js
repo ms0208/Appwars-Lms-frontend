@@ -49,9 +49,11 @@ const getStudentBatchDetails = async (user) => {
   };
 };
 
+
 // ==========================================
 // REGISTER ADMIN
 // POST /api/auth/register-admin
+// Maximum 2 Admin Accounts
 // ==========================================
 
 export const registerAdmin = async (req, res, next) => {
@@ -83,17 +85,19 @@ export const registerAdmin = async (req, res, next) => {
       });
     }
 
-    const existingAdmin = await User.findOne({
+    // Check maximum 2 Admin accounts
+    const adminCount = await User.countDocuments({
       role: "Admin",
     });
 
-    if (existingAdmin > 3) {
+    if (adminCount >= 2) {
       return res.status(403).json({
         success: false,
-        message: "Admin account already exists.",
+        message: "Maximum 2 Admin accounts are allowed. Admin registration is closed.",
       });
     }
 
+    // Check duplicate email
     const emailExists = await User.findOne({
       email: normalizedEmail,
     });
@@ -105,6 +109,7 @@ export const registerAdmin = async (req, res, next) => {
       });
     }
 
+    // Create Admin
     const admin = await User.create({
       userId: generateUserId("Admin"),
       name: String(name).trim(),
@@ -129,10 +134,12 @@ export const registerAdmin = async (req, res, next) => {
         role: admin.role,
       },
     });
+
   } catch (error) {
     next(error);
   }
 };
+
 
 // ==========================================
 // LOGIN
